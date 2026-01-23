@@ -1,0 +1,15 @@
+[allowlist]
+    description = "Allow documentation examples and build artifacts"
+    
+    # Ignore build artifacts and documentation
+    paths = [
+        '''static/management.html''',
+        '''docs/.*''',
+        '''README.md''',
+        '''internal/secret/secret.go'''
+    ]
+
+    # Ignore standard test keys found in docs
+    regexes = [
+        '''sk-test-123''',
+    ]

@@ -1,0 +1,128 @@
+# GoReleaser configuration for switchAILocal
+# Documentation: https://goreleaser.com
+
+version: 2
+
+project_name: switchAILocal
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: switchAILocal
+    main: ./cmd/server
+    binary: switchAILocal
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: bridge-agent
+    main: ./cmd/bridge-agent
+    binary: bridge-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - config.example.yaml
+      - docs/**/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+dockers:
+  - image_templates:
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+    extra_files:
+      - config.example.yaml
+
+  - image_templates:
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+    goarch: arm64
+    extra_files:
+      - config.example.yaml
+
+docker_manifests:
+  - name_template: "ghcr.io/traylinx/switchailocal:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
+
+  - name_template: "ghcr.io/traylinx/switchailocal:latest"
+    image_templates:
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
+      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
+
+release:
+  github:
+    owner: traylinx
+    name: switchAILocal
+  draft: false
+  prerelease: auto
+  name_template: "{{ .ProjectName }} v{{ .Version }}"

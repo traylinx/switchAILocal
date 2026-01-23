@@ -1,0 +1,10 @@
+server:
+  host: "127.0.0.1"
+  port: 8081
+
+# Minimal auth setup
+auth:
+  enabled: false
+
+# No upstream providers needed for this demo as we register 'myprov' in code
+providers: []

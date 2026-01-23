@@ -1,0 +1,25 @@
+services:
+  switchailocal:
+    image: ${SWITCH_AI_IMAGE:-traylinx/switchailocal:latest}
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-none}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    container_name: switchailocal
+    environment:
+      TZ: ${TZ:-UTC}
+      REMOTE_COMMAND_HOST: ${REMOTE_COMMAND_HOST:-http://host.docker.internal:18888}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ${HOME}/.switchailocal:/home/appuser/.switchailocal
+      - ./logs:/app/logs
+      - ./plugins:/app/plugins
+    restart: unless-stopped

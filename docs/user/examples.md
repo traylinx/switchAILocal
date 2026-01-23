@@ -1,0 +1,293 @@
+# Usage Examples & Samples
+
+This guide provides practical examples of how to interact with `switchAILocal` using `curl`. Our API is fully OpenAI-compatible, so you can also use any OpenAI SDK by simply changing the `base_url`.
+
+---
+
+## 🚀 Quick Start
+
+### List Available Models
+See all models from all connected providers (CLI tools, Cloud APIs, and Local models).
+```bash
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+### Check Provider Status
+Get a breakdown of which providers are currently active and healthy.
+```bash
+curl http://localhost:18080/v1/providers \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+---
+
+## ☁️ Traylinx switchAI Samples
+
+[switchAI](https://traylinx.com/switchai) is the recommended way to use high-quality cloud models with a single key.
+
+### Fast Model (Gemini Flash)
+Use a fast, efficient model for quick responses.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "switchai-fast",
+    "messages": [{"role": "user", "content": "Tell me a joke about robots."}]
+  }'
+```
+
+### DeepSeek Reasoner
+Force a specialized model for complex logic or coding tasks. Both formats work:
+```bash
+# Using provider:upstream-name syntax
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "switchai:deepseek-reasoner",
+    "messages": [{"role": "user", "content": "Explain the Fermi Paradox."}]
+  }'
+```
+
+---
+
+## 🛠️ CLI Provider Samples
+
+If you have official CLI tools installed locally, you can use them as providers.
+
+### Google Gemini CLI
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [{"role": "user", "content": "Hello from Gemini!"}]
+  }'
+```
+
+### Mistral Vibe CLI
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "vibe:mistral-large-latest",
+    "messages": [{"role": "user", "content": "Write a short poem about Mistral."}]
+  }'
+```
+
+### 📎 CLI Attachments (Files & Folders)
+Pass local context directly to `geminicli` or `vibe` using the `attachments` array. These are prepended to your prompt using the native CLI syntax (e.g., `@path`).
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [{"role": "user", "content": "Explain the logic in this file."}],
+    "extra_body": {
+      "cli": {
+        "attachments": [
+          {"type": "file", "path": "/absolute/path/to/script.py"},
+          {"type": "folder", "path": "./internal/api"}
+        ]
+      }
+    }
+  }'
+```
+
+### 🚩 CLI Flags (Sandbox/YOLO/Auto-Approve)
+Standardize CLI control flags across different providers. `switchAILocal` maps these to provider-specific arguments (e.g., `-y` for Gemini, `--dangerously-skip-permissions` for Claude).
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "vibe:",
+    "messages": [{"role": "user", "content": "Update the version in package.json"}],
+    "extra_body": {
+      "cli": {
+        "flags": {
+          "auto_approve": true,
+          "sandbox": true
+        }
+      }
+    }
+  }'
+```
+
+### 💾 Session Management
+Resume or name specific CLI sessions.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [{"role": "user", "content": "Continue our previous discussion."}],
+    "extra_body": {
+      "cli": {
+        "session_id": "latest"
+      }
+    }
+  }'
+```
+
+### 🤝 Combined Attachments, Flags & Sessions
+You can combine all options in a single request for complex automation tasks.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "vibe:",
+    "messages": [{"role": "user", "content": "Analyze the security of this module and suggest fixes."}],
+    "extra_body": {
+      "cli": {
+        "attachments": [
+          {"type": "folder", "path": "./internal/auth"},
+          {"type": "file", "path": "./main.go"}
+        ],
+        "flags": {
+          "auto_approve": true,
+          "sandbox": true
+        },
+        "session_id": "security-audit"
+      }
+    }
+  }'
+```
+
+### 🔓 Claude CLI Dangerous Mode
+Use the `auto_approve` flag to bypass safety confirmations in `claudecli` (maps to `--dangerously-skip-permissions`).
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "claudecli:",
+    "messages": [{"role": "user", "content": "Fix the linter errors in this directory."}],
+    "extra_body": {
+      "cli": {
+        "flags": {
+          "auto_approve": true
+        }
+      }
+    }
+  }'
+```
+
+### 🧠 OpenAI Codex CLI (Sandbox Mode)
+Run commands in a restricted sandbox for security when using Codex.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "codex:",
+    "messages": [{"role": "user", "content": "Write a script to list s3 buckets."}],
+    "extra_body": {
+      "cli": {
+        "flags": {
+          "sandbox": true
+        }
+      }
+    }
+  }'
+```
+
+### 📁 Folder Attachments for Vibe
+Attach entire directories for deep analysis.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "vibe:",
+    "messages": [{"role": "user", "content": "Analyze the project structure and suggest improvements."}],
+    "extra_body": {
+      "cli": {
+        "attachments": [{"type": "folder", "path": "."}]
+      }
+    }
+  }'
+```
+
+### 📂 Multi-File Context for Gemini
+Attach multiple files or even entire folders to provide rich context to Gemini.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [
+      {"role": "user", "content": "Review the interaction between these three files and suggest optimizations for the registry logic."}
+    ],
+    "extra_body": {
+      "cli": {
+        "attachments": [
+          {"type": "file", "path": "./internal/cli/discovery.go"},
+          {"type": "file", "path": "./internal/runtime/executor/cli_executor.go"},
+          {"type": "file", "path": "./sdk/switchailocal/service_provider_registry.go"}
+        ]
+      }
+    }
+  }'
+```
+
+### 🔍 Repository-Wide Analysis (Vibe)
+Provide a whole project directory as context to Vibe for structural analysis or refactoring suggestions.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "vibe:",
+    "messages": [
+      {"role": "user", "content": "Identify any potential race conditions in the authentication flow across the whole project."}
+    ],
+    "extra_body": {
+      "cli": {
+        "attachments": [
+          {"type": "folder", "path": "."}
+        ],
+        "flags": {
+          "auto_approve": true
+        }
+      }
+    }
+  }'
+```
+
+---
+
+## 🌊 Advanced Features
+
+### Real-time Streaming
+Add `"stream": true` to see tokens as they are generated.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "switchai-reasoner",
+    "messages": [{"role": "user", "content": "Tell me a long story."}],
+    "stream": true
+  }'
+```
+
+### Auto-Routing (Prefix-less)
+If you don't specify a provider prefix, `switchAILocal` will automatically pick the best available provider for that model name.
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "switchai-fast",
+    "messages": [{"role": "user", "content": "Who are you?"}]
+  }'
+```

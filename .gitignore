@@ -1,0 +1,74 @@
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Project binaries
+/switchAILocal
+/switchailocal
+/switchAILocal*
+/switchailocal*
+/bridge-agent
+/server
+/bin/
+/dist/
+
+# Local configuration and environment
+.env
+.env.*
+!.env.example
+config.yaml
+!config.example.yaml
+
+# ail.sh runtime state
+.ail/
+
+# Auth files (ignore local credentials, keep directory)
+/auths/*
+!/auths/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.kiro/
+
+# Temporary and local development files
+tmp/
+translate_ui.py
+deep_translate_ui.py
+final_check.py
+development/
+# Debug and Profiling
+*.prof
+*.mprof
+*.pprof
+
+# Python cache (for root level python tools)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Go vendor
+vendor/
