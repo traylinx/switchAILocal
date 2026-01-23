@@ -1284,6 +1284,7 @@ func TestNormalizeAuthNil(t *testing.T) {
 
 // stubStore implements coreauth.Store plus watcher-specific persistence helpers.
 type stubStore struct {
+	mu              sync.Mutex
 	authDir         string
 	cfgPersisted    int32
 	authPersisted   int32
@@ -1302,6 +1303,8 @@ func (s *stubStore) PersistConfig(context.Context) error {
 }
 func (s *stubStore) PersistAuthFiles(_ context.Context, message string, paths ...string) error {
 	atomic.AddInt32(&s.authPersisted, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastAuthMessage = message
 	s.lastAuthPaths = paths
 	return nil
@@ -1343,11 +1346,16 @@ func TestPersistConfigAndAuthAsyncInvokePersister(t *testing.T) {
 	if atomic.LoadInt32(&store.authPersisted) != 1 {
 		t.Fatalf("expected PersistAuthFiles to be called once, got %d", store.authPersisted)
 	}
-	if store.lastAuthMessage != "msg" {
-		t.Fatalf("unexpected auth message: %s", store.lastAuthMessage)
+	store.mu.Lock()
+	msg := store.lastAuthMessage
+	paths := store.lastAuthPaths
+	store.mu.Unlock()
+
+	if msg != "msg" {
+		t.Fatalf("unexpected auth message: %s", msg)
 	}
-	if len(store.lastAuthPaths) != 2 || store.lastAuthPaths[0] != "a" || store.lastAuthPaths[1] != "b" {
-		t.Fatalf("unexpected filtered paths: %#v", store.lastAuthPaths)
+	if len(paths) != 2 || paths[0] != "a" || paths[1] != "b" {
+		t.Fatalf("unexpected filtered paths: %#v", paths)
 	}
 }
 
@@ -1375,7 +1383,10 @@ func TestScheduleConfigReloadDebounces(t *testing.T) {
 	if atomic.LoadInt32(&reloads) != 1 {
 		t.Fatalf("expected single debounced reload, got %d", reloads)
 	}
-	if w.lastConfigHash == "" {
+	w.clientsMutex.RLock()
+	hash := w.lastConfigHash
+	w.clientsMutex.RUnlock()
+	if hash == "" {
 		t.Fatal("expected lastConfigHash to be set after reload")
 	}
 }
