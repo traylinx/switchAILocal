@@ -193,13 +193,22 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 // extractContent parses CLI output to get the response text.
 func (e *LocalCLIExecutor) extractContent(raw string) string {
 	if e.SupportsJSON {
-		// Parse JSON output: {"response": "...", "stats": {...}}
-		clean := cleanCLIOutput(raw)
-		var cliResp struct {
-			Response string `json:"response"`
-		}
-		if err := json.Unmarshal([]byte(clean), &cliResp); err == nil && cliResp.Response != "" {
-			return cliResp.Response
+		// Parse JSON output: {"response": "...", "result": "..."}
+		// Handle leading/trailing noise by finding the JSON block
+		jsonBlock := extractJSONBlock(raw)
+		if jsonBlock != "" {
+			var cliResp struct {
+				Response string `json:"response"`
+				Result   string `json:"result"`
+			}
+			if err := json.Unmarshal([]byte(jsonBlock), &cliResp); err == nil {
+				if cliResp.Result != "" {
+					return cliResp.Result
+				}
+				if cliResp.Response != "" {
+					return cliResp.Response
+				}
+			}
 		}
 	}
 	// Fallback: return cleaned raw text
@@ -212,9 +221,17 @@ func (e *LocalCLIExecutor) extractUsage(raw string) *OpenAIUsage {
 		return nil
 	}
 
-	clean := cleanCLIOutput(raw)
+	jsonBlock := extractJSONBlock(raw)
+	if jsonBlock == "" {
+		return nil
+	}
+
 	var cliResp struct {
-		Stats struct {
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+		Stats *struct {
 			Models map[string]struct {
 				Tokens struct {
 					Prompt int `json:"prompt"`
@@ -223,23 +240,33 @@ func (e *LocalCLIExecutor) extractUsage(raw string) *OpenAIUsage {
 			} `json:"models"`
 		} `json:"stats"`
 	}
-	if err := json.Unmarshal([]byte(clean), &cliResp); err != nil {
+	if err := json.Unmarshal([]byte(jsonBlock), &cliResp); err != nil {
 		return nil
 	}
 
-	// Sum tokens from all models used
 	var prompt, total int
-	for _, m := range cliResp.Stats.Models {
-		prompt += m.Tokens.Prompt
-		total += m.Tokens.Total
+
+	// 1. Try "usage" field (Claude style)
+	if cliResp.Usage != nil {
+		prompt = cliResp.Usage.InputTokens
+		total = cliResp.Usage.InputTokens + cliResp.Usage.OutputTokens
+	} else if cliResp.Stats != nil {
+		// 2. Try "stats" field (Standard style)
+		for _, m := range cliResp.Stats.Models {
+			prompt += m.Tokens.Prompt
+			total += m.Tokens.Total
+		}
 	}
+
 	completion := total - prompt
 	if completion < 0 {
 		completion = 0
 	}
+
 	if total == 0 {
 		return nil
 	}
+
 	return &OpenAIUsage{
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
@@ -629,4 +656,17 @@ func extractCLIOptions(payload []byte) (*CLIOptions, error) {
 	}
 
 	return req.ExtraBody.CLI, nil
+}
+
+// extractJSONBlock finds the first '{' and last '}' to extract a JSON block from potentially noisy output.
+func extractJSONBlock(raw string) string {
+	start := strings.Index(raw, "{")
+	if start == -1 {
+		return ""
+	}
+	end := strings.LastIndex(raw, "}")
+	if end == -1 || end < start {
+		return ""
+	}
+	return raw[start : end+1]
 }
