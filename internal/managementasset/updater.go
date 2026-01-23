@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	defaultManagementReleaseURL = "https://api.github.com/repos/traylinx/switchAILocal-Management-Center/releases/latest"
+	defaultManagementReleaseURL = "https://api.github.com/repos/traylinx/switchAILocal/releases/latest"
 	managementAssetName         = "management.html"
 	httpUserAgent               = "switchAILocal-management-updater"
 	updateCheckInterval         = 3 * time.Hour
