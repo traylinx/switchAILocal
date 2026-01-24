@@ -45,6 +45,8 @@ var (
 	disableControlPanel atomic.Bool
 	schedulerOnce       sync.Once
 	schedulerConfigPath atomic.Value
+
+	ErrReleaseNotFound = errors.New("release not found")
 )
 
 // SetCurrentConfig stores the latest configuration snapshot for management asset decisions.
@@ -233,6 +235,10 @@ func EnsureLatestManagementHTML(ctx context.Context, staticDir string, proxyURL 
 
 	asset, remoteHash, err := fetchLatestAsset(ctx, client, releaseURL)
 	if err != nil {
+		if errors.Is(err, ErrReleaseNotFound) {
+			log.Debug("management asset update check skipped: no release found")
+			return
+		}
 		log.WithError(err).Warn("failed to fetch latest management release information")
 		return
 	}
@@ -317,6 +323,9 @@ func fetchLatestAsset(ctx context.Context, client *http.Client, releaseURL strin
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, "", ErrReleaseNotFound
+		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, "", fmt.Errorf("unexpected release status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
