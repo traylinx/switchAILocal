@@ -1,0 +1,78 @@
+:root {
+  /* Primary Colors - Updated to Purple Palette */
+  --mui-primary-main: #8533ff;
+  --mui-primary-light: #96f;
+  --mui-primary-dark: #60f;
+
+  --color-primary: var(--mui-primary-main);
+  --color-primary-hover: var(--mui-primary-dark);
+  --color-primary-light: #f3e8ff; /* Very light purple for backgrounds */
+
+  /* Status Colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-warning-light: #fef3c7;
+  --color-warning-dark: #92400e;
+  --color-error: #ef4444;
+  --color-info: #06b6d4;
+
+  /* Neutral Colors (Light Theme Default) */
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f9fafb;
+  --color-bg-tertiary: #f3f4f6;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+
+  /* Typography */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New",
+    monospace;
+
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Spacing */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
+  --space-12: 3rem; /* 48px */
+  --space-16: 4rem; /* 64px */
+
+  /* Border Radius - Updated to 4px universally */
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+}
+
+[data-theme='dark'] {
+  --color-bg: #121212;
+  --color-bg-secondary: #1e1e1e;
+  --color-bg-tertiary: #2d2d2d;
+  --color-border: #333333;
+  --color-text: #f9fafb;
+  --color-text-secondary: #9ca3af;
+  --color-text-tertiary: #6b7280;
+  --color-primary-light: #2d1b4d;
+}
+

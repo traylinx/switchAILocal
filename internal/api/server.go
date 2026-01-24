@@ -301,12 +301,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		optionState.routerConfigurator(engine, s.handlers, cfg)
 	}
 
-	// Register management routes when configuration or environment secrets are available.
-	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || envManagementSecret
-	s.managementRoutesEnabled.Store(hasManagementSecret)
-	if hasManagementSecret {
-		s.registerManagementRoutes()
-	}
+	// Register management routes and enable them by default.
+	// Authentication and localhost bypass are handled by the management middleware.
+	s.registerManagementRoutes()
+	s.managementRoutesEnabled.Store(true)
 
 	if optionState.keepAliveEnabled {
 		s.enableKeepAlive(optionState.keepAliveTimeout, optionState.keepAliveOnTimeout)
@@ -324,6 +322,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 // setupRoutes configures the API routes for the server.
 // It defines the endpoints and associates them with their respective handlers.
 func (s *Server) setupRoutes() {
+	s.engine.GET("/management", s.serveManagementControlPanel)
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
@@ -592,6 +591,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
 		mgmt.PATCH("/openai-compatibility", s.mgmt.PatchOpenAICompat)
 		mgmt.DELETE("/openai-compatibility", s.mgmt.DeleteOpenAICompat)
+
+		mgmt.POST("/providers/test", s.mgmt.TestProvider)
+		mgmt.POST("/providers/discover-models", s.mgmt.DiscoverModels)
 
 		mgmt.GET("/oauth-excluded-models", s.mgmt.GetOAuthExcludedModels)
 		mgmt.PUT("/oauth-excluded-models", s.mgmt.PutOAuthExcludedModels)
@@ -997,37 +999,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		}
 	}
 
-	prevSecretEmpty := true
-	if oldCfg != nil {
-		prevSecretEmpty = oldCfg.RemoteManagement.SecretKey == ""
-	}
-	newSecretEmpty := cfg.RemoteManagement.SecretKey == ""
-	if s.envManagementSecret {
-		s.registerManagementRoutes()
-		if s.managementRoutesEnabled.CompareAndSwap(false, true) {
-			log.Info("management routes enabled via MANAGEMENT_PASSWORD")
-		} else {
-			s.managementRoutesEnabled.Store(true)
-		}
-	} else {
-		switch {
-		case prevSecretEmpty && !newSecretEmpty:
-			s.registerManagementRoutes()
-			if s.managementRoutesEnabled.CompareAndSwap(false, true) {
-				log.Info("management routes enabled after secret key update")
-			} else {
-				s.managementRoutesEnabled.Store(true)
-			}
-		case !prevSecretEmpty && newSecretEmpty:
-			if s.managementRoutesEnabled.CompareAndSwap(true, false) {
-				log.Info("management routes disabled after secret key removal")
-			} else {
-				s.managementRoutesEnabled.Store(false)
-			}
-		default:
-			s.managementRoutesEnabled.Store(!newSecretEmpty)
-		}
-	}
+	// Ensure management routes are registered and enabled.
+	s.registerManagementRoutes()
+	s.managementRoutesEnabled.Store(true)
 
 	s.applyAccessConfig(oldCfg, cfg)
 	s.cfg = cfg

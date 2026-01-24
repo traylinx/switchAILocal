@@ -1,0 +1,118 @@
+.card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  transition: all 0.2s;
+}
+
+.card:hover {
+  border-color: var(--color-primary-light);
+}
+
+.button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: 6px;
+  font-weight: var(--font-medium);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.button-primary {
+  background: var(--color-primary);
+  color: white;
+}
+
+.button-primary:hover {
+  background: var(--color-primary-hover);
+}
+
+.button-primary:disabled {
+  background: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.button-secondary {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.button-secondary:hover {
+  background: var(--color-border);
+}
+
+.button-danger {
+  background: var(--color-error);
+  color: white;
+}
+
+.button-danger:hover {
+  background: #dc2626;
+}
+
+.button-sm {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--color-bg-tertiary);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle.active {
+  background: var(--color-primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.toggle.active .toggle-thumb {
+  transform: translateX(20px);
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color 0.2s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-light);
+}
+
+.input:disabled {
+  background: var(--color-bg-tertiary);
+  cursor: not-allowed;
+}
+
+.error-text {
+  color: var(--color-error);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}

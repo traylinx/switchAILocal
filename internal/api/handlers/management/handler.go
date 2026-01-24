@@ -155,6 +155,14 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 				h.attemptsMu.Unlock()
 			}
 		}
+		// LOCALHOST BYPASS: If accessing from localhost and remote management is not enabled,
+		// allow access without authentication for better UX
+		if localClient && !allowRemote && secretHash == "" && envSecret == "" {
+			c.Header("X-Management-Auth", "localhost-bypass")
+			c.Next()
+			return
+		}
+
 		if secretHash == "" && envSecret == "" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "remote management key not set"})
 			return

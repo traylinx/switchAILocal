@@ -132,6 +132,21 @@ type OllamaConfig struct {
 
 	// AutoDiscover when true, fetches available models from Ollama on startup.
 	AutoDiscover bool `yaml:"auto-discover" json:"auto-discover"`
+
+	// ProxyURL optionally overrides the global proxy for this provider.
+	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+
+	// ModelsURL overrides the default models discovery endpoint.
+	ModelsURL string `yaml:"models-url,omitempty" json:"models-url,omitempty"`
+
+	// Headers optionally adds extra HTTP headers for requests.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// ExcludedModels lists model IDs that should be excluded.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+
+	// Models defines manual model aliases.
+	Models []OpenAICompatibilityModel `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 // LMStudioConfig holds local LM Studio server settings.
@@ -144,6 +159,21 @@ type LMStudioConfig struct {
 
 	// AutoDiscover when true, fetches available models from LM Studio on startup.
 	AutoDiscover bool `yaml:"auto-discover" json:"auto-discover"`
+
+	// ProxyURL optionally overrides the global proxy for this provider.
+	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+
+	// ModelsURL overrides the default models discovery endpoint.
+	ModelsURL string `yaml:"models-url,omitempty" json:"models-url,omitempty"`
+
+	// Headers optionally adds extra HTTP headers for requests.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// ExcludedModels lists model IDs that should be excluded.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+
+	// Models defines manual model aliases.
+	Models []OpenAICompatibilityModel `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 // OpenCodeConfig holds local OpenCode server settings.
@@ -413,6 +443,12 @@ type OpenAICompatibility struct {
 
 	// Headers optionally adds extra HTTP headers for requests sent to this provider.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// ExcludedModels lists model IDs that should be excluded for this provider.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+
+	// ProxyURL overrides the global proxy setting for this provider.
+	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.

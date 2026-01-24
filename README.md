@@ -313,15 +313,16 @@ plugin:
 
 ### For Users
 
-| Guide                                               | Description                              |
-| --------------------------------------------------- | ---------------------------------------- |
-| [Installation](docs/user/installation.md)           | Build, run, and Docker setup             |
-| [Configuration](docs/user/configuration.md)         | All `config.yaml` options                |
-| [Provider Setup](docs/user/providers.md)            | Connect all your AI providers            |
-| [Examples](docs/user/examples.md)                   | Practical usage examples with curl       |
-| [API Reference](docs/user/api-reference.md)         | Endpoints and examples                   |
-| [CLI Reference](docs/user/cli-reference.md)         | All command-line flags                   |
-| [Advanced Features](docs/user/advanced-features.md) | Payload overrides, TLS, CLI capabilities |
+| Guide                                                     | Description                                |
+| --------------------------------------------------------- | ------------------------------------------ |
+| [Installation](docs/user/installation.md)                 | Build, run, and Docker setup               |
+| [Configuration](docs/user/configuration.md)               | All `config.yaml` options                  |
+| [Provider Setup](docs/user/providers.md)                  | Connect all your AI providers              |
+| [Examples](docs/user/examples.md)                         | Practical usage examples with curl         |
+| [API Reference](docs/user/api-reference.md)               | Endpoints and examples                     |
+| [CLI Reference](docs/user/cli-reference.md)               | All command-line flags                     |
+| [Advanced Features](docs/user/advanced-features.md)       | Payload overrides, TLS, CLI capabilities   |
+| [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
 
 ### For Developers
 

@@ -42,6 +42,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeVertexCompat(ctx)...)
 	// Ollama (Local)
 	out = append(out, s.synthesizeOllama(ctx)...)
+	// LM Studio (Local)
+	out = append(out, s.synthesizeLMStudio(ctx)...)
 	// OpenCode (Local)
 	out = append(out, s.synthesizeOpenCode(ctx)...)
 
@@ -247,6 +249,7 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				Label:      compat.Name,
 				Prefix:     prefix,
 				Status:     coreauth.StatusActive,
+				ProxyURL:   strings.TrimSpace(compat.ProxyURL),
 				Attributes: attrs,
 				CreatedAt:  now,
 				UpdatedAt:  now,
@@ -375,6 +378,7 @@ func (s *ConfigSynthesizer) synthesizeOllama(ctx *SynthesisContext) []*coreauth.
 		Provider:   "ollama",
 		Label:      "ollama-local",
 		Status:     coreauth.StatusActive,
+		ProxyURL:   strings.TrimSpace(cfg.Ollama.ProxyURL),
 		Attributes: attrs,
 		Metadata: map[string]any{
 			"source": "local_cli_discovery",
@@ -382,7 +386,43 @@ func (s *ConfigSynthesizer) synthesizeOllama(ctx *SynthesisContext) []*coreauth.
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	ApplyAuthExcludedModelsMeta(a, cfg, nil, "local")
+	ApplyAuthExcludedModelsMeta(a, cfg, cfg.Ollama.ExcludedModels, "local")
+	return []*coreauth.Auth{a}
+}
+
+// synthesizeLMStudio creates an Auth entry for local LM Studio server if enabled.
+func (s *ConfigSynthesizer) synthesizeLMStudio(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	if !cfg.LMStudio.Enabled {
+		return nil
+	}
+	now := ctx.Now
+	idGen := ctx.IDGenerator
+	base := strings.TrimSpace(cfg.LMStudio.BaseURL)
+	if base == "" {
+		base = "http://localhost:1234/v1"
+	}
+
+	id, token := idGen.Next("lmstudio:local", base)
+	attrs := map[string]string{
+		"source":   fmt.Sprintf("config:lmstudio[%s]", token),
+		"base_url": base,
+	}
+
+	a := &coreauth.Auth{
+		ID:         id,
+		Provider:   "lmstudio",
+		Label:      "lmstudio-local",
+		Status:     coreauth.StatusActive,
+		ProxyURL:   strings.TrimSpace(cfg.LMStudio.ProxyURL),
+		Attributes: attrs,
+		Metadata: map[string]any{
+			"source": "local_cli_discovery",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	ApplyAuthExcludedModelsMeta(a, cfg, cfg.LMStudio.ExcludedModels, "local")
 	return []*coreauth.Auth{a}
 }
 
