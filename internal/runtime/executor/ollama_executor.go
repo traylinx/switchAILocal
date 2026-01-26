@@ -65,9 +65,16 @@ func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor
 		return executor.Response{}, fmt.Errorf("failed to parse OpenAI request: %w", err)
 	}
 
+	// Use req.Model which has the normalized model name (provider prefix stripped)
+	// This ensures we send the correct model name to Ollama
+	modelName := req.Model
+	if modelName == "" {
+		modelName = openAIReq.Model
+	}
+
 	// Convert to Ollama format
 	ollamaReq := map[string]interface{}{
-		"model":    openAIReq.Model,
+		"model":    modelName,
 		"messages": openAIReq.Messages,
 		"stream":   false,
 	}
@@ -163,9 +170,16 @@ func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req ex
 		return nil, fmt.Errorf("failed to parse OpenAI request: %w", err)
 	}
 
+	// Use req.Model which has the normalized model name (provider prefix stripped)
+	// This ensures we send the correct model name to Ollama
+	modelName := req.Model
+	if modelName == "" {
+		modelName = openAIReq.Model
+	}
+
 	// Convert to Ollama format with streaming enabled
 	ollamaReq := map[string]interface{}{
-		"model":    openAIReq.Model,
+		"model":    modelName,
 		"messages": openAIReq.Messages,
 		"stream":   true,
 	}
