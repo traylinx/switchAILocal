@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/traylinx/switchAILocal/internal/config"
-	"github.com/traylinx/switchAILocal/internal/superbrain/doctor"
 	"github.com/traylinx/switchAILocal/internal/superbrain/sculptor"
 	sdkauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
