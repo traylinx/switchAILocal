@@ -108,6 +108,17 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 		}
 	}
 
+	// Phase 0 Quick Fix: Auto-inject --dangerously-skip-permissions for claudecli
+	// This prevents silent hangs on permission prompts when running in non-TTY environments
+	if e.Provider == "claudecli" && !e.hasTTY() {
+		skipPermFlag := "--dangerously-skip-permissions"
+		// Only add if not already present
+		if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
+			flags = append(flags, skipPermFlag)
+			log.Infof("Auto-injected %s for claudecli (no TTY detected)", skipPermFlag)
+		}
+	}
+
 	// Build command args: [Control Flags] -> [Default Args] -> [Format Args] -> [Prompt]
 	// 1. Control flags first (sandbox, auto-approve, session)
 	finalArgs := append([]string{}, flags...)
@@ -171,6 +182,13 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 				hint = "Please refresh your CLI tool credentials."
 			}
 			return switchailocalexecutor.Response{}, fmt.Errorf("local CLI missing valid auth: %s. %s", errMsg, hint)
+		}
+
+		// Phase 0 Quick Fix: Extract last 10 lines of stderr for debugging
+		// This helps diagnose silent hangs and other CLI issues
+		stderrHint := extractErrorHint(stderr.String())
+		if stderrHint != "" {
+			return switchailocalexecutor.Response{}, fmt.Errorf("CLI execution failed: %s. %s", errMsg, stderrHint)
 		}
 
 		return switchailocalexecutor.Response{}, fmt.Errorf("CLI execution failed: %s", errMsg)
@@ -323,6 +341,17 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 			} else {
 				flags = append(flags, e.SessionFlag, cliOpts.SessionID)
 			}
+		}
+	}
+
+	// Phase 0 Quick Fix: Auto-inject --dangerously-skip-permissions for claudecli
+	// This prevents silent hangs on permission prompts when running in non-TTY environments
+	if e.Provider == "claudecli" && !e.hasTTY() {
+		skipPermFlag := "--dangerously-skip-permissions"
+		// Only add if not already present
+		if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
+			flags = append(flags, skipPermFlag)
+			log.Infof("Auto-injected %s for claudecli (no TTY detected)", skipPermFlag)
 		}
 	}
 
@@ -669,4 +698,58 @@ func extractJSONBlock(raw string) string {
 		return ""
 	}
 	return raw[start : end+1]
+}
+
+// hasTTY checks if the process has a TTY attached.
+// In server/daemon contexts, this will typically return false.
+func (e *LocalCLIExecutor) hasTTY() bool {
+	// Check if stdin is a terminal
+	// In a server context (like switchAILocal), this will be false
+	fileInfo, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	// Check if stdin is a character device (terminal)
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+// containsFlag checks if a flag is present in a slice of arguments.
+func (e *LocalCLIExecutor) containsFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// extractErrorHint extracts the last 10 lines of stderr and provides a helpful hint.
+// This is part of Phase 0 Quick Fix to help diagnose CLI issues, particularly silent hangs.
+func extractErrorHint(stderr string) string {
+	if stderr == "" {
+		return ""
+	}
+
+	lines := strings.Split(stderr, "\n")
+	
+	// Get last 10 non-empty lines
+	var lastLines []string
+	for i := len(lines) - 1; i >= 0 && len(lastLines) < 10; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed != "" {
+			lastLines = append([]string{trimmed}, lastLines...)
+		}
+	}
+
+	if len(lastLines) == 0 {
+		return ""
+	}
+
+	// Build hint with last lines
+	hint := "CLI may be waiting for input. Last stderr output:\n"
+	for _, line := range lastLines {
+		hint += "  " + line + "\n"
+	}
+
+	return strings.TrimSpace(hint)
 }

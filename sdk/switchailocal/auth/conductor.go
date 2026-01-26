@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -200,6 +201,30 @@ func (m *Manager) UnregisterExecutor(provider string) {
 	m.mu.Lock()
 	delete(m.executors, provider)
 	m.mu.Unlock()
+}
+
+// UpdateSuperbrainConfig updates the Superbrain configuration in all registered executors.
+// This method is called during hot-reload when Superbrain config changes.
+func (m *Manager) UpdateSuperbrainConfig(cfg *config.SuperbrainConfig) {
+	if m == nil || cfg == nil {
+		return
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Iterate through all executors and update those that support Superbrain
+	for provider, executor := range m.executors {
+		// Check if the executor has an UpdateConfig method using type assertion
+		type superbrainConfigurable interface {
+			UpdateConfig(*config.SuperbrainConfig)
+		}
+
+		if configurable, ok := executor.(superbrainConfigurable); ok {
+			configurable.UpdateConfig(cfg)
+			log.Debugf("Updated Superbrain config for executor: %s", provider)
+		}
+	}
 }
 
 // Register inserts a new auth entry into the manager.

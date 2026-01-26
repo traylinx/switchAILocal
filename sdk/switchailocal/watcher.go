@@ -7,6 +7,7 @@ package switchailocal
 import (
 	"context"
 
+	internalconfig "github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/watcher"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
@@ -34,6 +35,9 @@ func defaultWatcherFactory(configPath, authDir string, reload func(*config.Confi
 		},
 		dispatchRuntimeUpdate: func(update watcher.AuthUpdate) bool {
 			return w.DispatchRuntimeAuthUpdate(update)
+		},
+		setSuperbrainReloadCallback: func(callback func(*internalconfig.SuperbrainConfig)) {
+			w.SetSuperbrainReloadCallback(callback)
 		},
 	}, nil
 }
