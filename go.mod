@@ -13,7 +13,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/leanovate/gopter v0.2.11
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/sirupsen/logrus v1.9.3
