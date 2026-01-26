@@ -268,21 +268,6 @@ func TestEndToEndHealingFlow_NegotiatedFailure(t *testing.T) {
 // ============================================================================
 // Mock Implementations for Testing
 // ============================================================================
-
-func newMockDoctor(diagnoseFunc func(ctx context.Context, snapshot *DiagnosticSnapshot) (*Diagnosis, error)) *doctor.InternalDoctor {
-	// Create a real doctor with default config
-	cfg := &config.DoctorConfig{
-		Model:     "mock-model",
-		TimeoutMs: 5000,
-	}
-	d := doctor.NewInternalDoctor(cfg)
-	
-	// Note: We can't override methods on the actual struct, so we'll use the real doctor
-	// and rely on pattern matching for tests
-	return d
-}
-
-// ============================================================================
 // Test 24.2: Context Sculpting Flow Tests
 // ============================================================================
 
