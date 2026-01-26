@@ -69,7 +69,11 @@ superbrain:
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
 	}
-	defer w.Stop()
+	defer func() {
+		if err := w.Stop(); err != nil {
+			t.Logf("warning: failed to stop watcher: %v", err)
+		}
+	}()
 
 	// Set Superbrain reload callback
 	w.SetSuperbrainReloadCallback(func(cfg *config.SuperbrainConfig) {
@@ -234,7 +238,11 @@ superbrain:
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
 	}
-	defer w.Stop()
+	defer func() {
+		if err := w.Stop(); err != nil {
+			t.Logf("warning: failed to stop watcher: %v", err)
+		}
+	}()
 
 	// Set Superbrain reload callback
 	w.SetSuperbrainReloadCallback(func(cfg *config.SuperbrainConfig) {
@@ -373,7 +381,11 @@ superbrain:
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
 	}
-	defer w.Stop()
+	defer func() {
+		if err := w.Stop(); err != nil {
+			t.Logf("warning: failed to stop watcher: %v", err)
+		}
+	}()
 
 	// Set Superbrain reload callback
 	w.SetSuperbrainReloadCallback(func(cfg *config.SuperbrainConfig) {

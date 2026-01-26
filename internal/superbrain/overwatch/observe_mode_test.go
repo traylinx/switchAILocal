@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,12 +27,15 @@ func TestObserveModeLogsButDoesNotAct(t *testing.T) {
 		MaxRestartAttempts:  2,
 	}
 
-	// Track whether snapshot handler was called
+	// Track whether snapshot handler was called (with mutex for race-free access)
+	var mu sync.Mutex
 	snapshotCalled := false
 	var capturedSnapshot *types.DiagnosticSnapshot
 
 	// Create monitor with snapshot handler
 	monitor := NewMonitor(cfg, func(ctx *OverwatchContext, snapshot *types.DiagnosticSnapshot) {
+		mu.Lock()
+		defer mu.Unlock()
 		snapshotCalled = true
 		capturedSnapshot = snapshot
 	})
@@ -51,25 +55,30 @@ func TestObserveModeLogsButDoesNotAct(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Verify snapshot was captured (monitoring is working)
-	if !snapshotCalled {
+	mu.Lock()
+	wasCalled := snapshotCalled
+	snapshot := capturedSnapshot
+	mu.Unlock()
+
+	if !wasCalled {
 		t.Error("Expected snapshot handler to be called after silence threshold")
 	}
 
-	if capturedSnapshot == nil {
+	if snapshot == nil {
 		t.Fatal("Expected snapshot to be captured")
 	}
 
 	// Verify snapshot contains expected data
-	if capturedSnapshot.Provider != "test-provider" {
-		t.Errorf("Expected provider 'test-provider', got '%s'", capturedSnapshot.Provider)
+	if snapshot.Provider != "test-provider" {
+		t.Errorf("Expected provider 'test-provider', got '%s'", snapshot.Provider)
 	}
 
-	if capturedSnapshot.Model != "test-model" {
-		t.Errorf("Expected model 'test-model', got '%s'", capturedSnapshot.Model)
+	if snapshot.Model != "test-model" {
+		t.Errorf("Expected model 'test-model', got '%s'", snapshot.Model)
 	}
 
-	if capturedSnapshot.ProcessState != "blocked" {
-		t.Errorf("Expected process state 'blocked', got '%s'", capturedSnapshot.ProcessState)
+	if snapshot.ProcessState != "blocked" {
+		t.Errorf("Expected process state 'blocked', got '%s'", snapshot.ProcessState)
 	}
 
 	// Verify log buffer contains the output we recorded

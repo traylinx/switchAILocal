@@ -268,15 +268,15 @@ func TestStreamMonitor(t *testing.T) {
 
 		// Write to stdout
 		go func() {
-			stdoutWriter.Write([]byte("stdout line 1\n"))
-			stdoutWriter.Write([]byte("stdout line 2\n"))
-			stdoutWriter.Close()
+			_, _ = stdoutWriter.Write([]byte("stdout line 1\n"))
+			_, _ = stdoutWriter.Write([]byte("stdout line 2\n"))
+			_ = stdoutWriter.Close()
 		}()
 
 		// Write to stderr
 		go func() {
-			stderrWriter.Write([]byte("stderr line 1\n"))
-			stderrWriter.Close()
+			_, _ = stderrWriter.Write([]byte("stderr line 1\n"))
+			_ = stderrWriter.Close()
 		}()
 
 		sm.Wait()

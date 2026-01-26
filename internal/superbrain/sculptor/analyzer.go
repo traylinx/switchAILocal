@@ -365,7 +365,7 @@ func (fa *FileAnalyzer) ListDirectoryFiles(dirPath string) []string {
 		".vscode": true, "dist": true, "build": true, "target": true,
 	}
 
-	filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

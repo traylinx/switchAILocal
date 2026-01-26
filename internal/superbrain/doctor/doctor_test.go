@@ -151,7 +151,7 @@ func TestInternalDoctor_FallbackToPatternOnAIFailure(t *testing.T) {
 	// Create a mock server that returns an error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "service unavailable"}`))
+		_, _ = w.Write([]byte(`{"error": "service unavailable"}`))
 	}))
 	defer server.Close()
 
@@ -255,7 +255,7 @@ func TestInternalDoctor_DiagnoseWithAI_Success(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(chatResp)
+		_ = json.NewEncoder(w).Encode(chatResp)
 	}))
 	defer server.Close()
 

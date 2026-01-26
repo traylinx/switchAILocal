@@ -269,13 +269,6 @@ func TestEndToEndHealingFlow_NegotiatedFailure(t *testing.T) {
 // Mock Implementations for Testing
 // ============================================================================
 
-// mockDoctorInterface is a mock implementation of the Internal Doctor for testing.
-// It wraps the actual doctor.InternalDoctor to allow custom behavior.
-type mockDoctorInterface struct {
-	*doctor.InternalDoctor
-	diagnoseFunc func(ctx context.Context, snapshot *DiagnosticSnapshot) (*Diagnosis, error)
-}
-
 func newMockDoctor(diagnoseFunc func(ctx context.Context, snapshot *DiagnosticSnapshot) (*Diagnosis, error)) *doctor.InternalDoctor {
 	// Create a real doctor with default config
 	cfg := &config.DoctorConfig{
