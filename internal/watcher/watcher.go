@@ -40,6 +40,7 @@ type Watcher struct {
 	configReloadMu    sync.Mutex
 	configReloadTimer *time.Timer
 	reloadCallback    func(*config.Config)
+	superbrainReloadCallback func(*config.SuperbrainConfig)
 	watcher           *fsnotify.Watcher
 	lastAuthHashes    map[string]string
 	lastRemoveTimes   map[string]time.Time
@@ -133,6 +134,13 @@ func (w *Watcher) SetConfig(cfg *config.Config) {
 // SetAuthUpdateQueue sets the queue used to emit auth updates.
 func (w *Watcher) SetAuthUpdateQueue(queue chan<- AuthUpdate) {
 	w.setAuthUpdateQueue(queue)
+}
+
+// SetSuperbrainReloadCallback sets the callback function to be called when Superbrain config changes.
+func (w *Watcher) SetSuperbrainReloadCallback(callback func(*config.SuperbrainConfig)) {
+	w.clientsMutex.Lock()
+	defer w.clientsMutex.Unlock()
+	w.superbrainReloadCallback = callback
 }
 
 // DispatchRuntimeAuthUpdate allows external runtime providers (e.g., websocket-driven auths)

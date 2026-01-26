@@ -10,6 +10,7 @@ package switchailocal
 import (
 	"context"
 
+	internalconfig "github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/watcher"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
@@ -92,10 +93,11 @@ type WatcherWrapper struct {
 	start func(ctx context.Context) error
 	stop  func() error
 
-	setConfig             func(cfg *config.Config)
-	snapshotAuths         func() []*coreauth.Auth
-	setUpdateQueue        func(queue chan<- watcher.AuthUpdate)
-	dispatchRuntimeUpdate func(update watcher.AuthUpdate) bool
+	setConfig                   func(cfg *config.Config)
+	snapshotAuths               func() []*coreauth.Auth
+	setUpdateQueue              func(queue chan<- watcher.AuthUpdate)
+	dispatchRuntimeUpdate       func(update watcher.AuthUpdate) bool
+	setSuperbrainReloadCallback func(callback func(*internalconfig.SuperbrainConfig))
 }
 
 // Start proxies to the underlying watcher Start implementation.
@@ -152,4 +154,12 @@ func (w *WatcherWrapper) SetAuthUpdateQueue(queue chan<- watcher.AuthUpdate) {
 		return
 	}
 	w.setUpdateQueue(queue)
+}
+
+// SetSuperbrainReloadCallback registers the callback to be called when Superbrain config changes.
+func (w *WatcherWrapper) SetSuperbrainReloadCallback(callback func(*internalconfig.SuperbrainConfig)) {
+	if w == nil || w.setSuperbrainReloadCallback == nil {
+		return
+	}
+	w.setSuperbrainReloadCallback(callback)
 }

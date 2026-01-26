@@ -286,6 +286,14 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 		}
 	}
 
+	// Superbrain configuration
+	if superbrainChanges := DiffSuperbrainConfig(&oldCfg.Superbrain, &newCfg.Superbrain); len(superbrainChanges) > 0 {
+		changes = append(changes, "superbrain:")
+		for _, c := range superbrainChanges {
+			changes = append(changes, "  "+c)
+		}
+	}
+
 	return changes
 }
 
@@ -335,4 +343,112 @@ func formatProxyURL(raw string) string {
 		return host
 	}
 	return scheme + "://" + host
+}
+
+// DiffSuperbrainConfig compares old and new Superbrain configurations and returns a list of changes.
+func DiffSuperbrainConfig(oldCfg, newCfg *config.SuperbrainConfig) []string {
+	changes := make([]string, 0, 16)
+	if oldCfg == nil || newCfg == nil {
+		return changes
+	}
+
+	// Top-level Superbrain settings
+	if oldCfg.Enabled != newCfg.Enabled {
+		changes = append(changes, fmt.Sprintf("enabled: %t -> %t", oldCfg.Enabled, newCfg.Enabled))
+	}
+	if oldCfg.Mode != newCfg.Mode {
+		changes = append(changes, fmt.Sprintf("mode: %s -> %s", oldCfg.Mode, newCfg.Mode))
+	}
+
+	// Overwatch configuration
+	if oldCfg.Overwatch.SilenceThresholdMs != newCfg.Overwatch.SilenceThresholdMs {
+		changes = append(changes, fmt.Sprintf("overwatch.silence-threshold-ms: %d -> %d", oldCfg.Overwatch.SilenceThresholdMs, newCfg.Overwatch.SilenceThresholdMs))
+	}
+	if oldCfg.Overwatch.LogBufferSize != newCfg.Overwatch.LogBufferSize {
+		changes = append(changes, fmt.Sprintf("overwatch.log-buffer-size: %d -> %d", oldCfg.Overwatch.LogBufferSize, newCfg.Overwatch.LogBufferSize))
+	}
+	if oldCfg.Overwatch.HeartbeatIntervalMs != newCfg.Overwatch.HeartbeatIntervalMs {
+		changes = append(changes, fmt.Sprintf("overwatch.heartbeat-interval-ms: %d -> %d", oldCfg.Overwatch.HeartbeatIntervalMs, newCfg.Overwatch.HeartbeatIntervalMs))
+	}
+	if oldCfg.Overwatch.MaxRestartAttempts != newCfg.Overwatch.MaxRestartAttempts {
+		changes = append(changes, fmt.Sprintf("overwatch.max-restart-attempts: %d -> %d", oldCfg.Overwatch.MaxRestartAttempts, newCfg.Overwatch.MaxRestartAttempts))
+	}
+
+	// Doctor configuration
+	if oldCfg.Doctor.Model != newCfg.Doctor.Model {
+		changes = append(changes, fmt.Sprintf("doctor.model: %s -> %s", oldCfg.Doctor.Model, newCfg.Doctor.Model))
+	}
+	if oldCfg.Doctor.TimeoutMs != newCfg.Doctor.TimeoutMs {
+		changes = append(changes, fmt.Sprintf("doctor.timeout-ms: %d -> %d", oldCfg.Doctor.TimeoutMs, newCfg.Doctor.TimeoutMs))
+	}
+
+	// Stdin injection configuration
+	if oldCfg.StdinInjection.Mode != newCfg.StdinInjection.Mode {
+		changes = append(changes, fmt.Sprintf("stdin-injection.mode: %s -> %s", oldCfg.StdinInjection.Mode, newCfg.StdinInjection.Mode))
+	}
+	if len(oldCfg.StdinInjection.CustomPatterns) != len(newCfg.StdinInjection.CustomPatterns) {
+		changes = append(changes, fmt.Sprintf("stdin-injection.custom-patterns count: %d -> %d", len(oldCfg.StdinInjection.CustomPatterns), len(newCfg.StdinInjection.CustomPatterns)))
+	}
+	if !equalStringSlice(oldCfg.StdinInjection.ForbiddenPatterns, newCfg.StdinInjection.ForbiddenPatterns) {
+		changes = append(changes, fmt.Sprintf("stdin-injection.forbidden-patterns: updated (%d -> %d entries)", len(oldCfg.StdinInjection.ForbiddenPatterns), len(newCfg.StdinInjection.ForbiddenPatterns)))
+	}
+
+	// Context sculptor configuration
+	if oldCfg.ContextSculptor.Enabled != newCfg.ContextSculptor.Enabled {
+		changes = append(changes, fmt.Sprintf("context-sculptor.enabled: %t -> %t", oldCfg.ContextSculptor.Enabled, newCfg.ContextSculptor.Enabled))
+	}
+	if oldCfg.ContextSculptor.TokenEstimator != newCfg.ContextSculptor.TokenEstimator {
+		changes = append(changes, fmt.Sprintf("context-sculptor.token-estimator: %s -> %s", oldCfg.ContextSculptor.TokenEstimator, newCfg.ContextSculptor.TokenEstimator))
+	}
+	if !equalStringSlice(oldCfg.ContextSculptor.PriorityFiles, newCfg.ContextSculptor.PriorityFiles) {
+		changes = append(changes, fmt.Sprintf("context-sculptor.priority-files: updated (%d -> %d entries)", len(oldCfg.ContextSculptor.PriorityFiles), len(newCfg.ContextSculptor.PriorityFiles)))
+	}
+
+	// Fallback configuration
+	if oldCfg.Fallback.Enabled != newCfg.Fallback.Enabled {
+		changes = append(changes, fmt.Sprintf("fallback.enabled: %t -> %t", oldCfg.Fallback.Enabled, newCfg.Fallback.Enabled))
+	}
+	if !equalStringSlice(oldCfg.Fallback.Providers, newCfg.Fallback.Providers) {
+		changes = append(changes, fmt.Sprintf("fallback.providers: updated (%d -> %d entries)", len(oldCfg.Fallback.Providers), len(newCfg.Fallback.Providers)))
+	}
+	if oldCfg.Fallback.MinSuccessRate != newCfg.Fallback.MinSuccessRate {
+		changes = append(changes, fmt.Sprintf("fallback.min-success-rate: %.2f -> %.2f", oldCfg.Fallback.MinSuccessRate, newCfg.Fallback.MinSuccessRate))
+	}
+
+	// Consensus configuration
+	if oldCfg.Consensus.Enabled != newCfg.Consensus.Enabled {
+		changes = append(changes, fmt.Sprintf("consensus.enabled: %t -> %t", oldCfg.Consensus.Enabled, newCfg.Consensus.Enabled))
+	}
+	if oldCfg.Consensus.VerificationModel != newCfg.Consensus.VerificationModel {
+		changes = append(changes, fmt.Sprintf("consensus.verification-model: %s -> %s", oldCfg.Consensus.VerificationModel, newCfg.Consensus.VerificationModel))
+	}
+	if !equalStringSlice(oldCfg.Consensus.TriggerPatterns, newCfg.Consensus.TriggerPatterns) {
+		changes = append(changes, fmt.Sprintf("consensus.trigger-patterns: updated (%d -> %d entries)", len(oldCfg.Consensus.TriggerPatterns), len(newCfg.Consensus.TriggerPatterns)))
+	}
+
+	// Security configuration
+	if oldCfg.Security.AuditLogEnabled != newCfg.Security.AuditLogEnabled {
+		changes = append(changes, fmt.Sprintf("security.audit-log-enabled: %t -> %t", oldCfg.Security.AuditLogEnabled, newCfg.Security.AuditLogEnabled))
+	}
+	if oldCfg.Security.AuditLogPath != newCfg.Security.AuditLogPath {
+		changes = append(changes, fmt.Sprintf("security.audit-log-path: %s -> %s", oldCfg.Security.AuditLogPath, newCfg.Security.AuditLogPath))
+	}
+	if !equalStringSlice(oldCfg.Security.ForbiddenOperations, newCfg.Security.ForbiddenOperations) {
+		changes = append(changes, fmt.Sprintf("security.forbidden-operations: updated (%d -> %d entries)", len(oldCfg.Security.ForbiddenOperations), len(newCfg.Security.ForbiddenOperations)))
+	}
+
+	return changes
+}
+
+// equalStringSlice compares two string slices for equality.
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

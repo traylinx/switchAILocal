@@ -274,3 +274,85 @@ ws-auth: true
 #           protocol: "codex" # restricts the rule to a specific protocol, options: openai, gemini, claude, codex
 #       params: # JSON path (gjson/sjson syntax) -> value
 #         "reasoning.effort": "high"
+
+# Superbrain: Intelligent orchestration and self-healing capabilities
+# Transforms switchAILocal from a passive proxy into an autonomous, self-healing AI gateway
+# with real-time monitoring, failure diagnosis, and automatic recovery.
+# superbrain:
+#   # Enable/disable the entire Superbrain system
+#   enabled: false
+#
+#   # Operational mode controls autonomous behavior:
+#   #   - "disabled": Superbrain is completely disabled (same as enabled: false)
+#   #   - "observe": Monitor and log but take no autonomous actions
+#   #   - "diagnose": Diagnose failures and log proposed actions without executing them
+#   #   - "human-in-the-loop": Diagnose and queue actions for operator approval
+#   #   - "conservative": Enable autonomous healing for whitelisted safe actions only
+#   #   - "autopilot": Enable all autonomous healing capabilities
+#   mode: "disabled"
+#
+#   # Component Flags: Fine-grained control over individual Superbrain components
+#   # Allows gradual rollout and independent testing of each capability
+#   component_flags:
+#     overwatch_enabled: true          # Real-time execution monitoring
+#     doctor_enabled: true             # AI-powered failure diagnosis
+#     injector_enabled: true           # Autonomous stdin injection
+#     recovery_enabled: true           # Process restart with corrective flags
+#     fallback_enabled: true           # Intelligent failover routing
+#     sculptor_enabled: true           # Pre-flight content optimization
+#
+#   # Overwatch: Real-time execution monitoring
+#   overwatch:
+#     silence_threshold_ms: 30000      # Flag execution as hung after 30 seconds of no output
+#     log_buffer_size: 50              # Number of recent log lines to retain
+#     heartbeat_interval_ms: 1000      # Check process health every 1 second
+#     max_restart_attempts: 2          # Maximum restart attempts before escalating to fallback
+#
+#   # Doctor: AI-powered failure diagnosis
+#   doctor:
+#     model: "gemini-flash"            # Lightweight model for fast diagnosis
+#     timeout_ms: 5000                 # Maximum time to wait for diagnosis (5 seconds)
+#
+#   # Stdin Injection: Autonomous input for interactive prompts
+#   stdin_injection:
+#     mode: "conservative"             # disabled, conservative, autopilot
+#     custom_patterns: []              # Additional prompt patterns to recognize
+#     forbidden_patterns:              # Never auto-respond to these patterns
+#       - "delete"
+#       - "remove"
+#       - "sudo"
+#
+#   # Context Sculptor: Pre-flight content optimization
+#   context_sculptor:
+#     enabled: true
+#     token_estimator: "tiktoken"      # tiktoken (accurate) or simple (fast approximation)
+#     priority_files:                  # Always include these files when optimizing
+#       - "README.md"
+#       - "main.go"
+#       - "index.ts"
+#       - "package.json"
+#
+#   # Fallback: Intelligent failover routing
+#   fallback:
+#     enabled: true
+#     providers:                       # Fallback order preference
+#       - "geminicli"
+#       - "gemini"
+#       - "ollama"
+#     min_success_rate: 0.5            # Minimum historical success rate to consider provider
+#
+#   # Consensus: Multi-model response verification (disabled by default due to added cost)
+#   consensus:
+#     enabled: false
+#     verification_model: "gemini-flash"
+#     trigger_patterns:                # When to verify responses
+#       - "abrupt_ending"
+#       - "missing_code_blocks"
+#
+#   # Security: Audit logging and safety controls
+#   security:
+#     audit_log_enabled: true
+#     audit_log_path: "./logs/superbrain_audit.log"
+#     forbidden_operations:            # Operations requiring human approval
+#       - "file_delete"
+#       - "system_command"

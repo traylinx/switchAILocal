@@ -15,6 +15,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/api"
+	internalconfig "github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/discovery"
 	"github.com/traylinx/switchAILocal/internal/discovery/parsers"
 	"github.com/traylinx/switchAILocal/internal/plugin"
@@ -294,6 +295,23 @@ func (s *Service) Run(ctx context.Context) error {
 		watcherWrapper.SetAuthUpdateQueue(s.authUpdates)
 	}
 	watcherWrapper.SetConfig(s.cfg)
+
+	// Set up Superbrain config reload callback
+	watcherWrapper.SetSuperbrainReloadCallback(func(newSuperbrainCfg *internalconfig.SuperbrainConfig) {
+		if s.coreManager == nil {
+			return
+		}
+
+		log.WithFields(log.Fields{
+			"enabled": newSuperbrainCfg.Enabled,
+			"mode":    newSuperbrainCfg.Mode,
+		}).Info("Superbrain configuration changed, updating all executors")
+
+		// Update all registered executors with the new Superbrain config
+		s.coreManager.UpdateSuperbrainConfig(newSuperbrainCfg)
+
+		log.Info("Superbrain configuration updated successfully in all executors")
+	})
 
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	s.watcherCancel = watcherCancel

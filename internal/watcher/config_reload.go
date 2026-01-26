@@ -127,6 +127,19 @@ func (w *Watcher) reloadConfig() bool {
 		} else {
 			log.Debugf("no material config field changes detected")
 		}
+
+		// Check for Superbrain config changes
+		superbrainChanges := diff.DiffSuperbrainConfig(&oldConfig.Superbrain, &newConfig.Superbrain)
+		if len(superbrainChanges) > 0 {
+			log.Infof("Superbrain configuration changed, triggering executor updates")
+			w.clientsMutex.RLock()
+			callback := w.superbrainReloadCallback
+			w.clientsMutex.RUnlock()
+
+			if callback != nil {
+				callback(&newConfig.Superbrain)
+			}
+		}
 	}
 
 	authDirChanged := oldConfig == nil || oldConfig.AuthDir != newConfig.AuthDir

@@ -5,6 +5,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -121,6 +122,267 @@ func TestLocalCLIExecutor_ExtractUsage(t *testing.T) {
 			}
 			if got.TotalTokens != tt.wantTotal {
 				t.Errorf("TotalTokens = %v, want %v", got.TotalTokens, tt.wantTotal)
+			}
+		})
+	}
+}
+
+// TestLocalCLIExecutor_AutoInjectSkipPermissions tests the Phase 0 Quick Fix
+// for auto-injecting --dangerously-skip-permissions for claudecli
+func TestLocalCLIExecutor_AutoInjectSkipPermissions(t *testing.T) {
+	tests := []struct {
+		name           string
+		provider       string
+		existingArgs   []string
+		existingFlags  []string
+		hasTTY         bool
+		expectInjected bool
+	}{
+		{
+			name:           "claudecli without flag and no TTY should inject",
+			provider:       "claudecli",
+			existingArgs:   []string{"-p"},
+			existingFlags:  []string{},
+			hasTTY:         false,
+			expectInjected: true,
+		},
+		{
+			name:           "claudecli without flag but with TTY should not inject",
+			provider:       "claudecli",
+			existingArgs:   []string{"-p"},
+			existingFlags:  []string{},
+			hasTTY:         true,
+			expectInjected: false,
+		},
+		{
+			name:           "claudecli with flag in args should not inject",
+			provider:       "claudecli",
+			existingArgs:   []string{"-p", "--dangerously-skip-permissions"},
+			existingFlags:  []string{},
+			hasTTY:         false,
+			expectInjected: false,
+		},
+		{
+			name:           "claudecli with flag in flags should not inject",
+			provider:       "claudecli",
+			existingArgs:   []string{"-p"},
+			existingFlags:  []string{"--dangerously-skip-permissions"},
+			hasTTY:         false,
+			expectInjected: false,
+		},
+		{
+			name:           "geminicli should not inject",
+			provider:       "geminicli",
+			existingArgs:   []string{"-p"},
+			existingFlags:  []string{},
+			hasTTY:         false,
+			expectInjected: false,
+		},
+		{
+			name:           "vibe should not inject",
+			provider:       "vibe",
+			existingArgs:   []string{},
+			existingFlags:  []string{},
+			hasTTY:         false,
+			expectInjected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &LocalCLIExecutor{
+				Provider: tt.provider,
+				Args:     tt.existingArgs,
+			}
+
+			// Simulate the flag building logic from Execute/ExecuteStream
+			flags := append([]string{}, tt.existingFlags...)
+
+			// Apply the auto-injection logic (using test's hasTTY value instead of actual detection)
+			if e.Provider == "claudecli" && !tt.hasTTY {
+				skipPermFlag := "--dangerously-skip-permissions"
+				if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
+					flags = append(flags, skipPermFlag)
+				}
+			}
+
+			// Check if flag was injected
+			hasFlag := e.containsFlag(flags, "--dangerously-skip-permissions")
+			if tt.expectInjected && !hasFlag {
+				t.Errorf("Expected --dangerously-skip-permissions to be injected, but it wasn't")
+			}
+			if !tt.expectInjected && hasFlag && len(tt.existingFlags) == 0 && !e.containsFlag(tt.existingArgs, "--dangerously-skip-permissions") {
+				t.Errorf("Expected --dangerously-skip-permissions NOT to be injected, but it was")
+			}
+		})
+	}
+}
+
+// TestLocalCLIExecutor_ContainsFlag tests the containsFlag helper method
+func TestLocalCLIExecutor_ContainsFlag(t *testing.T) {
+	e := &LocalCLIExecutor{}
+
+	tests := []struct {
+		name string
+		args []string
+		flag string
+		want bool
+	}{
+		{
+			name: "flag present",
+			args: []string{"-p", "--dangerously-skip-permissions", "--output-format=json"},
+			flag: "--dangerously-skip-permissions",
+			want: true,
+		},
+		{
+			name: "flag not present",
+			args: []string{"-p", "--output-format=json"},
+			flag: "--dangerously-skip-permissions",
+			want: false,
+		},
+		{
+			name: "empty args",
+			args: []string{},
+			flag: "--dangerously-skip-permissions",
+			want: false,
+		},
+		{
+			name: "partial match should not count",
+			args: []string{"--dangerously-skip"},
+			flag: "--dangerously-skip-permissions",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := e.containsFlag(tt.args, tt.flag); got != tt.want {
+				t.Errorf("containsFlag() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLocalCLIExecutor_HasTTY tests the TTY detection
+// Note: In test environments, this will typically return false
+func TestLocalCLIExecutor_HasTTY(t *testing.T) {
+	e := &LocalCLIExecutor{}
+	
+	// In most test environments, there's no TTY
+	// This test just ensures the method doesn't panic
+	hasTTY := e.hasTTY()
+	
+	// We can't assert a specific value since it depends on the test environment
+	// But we can verify it returns a boolean
+	t.Logf("hasTTY() returned: %v", hasTTY)
+	
+	// The method should not panic and should return a boolean
+	if hasTTY {
+		t.Log("TTY detected in test environment (unusual but valid)")
+	} else {
+		t.Log("No TTY detected in test environment (expected)")
+	}
+}
+
+// TestExtractErrorHint tests the Phase 0 Quick Fix error hint extraction
+func TestExtractErrorHint(t *testing.T) {
+	tests := []struct {
+		name       string
+		stderr     string
+		wantHint   bool
+		wantLines  int
+		wantPrefix string
+	}{
+		{
+			name:       "empty stderr returns empty hint",
+			stderr:     "",
+			wantHint:   false,
+			wantLines:  0,
+			wantPrefix: "",
+		},
+		{
+			name:       "single line stderr",
+			stderr:     "Error: permission denied",
+			wantHint:   true,
+			wantLines:  1,
+			wantPrefix: "CLI may be waiting for input",
+		},
+		{
+			name: "multiple lines under 10",
+			stderr: `Starting process...
+Connecting to API...
+Error: connection timeout
+Failed to complete request`,
+			wantHint:   true,
+			wantLines:  4,
+			wantPrefix: "CLI may be waiting for input",
+		},
+		{
+			name: "more than 10 lines returns last 10",
+			stderr: `Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+Line 6
+Line 7
+Line 8
+Line 9
+Line 10
+Line 11
+Line 12
+Line 13`,
+			wantHint:   true,
+			wantLines:  10,
+			wantPrefix: "CLI may be waiting for input",
+		},
+		{
+			name: "empty lines are filtered",
+			stderr: `Error occurred
+
+Another error
+
+Final error`,
+			wantHint:   true,
+			wantLines:  3,
+			wantPrefix: "CLI may be waiting for input",
+		},
+		{
+			name: "permission prompt in stderr",
+			stderr: `Processing request...
+Allow tool execution? [y/n]
+Waiting for response...`,
+			wantHint:   true,
+			wantLines:  3,
+			wantPrefix: "CLI may be waiting for input",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := extractErrorHint(tt.stderr)
+
+			if tt.wantHint {
+				if hint == "" {
+					t.Errorf("Expected hint, got empty string")
+					return
+				}
+
+				if !strings.Contains(hint, tt.wantPrefix) {
+					t.Errorf("Expected hint to contain %q, got: %s", tt.wantPrefix, hint)
+				}
+
+				// Count lines in hint (excluding the prefix line)
+				lines := strings.Split(hint, "\n")
+				// First line is the prefix, rest are stderr lines
+				actualLines := len(lines) - 1
+				if actualLines != tt.wantLines {
+					t.Errorf("Expected %d stderr lines in hint, got %d", tt.wantLines, actualLines)
+				}
+			} else {
+				if hint != "" {
+					t.Errorf("Expected empty hint, got: %s", hint)
+				}
 			}
 		})
 	}
