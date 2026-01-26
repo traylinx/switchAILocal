@@ -11,7 +11,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -530,9 +529,15 @@ func prepareGeminiCLITokenSource(ctx context.Context, cfg *config.Config, auth *
 	}
 
 	var token oauth2.Token
+	// Optimization: Manually extract fields instead of JSON marshal/unmarshal
 	if len(base) > 0 {
-		if raw, err := json.Marshal(base); err == nil {
-			_ = json.Unmarshal(raw, &token)
+		token.AccessToken = stringValue(base, "access_token")
+		token.RefreshToken = stringValue(base, "refresh_token")
+		token.TokenType = stringValue(base, "token_type")
+		if expiryStr := stringValue(base, "expiry"); expiryStr != "" {
+			if ts, err := time.Parse(time.RFC3339, expiryStr); err == nil {
+				token.Expiry = ts
+			}
 		}
 	}
 
@@ -601,14 +606,20 @@ func buildGeminiTokenMap(base map[string]any, tok *oauth2.Token) map[string]any 
 	if merged == nil {
 		merged = make(map[string]any)
 	}
-	if raw, err := json.Marshal(tok); err == nil {
-		var tokenMap map[string]any
-		if err = json.Unmarshal(raw, &tokenMap); err == nil {
-			for k, v := range tokenMap {
-				merged[k] = v
-			}
-		}
+	// Optimization: avoid JSON roundtrip
+	// AccessToken matches JSON behavior (no omitempty)
+	merged["access_token"] = tok.AccessToken
+
+	if tok.TokenType != "" {
+		merged["token_type"] = tok.TokenType
 	}
+	if tok.RefreshToken != "" {
+		merged["refresh_token"] = tok.RefreshToken
+	}
+
+	// Expiry matches JSON behavior (no omitempty in some versions, and we want to preserve override behavior)
+	merged["expiry"] = tok.Expiry.Format(time.RFC3339)
+
 	return merged
 }
 
