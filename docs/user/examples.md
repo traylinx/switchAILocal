@@ -38,18 +38,39 @@ curl http://localhost:18080/v1/chat/completions \
   }'
 ```
 
-### DeepSeek Reasoner
-Force a specialized model for complex logic or coding tasks. Both formats work:
+### Specialized Reasoning (DeepSeek)
+Use high-reasoning models for complex logic.
 ```bash
-# Using provider:upstream-name syntax
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
     "model": "switchai:deepseek-reasoner",
-    "messages": [{"role": "user", "content": "Explain the Fermi Paradox."}]
+    "messages": [{"role": "user", "content": "Solve for x: 2x + 5 = 15"}],
+    "extra_body": {
+      "reasoning_effort": "high"
+    }
   }'
 ```
+
+---
+
+## ⚡ Groq Cloud Samples
+
+Groq provides ultra-fast inference for Llama, Mixtral, and Gemma models.
+
+### Llama 3.3 70B (Ultra-Fast)
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "groq:llama-3.3-70b-versatile",
+    "messages": [{"role": "user", "content": "Write a fast python script for web scraping."}]
+  }'
+```
+
+---
 
 ---
 
@@ -263,21 +284,52 @@ curl http://localhost:18080/v1/chat/completions \
   }'
 ```
 
+### 🧊 Local LLMs (Ollama / LM Studio)
+Run models locally and access them via the same API.
+
+```bash
+# Ollama
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama:qwen2.5-coder:32b",
+    "messages": [{"role": "user", "content": "Write a Go function to reverse a string."}]
+  }'
+
+# LM Studio
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "lmstudio:luna-ai-llama2",
+    "messages": [{"role": "user", "content": "Hello Luna!"}]
+  }'
+```
+
 ---
 
 ## 🌊 Advanced Features
 
 ### Real-time Streaming
-Add `"stream": true` to see tokens as they are generated.
+Add `"stream": true` to see tokens as they are generated. `switchAILocal` ensures a clean SSE stream with standard `data: ` prefixes.
+
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
     "model": "switchai-reasoner",
-    "messages": [{"role": "user", "content": "Tell me a long story."}],
+    "messages": [{"role": "user", "content": "Explain quantum entanglement in 3 sentences."}],
     "stream": true
   }'
+```
+
+**Expected SSE Output Format:**
+```sse
+data: {"id":"...","object":"chat.completion.chunk",...}
+
+data: {"id":"...","object":"chat.completion.chunk",...}
+
+data: [DONE]
 ```
 
 ### Auto-Routing (Prefix-less)

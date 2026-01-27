@@ -185,21 +185,21 @@ ws-auth: true
 #       - "*-thinking"               # wildcard matching suffix (e.g. claude-opus-4-5-thinking)
 #       - "*haiku*"                  # wildcard matching substring (e.g. claude-3-5-haiku-20241022)
 
-# OpenAI compatibility providers
+# OpenAI compatibility providers (e.g., Groq, OpenRouter, Together AI)
 # openai-compatibility:
-#   - name: "openrouter" # The name of the provider; it will be used in the user agent and other places.
-#     prefix: "test" # optional: require calls like "test/kimi-k2" to target this provider's credentials
-#     base-url: "https://openrouter.ai/api/v1" # The base URL of the provider.
-#     headers:
-#       X-Custom-Header: "custom-value"
+#   - name: "groq"
+#     prefix: "groq"
+#     base-url: "https://api.groq.com/openai/v1"
 #     api-key-entries:
-#       - api-key: "sk-or-v1-...b780"
-#         proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override
-#       - api-key: "sk-or-v1-...b781" # without proxy-url
-#     models: # The models supported by the provider.
-#       - name: "moonshotai/kimi-k2:free" # The actual model name.
-#         alias: "kimi-k2" # The alias used in the API.
-#     models-url: "https://openrouter.ai/api/v1/models" # Optional: Dynamic model discovery endpoint
+#       - api-key: "gsk_..."
+#   - name: "openrouter"
+#     prefix: "test" # optional: require calls like "test/kimi-k2" to target this provider's credentials
+#     base-url: "https://openrouter.ai/api/v1"
+#     api-key-entries:
+#       - api-key: "sk-or-v1-..."
+#     models:
+#       - name: "moonshotai/kimi-k2:free"
+#         alias: "kimi-k2"
 
 # Vertex API keys (Vertex-compatible endpoints, use API key + base URL)
 # vertex-api-key:

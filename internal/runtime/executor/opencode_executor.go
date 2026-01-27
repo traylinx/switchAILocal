@@ -19,9 +19,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/registry"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
-	"github.com/traylinx/switchAILocal/internal/registry"
 )
 
 // OpenCode default configuration
@@ -487,11 +487,10 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 							},
 						}
 						b, _ := json.Marshal(chunk)
-						out <- switchailocalexecutor.StreamChunk{Payload: append([]byte("data: "), append(b, []byte("\n\n")...)...)}
+						out <- switchailocalexecutor.StreamChunk{Payload: b}
 					}
 
 					if eventType == "message.completed" || eventType == "assistant.complete" {
-						out <- switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
 						return
 					}
 				}

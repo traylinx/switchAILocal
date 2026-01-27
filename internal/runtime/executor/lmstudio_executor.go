@@ -135,15 +135,22 @@ func (e *LMStudioExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req 
 			}
 
 			// LM Studio returns SSE format: "data: {...}"
-			// Pass through as-is since it's already OpenAI-compatible
-			select {
-			case ch <- executor.StreamChunk{Payload: append(line, '\n', '\n')}:
-			case <-ctx.Done():
+			// strip "data: " prefix and "\n\n" suffix to avoid double wrapping
+			trimmed := bytes.TrimPrefix(line, []byte("data: "))
+			trimmed = bytes.TrimSpace(trimmed)
+
+			// Check for [DONE] signal
+			if string(trimmed) == "[DONE]" {
 				return
 			}
 
-			// Check for [DONE] signal
-			if bytes.Contains(line, []byte("[DONE]")) {
+			if len(trimmed) == 0 {
+				continue
+			}
+
+			select {
+			case ch <- executor.StreamChunk{Payload: trimmed}:
+			case <-ctx.Done():
 				return
 			}
 		}

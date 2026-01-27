@@ -262,19 +262,16 @@ func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req ex
 			}
 
 			chunkBytes, _ := json.Marshal(openAIChunk)
-			sseData := fmt.Sprintf("data: %s\n\n", string(chunkBytes))
+			// Return raw JSON bytes without "data: " prefix or newlines
+			// The upstream handler will wrap this in "data: %s\n\n"
 
 			select {
-			case ch <- executor.StreamChunk{Payload: []byte(sseData)}:
+			case ch <- executor.StreamChunk{Payload: chunkBytes}:
 			case <-ctx.Done():
 				return
 			}
 
 			if ollamaChunk.Done {
-				select {
-				case ch <- executor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}:
-				case <-ctx.Done():
-				}
 				return
 			}
 		}
