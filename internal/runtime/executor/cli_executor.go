@@ -609,9 +609,14 @@ func cleanCLIOutput(raw string) string {
 // parseMessages extracts messages from OpenAI JSON payload.
 // Includes system, user, and assistant messages for full context.
 func parseMessages(data []byte) (string, error) {
+	type ContentPart struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}
+
 	type Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
 	}
 	type ChatReq struct {
 		Messages []Message `json:"messages"`
@@ -629,13 +634,31 @@ func parseMessages(data []byte) (string, error) {
 	// Build prompt with context from all message types
 	var sb strings.Builder
 	for _, msg := range req.Messages {
+		var contentStr string
+
+		// Try string first
+		var simpleContent string
+		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
+			contentStr = simpleContent
+		} else {
+			// Try array
+			var parts []ContentPart
+			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+				for _, part := range parts {
+					if part.Type == "text" {
+						contentStr += part.Text
+					}
+				}
+			}
+		}
+
 		switch msg.Role {
 		case "system":
-			sb.WriteString("[System]: " + msg.Content + "\n\n")
+			sb.WriteString("[System]: " + contentStr + "\n\n")
 		case "user":
-			sb.WriteString(msg.Content + "\n")
+			sb.WriteString(contentStr + "\n")
 		case "assistant":
-			sb.WriteString("[Previous response]: " + msg.Content + "\n\n")
+			sb.WriteString("[Previous response]: " + contentStr + "\n\n")
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
@@ -731,7 +754,7 @@ func extractErrorHint(stderr string) string {
 	}
 
 	lines := strings.Split(stderr, "\n")
-	
+
 	// Get last 10 non-empty lines
 	var lastLines []string
 	for i := len(lines) - 1; i >= 0 && len(lastLines) < 10; i-- {

@@ -52,17 +52,78 @@ func (e *OllamaExecutor) PrepareRequest(_ *http.Request, _ *auth.Auth) error { r
 func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor.Request, opts executor.Options) (executor.Response, error) {
 	// Parse the incoming OpenAI-format payload
 	var openAIReq struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Stream      bool    `json:"stream"`
-		Temperature float64 `json:"temperature,omitempty"`
-		MaxTokens   int     `json:"max_tokens,omitempty"`
+		Model       string          `json:"model"`
+		Messages    json.RawMessage `json:"messages"`
+		Stream      bool            `json:"stream"`
+		Temperature float64         `json:"temperature,omitempty"`
+		MaxTokens   int             `json:"max_tokens,omitempty"`
 	}
 	if err := json.Unmarshal(req.Payload, &openAIReq); err != nil {
 		return executor.Response{}, fmt.Errorf("failed to parse OpenAI request: %w", err)
+	}
+
+	// Helper struct for parsing messages
+	type ContentPart struct {
+		Type     string `json:"type"`
+		Text     string `json:"text,omitempty"`
+		ImageURL *struct {
+			URL string `json:"url"`
+		} `json:"image_url,omitempty"`
+	}
+
+	type Message struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+		Images  []string        `json:"-"` // Internal use for Ollama
+	}
+
+	var parsedMessages []Message
+	if err := json.Unmarshal(openAIReq.Messages, &parsedMessages); err != nil {
+		return executor.Response{}, fmt.Errorf("failed to parse messages: %w", err)
+	}
+
+	var ollamaMessages []map[string]interface{}
+
+	for _, msg := range parsedMessages {
+		var contentStr string
+		var images []string
+
+		// Try to unmarshal content as string first
+		var simpleContent string
+		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
+			contentStr = simpleContent
+		} else {
+			// Try as array of parts
+			var parts []ContentPart
+			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+				for _, part := range parts {
+					if part.Type == "text" {
+						contentStr += part.Text
+					} else if part.Type == "image_url" && part.ImageURL != nil {
+						// Extract base64 from data URL if present
+						// Format: data:image/png;base64,....
+						if strings.HasPrefix(part.ImageURL.URL, "data:") {
+							parts := strings.Split(part.ImageURL.URL, ",")
+							if len(parts) == 2 {
+								images = append(images, parts[1])
+							}
+						} else {
+							// Just pass the URL if it's not a data URL (Ollama might not support this for all backends, but it's best effort)
+							images = append(images, part.ImageURL.URL)
+						}
+					}
+				}
+			}
+		}
+
+		ollamaMsg := map[string]interface{}{
+			"role":    msg.Role,
+			"content": contentStr,
+		}
+		if len(images) > 0 {
+			ollamaMsg["images"] = images
+		}
+		ollamaMessages = append(ollamaMessages, ollamaMsg)
 	}
 
 	// Use req.Model which has the normalized model name (provider prefix stripped)
@@ -75,7 +136,7 @@ func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor
 	// Convert to Ollama format
 	ollamaReq := map[string]interface{}{
 		"model":    modelName,
-		"messages": openAIReq.Messages,
+		"messages": ollamaMessages,
 		"stream":   false,
 	}
 	if openAIReq.Temperature > 0 {
@@ -159,15 +220,71 @@ func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor
 func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req executor.Request, opts executor.Options) (<-chan executor.StreamChunk, error) {
 	// Parse the incoming OpenAI-format payload
 	var openAIReq struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Temperature float64 `json:"temperature,omitempty"`
+		Model       string          `json:"model"`
+		Messages    json.RawMessage `json:"messages"`
+		Stream      bool            `json:"stream"`
+		Temperature float64         `json:"temperature,omitempty"`
 	}
 	if err := json.Unmarshal(req.Payload, &openAIReq); err != nil {
 		return nil, fmt.Errorf("failed to parse OpenAI request: %w", err)
+	}
+
+	// Helper struct for parsing messages (replicated for streaming)
+	type ContentPart struct {
+		Type     string `json:"type"`
+		Text     string `json:"text,omitempty"`
+		ImageURL *struct {
+			URL string `json:"url"`
+		} `json:"image_url,omitempty"`
+	}
+
+	type Message struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+
+	var parsedMessages []Message
+	if err := json.Unmarshal(openAIReq.Messages, &parsedMessages); err != nil {
+		return nil, fmt.Errorf("failed to parse messages: %w", err)
+	}
+
+	var ollamaMessages []map[string]interface{}
+
+	for _, msg := range parsedMessages {
+		var contentStr string
+		var images []string
+
+		var simpleContent string
+		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
+			contentStr = simpleContent
+		} else {
+			var parts []ContentPart
+			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+				for _, part := range parts {
+					if part.Type == "text" {
+						contentStr += part.Text
+					} else if part.Type == "image_url" && part.ImageURL != nil {
+						if strings.HasPrefix(part.ImageURL.URL, "data:") {
+							parts := strings.Split(part.ImageURL.URL, ",")
+							if len(parts) == 2 {
+								images = append(images, parts[1])
+							}
+						} else {
+							images = append(images, part.ImageURL.URL)
+						}
+					}
+				}
+			}
+		}
+
+		ollamaMsg := map[string]interface{}{
+			"role":    msg.Role,
+			"content": contentStr,
+		}
+		if len(images) > 0 {
+			ollamaMsg["images"] = images
+		}
+		ollamaMessages = append(ollamaMessages, ollamaMsg)
 	}
 
 	// Use req.Model which has the normalized model name (provider prefix stripped)
@@ -180,7 +297,7 @@ func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req ex
 	// Convert to Ollama format with streaming enabled
 	ollamaReq := map[string]interface{}{
 		"model":    modelName,
-		"messages": openAIReq.Messages,
+		"messages": ollamaMessages,
 		"stream":   true,
 	}
 	if openAIReq.Temperature > 0 {

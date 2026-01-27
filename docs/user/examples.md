@@ -343,3 +343,80 @@ curl http://localhost:18080/v1/chat/completions \
     "messages": [{"role": "user", "content": "Who are you?"}]
   }'
 ```
+
+## Multimodal Examples (Images)
+
+`switchAILocal` supports multimodal inputs (text + images) for compatible providers like `geminicli`, `claude`, and `ollama` (if the model supports it).
+
+### Sending an Image via cURL (OpenAI Compatible)
+
+You can send base64-encoded images using the standard OpenAI `image_url` format.
+
+```bash
+# 1. Encode image to base64 (macOS/Linux)
+IMAGE_DATA="data:image/jpeg;base64,$(base64 -i path/to/image.jpg)"
+
+# 2. Send request
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer any-key" \
+  -d '{
+    "model": "geminicli:gemini-2.5-pro",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What is in this image?"},
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "'"$IMAGE_DATA"'"
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### Sending an Image via Python (OpenAI SDK)
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="unused"
+)
+
+# Function to encode key
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+base64_image = encode_image("path/to/image.jpg")
+
+response = client.chat.completions.create(
+    model="ollama:devstral-small-2:24b-cloud", # Or "geminicli:gemini-2.5-pro", "claude:claude-3-opus"
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this image in detail."},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}"
+                    },
+                },
+            ],
+        }
+    ],
+)
+
+print(response.choices[0].message.content)
+```
+
+> **Note:** For `ollama`, ensure the underlying model (e.g., `llava`, `moondream`, `devstral-small-2`) supports vision. `switchAILocal` automatically converts the OpenAI format to the provider's native image format.
+
