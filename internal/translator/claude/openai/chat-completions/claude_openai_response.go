@@ -183,7 +183,6 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 						openAIIndex := params.ToolCallIndexMap[index]
 						template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", openAIIndex)
 						template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", args.String())
-						hasContent = true
 					}
 				}
 				return []string{template}

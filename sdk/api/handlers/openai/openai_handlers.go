@@ -497,7 +497,6 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 				// Stream closed without data? Send DONE or just headers.
 				if !headersSet {
 					setSSEHeaders()
-					headersSet = true
 				}
 				_, _ = fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -508,7 +507,6 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			// Success! Commit to streaming headers.
 			if !headersSet {
 				setSSEHeaders()
-				headersSet = true
 			}
 
 			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(chunk))
@@ -606,7 +604,6 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			if !ok {
 				if !headersSet {
 					setSSEHeaders()
-					headersSet = true
 				}
 				_, _ = fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -617,7 +614,6 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			// Success! Set headers.
 			if !headersSet {
 				setSSEHeaders()
-				headersSet = true
 			}
 
 			// Write the first chunk

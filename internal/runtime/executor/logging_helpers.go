@@ -24,9 +24,13 @@ const (
 	apiAttemptsKey = "API_UPSTREAM_ATTEMPTS"
 	apiRequestKey  = "API_REQUEST"
 	apiResponseKey = "API_RESPONSE"
+)
 
-	// loggingStoreKey is the context key for the thread-safe logging store.
-	loggingStoreKey = "SWITCHAI_LOGGING_STORE"
+type loggingContextKey string
+
+const (
+	// LoggingStoreKey is the context key for the thread-safe logging store.
+	LoggingStoreKey loggingContextKey = "SWITCHAI_LOGGING_STORE"
 )
 
 // LoggingStore handles thread-safe accumulation of upstream API attempts.
@@ -129,7 +133,7 @@ func loggingStoreFrom(ctx context.Context) (*LoggingStore, bool) {
 	if ctx == nil {
 		return nil, false
 	}
-	if store, ok := ctx.Value(loggingStoreKey).(*LoggingStore); ok && store != nil {
+	if store, ok := ctx.Value(LoggingStoreKey).(*LoggingStore); ok && store != nil {
 		return store, true
 	}
 	return nil, false

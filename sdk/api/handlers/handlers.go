@@ -55,7 +55,7 @@ const idempotencyKeyMetadataKey = "idempotency_key"
 type contextKey string
 
 const (
-	ginContextKey     contextKey = "gin"
+	ginContextKey     contextKey = "ginContext"
 	handlerContextKey contextKey = "handler"
 )
 
@@ -267,7 +267,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	// This store is used by executors to accumulate upstream attempts without racing on gin.Context.
 	if h.Cfg != nil && h.Cfg.RequestLog {
 		store := executor.NewLoggingStore(nil) // Passing nil config as LoggingStore only needs it for cfg.RequestLog check which we do here
-		newCtx = context.WithValue(newCtx, "SWITCHAI_LOGGING_STORE", store)
+		newCtx = context.WithValue(newCtx, executor.LoggingStoreKey, store)
 	}
 
 	// Create a cancel function that also captures the context's error.
@@ -529,19 +529,13 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 						}
 					}
 
-					status := http.StatusInternalServerError
-					if se, ok := streamErr.(interface{ StatusCode() int }); ok && se != nil {
-						if code := se.StatusCode(); code > 0 {
-							status = code
-						}
-					}
 					var addon http.Header
 					if he, ok := streamErr.(interface{ Headers() http.Header }); ok && he != nil {
 						if hdr := he.Headers(); hdr != nil {
 							addon = hdr.Clone()
 						}
 					}
-					errChan <- &interfaces.ErrorMessage{StatusCode: status, Error: streamErr, Addon: addon}
+					errChan <- &interfaces.ErrorMessage{StatusCode: statusFromError(streamErr), Error: streamErr, Addon: addon}
 					return
 				}
 				if len(chunk.Payload) > 0 {
