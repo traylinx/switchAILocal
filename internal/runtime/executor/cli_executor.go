@@ -132,15 +132,9 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	}
 
 	// Build attachment prefix (for Gemini/Vibe style @-commands)
-	var attachmentPrefix string
-	if cliOpts != nil && e.SupportsAttachments {
-		for _, att := range cliOpts.Attachments {
-			path := filepath.Clean(att.Path)
-			if att.Type == "folder" && !strings.HasSuffix(path, "/") {
-				path += "/"
-			}
-			attachmentPrefix += e.AttachmentPrefix + path + " "
-		}
+	attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid attachment: %w", err)
 	}
 
 	// Combine attachments and prompt as the final argument
@@ -368,15 +362,9 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	}
 
 	// Build attachment prefix (for Gemini/Vibe style @-commands)
-	var attachmentPrefix string
-	if cliOpts != nil && e.SupportsAttachments {
-		for _, att := range cliOpts.Attachments {
-			path := filepath.Clean(att.Path)
-			if att.Type == "folder" && !strings.HasSuffix(path, "/") {
-				path += "/"
-			}
-			attachmentPrefix += e.AttachmentPrefix + path + " "
-		}
+	attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid attachment: %w", err)
 	}
 
 	// Combine attachments and prompt as the final argument
@@ -775,4 +763,46 @@ func extractErrorHint(stderr string) string {
 	}
 
 	return strings.TrimSpace(hint)
+}
+
+// buildAttachmentPrefix processes attachments, verifies paths are safe, and returns the prefix string.
+func (e *LocalCLIExecutor) buildAttachmentPrefix(cliOpts *CLIOptions) (string, error) {
+	if cliOpts == nil || !e.SupportsAttachments {
+		return "", nil
+	}
+
+	var attachmentPrefix string
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine working directory: %w", err)
+	}
+
+	for _, att := range cliOpts.Attachments {
+		path := filepath.Clean(att.Path)
+
+		// Security Check: Prevent path traversal
+		// Ensure path is within CWD
+		var absPath string
+		if filepath.IsAbs(path) {
+			absPath = path
+		} else {
+			absPath = filepath.Join(cwd, path)
+		}
+
+		rel, err := filepath.Rel(cwd, absPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve path %s relative to CWD: %w", path, err)
+		}
+
+		// Reject paths starting with ".." (traversal up) or equals ".."
+		if strings.HasPrefix(rel, "..") || rel == ".." {
+			return "", fmt.Errorf("security violation: attachment path %s attempts to traverse outside working directory", att.Path)
+		}
+
+		if att.Type == "folder" && !strings.HasSuffix(path, "/") {
+			path += "/"
+		}
+		attachmentPrefix += e.AttachmentPrefix + path + " "
+	}
+	return attachmentPrefix, nil
 }

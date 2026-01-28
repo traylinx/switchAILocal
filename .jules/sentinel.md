@@ -118,6 +118,11 @@ Format:
 **Prevention:** [How to avoid next time]
 ```
 
+## 2026-05-25 - Path Traversal in CLI Attachments
+**Vulnerability:** The CLI executor allowed users to attach files using absolute paths or paths with traversal sequences (`..`), potentially enabling arbitrary file reads on the server.
+**Learning:** `filepath.Clean` is insufficient to prevent traversal; it resolves `..` but doesn't prevent going outside a root if the input starts with `../` or `/`.
+**Prevention:** Use `filepath.Rel(cwd, absPath)` and check if the result starts with `..` to ensure the path is contained within the current working directory.
+
 ---
 
 ## Sentinel's Daily Process
