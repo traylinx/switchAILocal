@@ -14,7 +14,6 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 type geminiToResponsesState struct {
@@ -599,7 +598,11 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	root := gjson.ParseBytes(rawJSON)
 
 	// Base response scaffold
-	resp := `{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null,"incomplete_details":null}`
+	resp := ResponseInfo{
+		Object:     "response",
+		Status:     "completed",
+		Background: false,
+	}
 
 	// id: prefer provider responseId, otherwise synthesize
 	id := root.Get("responseId").String()
@@ -610,7 +613,7 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	if !strings.HasPrefix(id, "resp_") {
 		id = fmt.Sprintf("resp_%s", id)
 	}
-	resp, _ = sjson.Set(resp, "id", id)
+	resp.ID = id
 
 	// created_at: map from createTime if available
 	createdAt := time.Now().Unix()
@@ -619,75 +622,79 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 			createdAt = t.Unix()
 		}
 	}
-	resp, _ = sjson.Set(resp, "created_at", createdAt)
+	resp.CreatedAt = createdAt
 
 	// Echo request fields when present; fallback model from response modelVersion
 	if len(requestRawJSON) > 0 {
 		req := gjson.ParseBytes(requestRawJSON)
 		if v := req.Get("instructions"); v.Exists() {
-			resp, _ = sjson.Set(resp, "instructions", v.String())
+			resp.Instructions = v.String()
 		}
 		if v := req.Get("max_output_tokens"); v.Exists() {
-			resp, _ = sjson.Set(resp, "max_output_tokens", v.Int())
+			resp.MaxOutputTokens = v.Int()
 		}
 		if v := req.Get("max_tool_calls"); v.Exists() {
-			resp, _ = sjson.Set(resp, "max_tool_calls", v.Int())
+			resp.MaxToolCalls = v.Int()
 		}
 		if v := req.Get("model"); v.Exists() {
-			resp, _ = sjson.Set(resp, "model", v.String())
+			resp.Model = v.String()
 		} else if v = root.Get("modelVersion"); v.Exists() {
-			resp, _ = sjson.Set(resp, "model", v.String())
+			resp.Model = v.String()
 		}
 		if v := req.Get("parallel_tool_calls"); v.Exists() {
-			resp, _ = sjson.Set(resp, "parallel_tool_calls", v.Bool())
+			val := v.Bool()
+			resp.ParallelToolCalls = &val
 		}
 		if v := req.Get("previous_response_id"); v.Exists() {
-			resp, _ = sjson.Set(resp, "previous_response_id", v.String())
+			resp.PreviousResponseID = v.String()
 		}
 		if v := req.Get("prompt_cache_key"); v.Exists() {
-			resp, _ = sjson.Set(resp, "prompt_cache_key", v.String())
+			resp.PromptCacheKey = v.String()
 		}
 		if v := req.Get("reasoning"); v.Exists() {
-			resp, _ = sjson.Set(resp, "reasoning", v.Value())
+			resp.Reasoning = v.Value()
 		}
 		if v := req.Get("safety_identifier"); v.Exists() {
-			resp, _ = sjson.Set(resp, "safety_identifier", v.String())
+			resp.SafetyIdentifier = v.String()
 		}
 		if v := req.Get("service_tier"); v.Exists() {
-			resp, _ = sjson.Set(resp, "service_tier", v.String())
+			resp.ServiceTier = v.String()
 		}
 		if v := req.Get("store"); v.Exists() {
-			resp, _ = sjson.Set(resp, "store", v.Bool())
+			val := v.Bool()
+			resp.Store = &val
 		}
 		if v := req.Get("temperature"); v.Exists() {
-			resp, _ = sjson.Set(resp, "temperature", v.Float())
+			val := v.Float()
+			resp.Temperature = &val
 		}
 		if v := req.Get("text"); v.Exists() {
-			resp, _ = sjson.Set(resp, "text", v.Value())
+			resp.Text = v.Value()
 		}
 		if v := req.Get("tool_choice"); v.Exists() {
-			resp, _ = sjson.Set(resp, "tool_choice", v.Value())
+			resp.ToolChoice = v.Value()
 		}
 		if v := req.Get("tools"); v.Exists() {
-			resp, _ = sjson.Set(resp, "tools", v.Value())
+			resp.Tools = v.Value()
 		}
 		if v := req.Get("top_logprobs"); v.Exists() {
-			resp, _ = sjson.Set(resp, "top_logprobs", v.Int())
+			resp.TopLogprobs = v.Int()
 		}
 		if v := req.Get("top_p"); v.Exists() {
-			resp, _ = sjson.Set(resp, "top_p", v.Float())
+			val := v.Float()
+			resp.TopP = &val
 		}
 		if v := req.Get("truncation"); v.Exists() {
-			resp, _ = sjson.Set(resp, "truncation", v.String())
+			resp.Truncation = v.String()
 		}
 		if v := req.Get("user"); v.Exists() {
-			resp, _ = sjson.Set(resp, "user", v.Value())
+			resp.User = v.Value()
 		}
 		if v := req.Get("metadata"); v.Exists() {
-			resp, _ = sjson.Set(resp, "metadata", v.Value())
+			resp.Metadata = v.Value()
 		}
 	} else if v := root.Get("modelVersion"); v.Exists() {
-		resp, _ = sjson.Set(resp, "model", v.String())
+		resp.Model = v.String()
 	}
 
 	// Build outputs from candidates[0].content.parts
@@ -695,19 +702,7 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	var reasoningEncrypted string
 	var messageText strings.Builder
 	var haveMessage bool
-
-	haveOutput := false
-	ensureOutput := func() {
-		if haveOutput {
-			return
-		}
-		resp, _ = sjson.SetRaw(resp, "output", "[]")
-		haveOutput = true
-	}
-	appendOutput := func(itemJSON string) {
-		ensureOutput()
-		resp, _ = sjson.SetRaw(resp, "output.-1", itemJSON)
-	}
+	var outputs []any
 
 	if parts := root.Get("candidates.0.content.parts"); parts.Exists() && parts.IsArray() {
 		parts.ForEach(func(_, p gjson.Result) bool {
@@ -729,16 +724,19 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 				name := fc.Get("name").String()
 				args := fc.Get("args")
 				callID := fmt.Sprintf("call_%x_%d", time.Now().UnixNano(), atomic.AddUint64(&funcCallIDCounter, 1))
-				itemJSON := `{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`
-				itemJSON, _ = sjson.Set(itemJSON, "id", fmt.Sprintf("fc_%s", callID))
-				itemJSON, _ = sjson.Set(itemJSON, "call_id", callID)
-				itemJSON, _ = sjson.Set(itemJSON, "name", name)
-				argsStr := ""
-				if args.Exists() {
-					argsStr = args.Raw
+
+				item := OutputItem{
+					ID:     fmt.Sprintf("fc_%s", callID),
+					Type:   "function_call",
+					Status: "completed",
+					CallID: callID,
+					Name:   name,
 				}
-				itemJSON, _ = sjson.Set(itemJSON, "arguments", argsStr)
-				appendOutput(itemJSON)
+
+				if args.Exists() {
+					item.Arguments = args.Raw
+				}
+				outputs = append(outputs, item)
 				return true
 			}
 			return true
@@ -748,44 +746,70 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	// Reasoning output item
 	if reasoningText.Len() > 0 || reasoningEncrypted != "" {
 		rid := strings.TrimPrefix(id, "resp_")
-		itemJSON := `{"id":"","type":"reasoning","encrypted_content":""}`
-		itemJSON, _ = sjson.Set(itemJSON, "id", fmt.Sprintf("rs_%s", rid))
-		itemJSON, _ = sjson.Set(itemJSON, "encrypted_content", reasoningEncrypted)
-		if reasoningText.Len() > 0 {
-			summaryJSON := `{"type":"summary_text","text":""}`
-			summaryJSON, _ = sjson.Set(summaryJSON, "text", reasoningText.String())
-			itemJSON, _ = sjson.SetRaw(itemJSON, "summary", "[]")
-			itemJSON, _ = sjson.SetRaw(itemJSON, "summary.-1", summaryJSON)
+		item := OutputItem{
+			ID:               fmt.Sprintf("rs_%s", rid),
+			Type:             "reasoning",
+			EncryptedContent: reasoningEncrypted,
 		}
-		appendOutput(itemJSON)
+
+		if reasoningText.Len() > 0 {
+			item.Summary = []SummaryPart{{
+				Type: "summary_text",
+				Text: reasoningText.String(),
+			}}
+		}
+		outputs = append(outputs, item)
 	}
 
 	// Assistant message output item
 	if haveMessage {
-		itemJSON := `{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`
-		itemJSON, _ = sjson.Set(itemJSON, "id", fmt.Sprintf("msg_%s_0", strings.TrimPrefix(id, "resp_")))
-		itemJSON, _ = sjson.Set(itemJSON, "content.0.text", messageText.String())
-		appendOutput(itemJSON)
+		item := OutputItem{
+			ID:     fmt.Sprintf("msg_%s_0", strings.TrimPrefix(id, "resp_")),
+			Type:   "message",
+			Status: "completed",
+			Role:   "assistant",
+			Content: []ContentPart{{
+				Type:        "output_text",
+				Annotations: []any{},
+				Logprobs:    []any{},
+				Text:        messageText.String(),
+			}},
+		}
+		outputs = append(outputs, item)
+	}
+
+	if len(outputs) > 0 {
+		resp.Output = &outputs
 	}
 
 	// usage mapping
 	if um := root.Get("usageMetadata"); um.Exists() {
 		// input tokens = prompt + thoughts
 		input := um.Get("promptTokenCount").Int() + um.Get("thoughtsTokenCount").Int()
-		resp, _ = sjson.Set(resp, "usage.input_tokens", input)
-		// cached_tokens not provided by Gemini; default to 0 for structure compatibility
-		resp, _ = sjson.Set(resp, "usage.input_tokens_details.cached_tokens", 0)
+
+		usage := &ResponseUsage{
+			InputTokens:        input,
+			InputTokensDetails: &InputTokensDetails{CachedTokens: 0},
+		}
+
 		// output tokens
 		if v := um.Get("candidatesTokenCount"); v.Exists() {
-			resp, _ = sjson.Set(resp, "usage.output_tokens", v.Int())
+			usage.OutputTokens = v.Int()
 		}
+
+		var reasoningTokens int64
 		if v := um.Get("thoughtsTokenCount"); v.Exists() {
-			resp, _ = sjson.Set(resp, "usage.output_tokens_details.reasoning_tokens", v.Int())
+			reasoningTokens = v.Int()
 		}
+		usage.OutputTokensDetails = &OutputTokensDetails{ReasoningTokens: reasoningTokens}
+
 		if v := um.Get("totalTokenCount"); v.Exists() {
-			resp, _ = sjson.Set(resp, "usage.total_tokens", v.Int())
+			usage.TotalTokens = v.Int()
 		}
+
+		resp.Usage = usage
 	}
 
-	return resp
+	b, _ := json.Marshal(resp)
+	return string(b)
 }
