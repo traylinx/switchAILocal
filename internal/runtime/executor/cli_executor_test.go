@@ -5,6 +5,8 @@
 package executor
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -382,6 +384,90 @@ Waiting for response...`,
 			} else {
 				if hint != "" {
 					t.Errorf("Expected empty hint, got: %s", hint)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalCLIExecutor_BuildAttachmentPrefix_Security(t *testing.T) {
+	// Get current working directory for test setup
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get CWD: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		expectError bool
+		description string
+	}{
+		{
+			name:        "Valid relative path",
+			path:        "safe_file.txt",
+			expectError: false,
+			description: "Should accept file in current directory",
+		},
+		{
+			name:        "Valid relative subdirectory path",
+			path:        filepath.Join("subdir", "safe_file.txt"),
+			expectError: false,
+			description: "Should accept file in subdirectory",
+		},
+		{
+			name:        "Path traversal attempt using parent directory",
+			path:        filepath.Join("..", "secret.txt"),
+			expectError: true,
+			description: "Should reject path starting with ..",
+		},
+		{
+			name:        "Deep path traversal attempt",
+			path:        filepath.Join("..", "..", "etc", "passwd"),
+			expectError: true,
+			description: "Should reject deep traversal",
+		},
+		{
+			name:        "Valid absolute path inside CWD",
+			path:        filepath.Join(cwd, "safe_abs_file.txt"),
+			expectError: false,
+			description: "Should accept absolute path pointing inside CWD",
+		},
+		{
+			name:        "Invalid absolute path outside CWD",
+			path:        filepath.Join(filepath.Dir(cwd), "outside_file.txt"),
+			expectError: true,
+			description: "Should reject absolute path pointing outside CWD",
+		},
+	}
+
+	e := &LocalCLIExecutor{
+		SupportsAttachments: true,
+		AttachmentPrefix:    "@",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &CLIOptions{
+				Attachments: []Attachment{
+					{
+						Type: "file",
+						Path: tt.path,
+					},
+				},
+			}
+
+			_, err := e.buildAttachmentPrefix(opts)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error for %s, got nil (path: %s)", tt.description, tt.path)
+				} else if !strings.Contains(err.Error(), "security violation") {
+					t.Errorf("Expected security violation error, got: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for %s: %v (path: %s)", tt.description, err, tt.path)
 				}
 			}
 		})
