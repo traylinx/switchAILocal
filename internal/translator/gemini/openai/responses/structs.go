@@ -2,55 +2,56 @@ package responses
 
 // ResponseCreated represents the "response.created" event.
 type ResponseCreated struct {
-	Type           string             `json:"type"`
-	SequenceNumber int                `json:"sequence_number"`
-	Response       ResponseInfo       `json:"response"`
+	Type           string       `json:"type"`
+	SequenceNumber int          `json:"sequence_number"`
+	Response       ResponseInfo `json:"response"`
 }
 
 // ResponseInProgress represents the "response.in_progress" event.
 type ResponseInProgress struct {
-	Type           string             `json:"type"`
-	SequenceNumber int                `json:"sequence_number"`
-	Response       ResponseInfo       `json:"response"`
+	Type           string       `json:"type"`
+	SequenceNumber int          `json:"sequence_number"`
+	Response       ResponseInfo `json:"response"`
 }
 
 // ResponseInfo used in created, in_progress, and completed.
 type ResponseInfo struct {
-	ID                  string               `json:"id"`
-	Object              string               `json:"object"`
-	CreatedAt           int64                `json:"created_at"`
-	Status              string               `json:"status"`
-	Background          bool                 `json:"background"` // Removed omitempty
-	Error               any                  `json:"error"`      // Removed omitempty
-	Output              *[]any               `json:"output,omitempty"` // Changed to pointer and added omitempty
-	Instructions        string               `json:"instructions,omitempty"`
-	MaxOutputTokens     int64                `json:"max_output_tokens,omitempty"`
-	MaxToolCalls        int64                `json:"max_tool_calls,omitempty"`
-	Model               string               `json:"model,omitempty"`
-	ParallelToolCalls   *bool                `json:"parallel_tool_calls,omitempty"`
-	PreviousResponseID  string               `json:"previous_response_id,omitempty"`
-	PromptCacheKey      string               `json:"prompt_cache_key,omitempty"`
-	Reasoning           any                  `json:"reasoning,omitempty"`
-	SafetyIdentifier    string               `json:"safety_identifier,omitempty"`
-	ServiceTier         string               `json:"service_tier,omitempty"`
-	Store               *bool                `json:"store,omitempty"`
-	Temperature         *float64             `json:"temperature,omitempty"`
-	Text                any                  `json:"text,omitempty"`
-	ToolChoice          any                  `json:"tool_choice,omitempty"`
-	Tools               any                  `json:"tools,omitempty"`
-	TopLogprobs         int64                `json:"top_logprobs,omitempty"`
-	TopP                *float64             `json:"top_p,omitempty"`
-	Truncation          string               `json:"truncation,omitempty"`
-	User                any                  `json:"user,omitempty"`
-	Metadata            any                  `json:"metadata,omitempty"`
-	Usage               *ResponseUsage       `json:"usage,omitempty"`
+	ID                 string         `json:"id"`
+	Object             string         `json:"object"`
+	CreatedAt          int64          `json:"created_at"`
+	Status             string         `json:"status"`
+	Background         bool           `json:"background"`         // Removed omitempty
+	Error              any            `json:"error"`              // Removed omitempty
+	IncompleteDetails  any            `json:"incomplete_details"` // Added to match non-stream response scaffold
+	Output             *[]any         `json:"output,omitempty"`   // Changed to pointer and added omitempty
+	Instructions       string         `json:"instructions,omitempty"`
+	MaxOutputTokens    int64          `json:"max_output_tokens,omitempty"`
+	MaxToolCalls       int64          `json:"max_tool_calls,omitempty"`
+	Model              string         `json:"model,omitempty"`
+	ParallelToolCalls  *bool          `json:"parallel_tool_calls,omitempty"`
+	PreviousResponseID string         `json:"previous_response_id,omitempty"`
+	PromptCacheKey     string         `json:"prompt_cache_key,omitempty"`
+	Reasoning          any            `json:"reasoning,omitempty"`
+	SafetyIdentifier   string         `json:"safety_identifier,omitempty"`
+	ServiceTier        string         `json:"service_tier,omitempty"`
+	Store              *bool          `json:"store,omitempty"`
+	Temperature        *float64       `json:"temperature,omitempty"`
+	Text               any            `json:"text,omitempty"`
+	ToolChoice         any            `json:"tool_choice,omitempty"`
+	Tools              any            `json:"tools,omitempty"`
+	TopLogprobs        int64          `json:"top_logprobs,omitempty"`
+	TopP               *float64       `json:"top_p,omitempty"`
+	Truncation         string         `json:"truncation,omitempty"`
+	User               any            `json:"user,omitempty"`
+	Metadata           any            `json:"metadata,omitempty"`
+	Usage              *ResponseUsage `json:"usage,omitempty"`
 }
 
 type ResponseUsage struct {
-	InputTokens        int64              `json:"input_tokens"`
-	OutputTokens       int64              `json:"output_tokens"`
-	TotalTokens        int64              `json:"total_tokens"`
-	InputTokensDetails *InputTokensDetails `json:"input_tokens_details,omitempty"`
+	InputTokens         int64                `json:"input_tokens"`
+	OutputTokens        int64                `json:"output_tokens"`
+	TotalTokens         int64                `json:"total_tokens"`
+	InputTokensDetails  *InputTokensDetails  `json:"input_tokens_details,omitempty"`
 	OutputTokensDetails *OutputTokensDetails `json:"output_tokens_details,omitempty"`
 }
 
