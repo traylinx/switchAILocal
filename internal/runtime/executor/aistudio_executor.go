@@ -192,6 +192,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 	stream = out
 	go func(first wsrelay.StreamEvent) {
 		defer close(out)
+		defer FinalizeAPIResponse(ctx, e.cfg)
 		var param any
 		metadataLogged := false
 		processEvent := func(event wsrelay.StreamEvent) bool {

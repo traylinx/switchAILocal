@@ -22,6 +22,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/plugin"
+	"github.com/traylinx/switchAILocal/internal/runtime/executor"
 	"github.com/traylinx/switchAILocal/internal/util"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
@@ -257,19 +258,33 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
 		}
 	}
-	newCtx, cancel := context.WithCancel(parentCtx)
+
+	// Create a context that includes the gin.Context. This allows background
+	// goroutines to access request-specific information, including cancellation.
+	newCtx := context.WithValue(parentCtx, ginContextKey, c)
+
+	// Initialize thread-safe LoggingStore if request logging is enabled.
+	// This store is used by executors to accumulate upstream attempts without racing on gin.Context.
+	if h.Cfg != nil && h.Cfg.RequestLog {
+		store := executor.NewLoggingStore(nil) // Passing nil config as LoggingStore only needs it for cfg.RequestLog check which we do here
+		newCtx = context.WithValue(newCtx, "SWITCHAI_LOGGING_STORE", store)
+	}
+
+	// Create a cancel function that also captures the context's error.
+	cancelCtx, cancel := context.WithCancel(newCtx)
+
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
 			select {
 			case <-requestCtx.Done():
 				cancel()
-			case <-newCtx.Done():
+			case <-cancelCtx.Done():
 			}
 		}()
 	}
-	newCtx = context.WithValue(newCtx, ginContextKey, c)
-	newCtx = context.WithValue(newCtx, handlerContextKey, handler)
-	return newCtx, func(params ...interface{}) {
+	cancelCtx = context.WithValue(cancelCtx, ginContextKey, c)
+	cancelCtx = context.WithValue(cancelCtx, handlerContextKey, handler)
+	return cancelCtx, func(params ...interface{}) {
 		if h.Cfg.RequestLog && len(params) == 1 {
 			if existing, exists := c.Get("API_RESPONSE"); exists {
 				if existingBytes, ok := existing.([]byte); ok && len(bytes.TrimSpace(existingBytes)) > 0 {

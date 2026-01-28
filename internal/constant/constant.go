@@ -37,4 +37,7 @@ const (
 
 	// OpenCode represents the OpenCode provider identifier.
 	OpenCode = "opencode"
+
+	// MaxStreamingScannerBuffer is the maximum buffer size for the streaming scanner (1MB).
+	MaxStreamingScannerBuffer = 1 * 1024 * 1024
 )

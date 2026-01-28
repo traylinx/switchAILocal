@@ -23,6 +23,7 @@ import (
 	"github.com/tidwall/sjson"
 	claudeauth "github.com/traylinx/switchAILocal/internal/auth/claude"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/misc"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -250,6 +251,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := decodedBody.Close(); errClose != nil {
 				log.Errorf("response body close error: %v", errClose)
 			}
@@ -258,7 +260,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 		// If from == to (Claude → Claude), directly forward the SSE stream without translation
 		if from == to {
 			scanner := bufio.NewScanner(decodedBody)
-			scanner.Buffer(nil, 52_428_800) // 50MB
+			scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 			for scanner.Scan() {
 				line := scanner.Bytes()
 				appendAPIResponseChunk(ctx, e.cfg, line)
@@ -281,7 +283,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 
 		// For other formats, use translation
 		scanner := bufio.NewScanner(decodedBody)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

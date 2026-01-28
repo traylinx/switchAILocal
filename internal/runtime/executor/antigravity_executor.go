@@ -29,6 +29,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/secret"
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -275,7 +276,7 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 				}
 			}()
 			scanner := bufio.NewScanner(resp.Body)
-			scanner.Buffer(nil, streamScannerBuffer)
+			scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 			for scanner.Scan() {
 				line := scanner.Bytes()
 				appendAPIResponseChunk(ctx, e.cfg, line)
@@ -604,12 +605,13 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *switchail
 		go func(resp *http.Response) {
 			defer close(out)
 			defer func() {
+				FinalizeAPIResponse(ctx, e.cfg)
 				if errClose := resp.Body.Close(); errClose != nil {
 					log.Errorf("antigravity executor: close response body error: %v", errClose)
 				}
 			}()
 			scanner := bufio.NewScanner(resp.Body)
-			scanner.Buffer(nil, streamScannerBuffer)
+			scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 			var param any
 			for scanner.Scan() {
 				line := scanner.Bytes()

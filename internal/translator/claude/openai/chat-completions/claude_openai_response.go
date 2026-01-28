@@ -31,13 +31,14 @@ type ConvertAnthropicResponseToOpenAIParams struct {
 	FinishReason string
 	// Tool calls accumulator for streaming
 	ToolCallsAccumulator map[int]*ToolCallAccumulator
+	ToolCallIndexMap     map[int]int // Maps Claude block index to sequential OpenAI tool index
 }
 
 // ToolCallAccumulator holds the state for accumulating tool call data
 type ToolCallAccumulator struct {
 	ID        string
 	Name      string
-	Arguments strings.Builder
+	InputJSON string // Cumulative JSON for arguments
 }
 
 // ConvertClaudeResponseToOpenAI converts Claude Code streaming response format to OpenAI Chat Completions format.
@@ -104,6 +105,9 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 			if (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator == nil {
 				(*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator = make(map[int]*ToolCallAccumulator)
 			}
+			if (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallIndexMap == nil {
+				(*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallIndexMap = make(map[int]int)
+			}
 		}
 		return []string{template}
 
@@ -116,19 +120,34 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 				// Start of tool call - initialize accumulator to track arguments
 				toolCallID := contentBlock.Get("id").String()
 				toolName := contentBlock.Get("name").String()
-				index := int(root.Get("index").Int())
+				claudeIndex := int(root.Get("index").Int())
 
-				if (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator == nil {
-					(*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator = make(map[int]*ToolCallAccumulator)
+				params := (*param).(*ConvertAnthropicResponseToOpenAIParams)
+				if params.ToolCallsAccumulator == nil {
+					params.ToolCallsAccumulator = make(map[int]*ToolCallAccumulator)
+				}
+				if params.ToolCallIndexMap == nil {
+					params.ToolCallIndexMap = make(map[int]int)
 				}
 
-				(*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator[index] = &ToolCallAccumulator{
+				// Map Claude's content block index to a sequential 0-based OpenAI tool index
+				openAIIndex, orExists := params.ToolCallIndexMap[claudeIndex]
+				if !orExists {
+					openAIIndex = len(params.ToolCallIndexMap)
+					params.ToolCallIndexMap[claudeIndex] = openAIIndex
+				}
+
+				params.ToolCallsAccumulator[claudeIndex] = &ToolCallAccumulator{
 					ID:   toolCallID,
 					Name: toolName,
 				}
 
-				// Don't output anything yet - wait for complete tool call
-				return []string{}
+				// Immediately output the start of the tool call for OpenAI clients
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", openAIIndex)
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.id", toolCallID)
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.type", "function")
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.name", toolName)
+				return []string{template}
 			}
 		}
 		return []string{}
@@ -153,17 +172,21 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 					hasContent = true
 				}
 			case "input_json_delta":
-				// Tool use input delta - accumulate arguments for tool calls
-				if partialJSON := delta.Get("partial_json"); partialJSON.Exists() {
-					index := int(root.Get("index").Int())
-					if (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator != nil {
-						if accumulator, exists := (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator[index]; exists {
-							accumulator.Arguments.WriteString(partialJSON.String())
-						}
+				// Tool call delta - send incremental argument updates
+				index := int(root.Get("index").Int())
+				params := (*param).(*ConvertAnthropicResponseToOpenAIParams)
+
+				if acc, ok := params.ToolCallsAccumulator[index]; ok {
+					if args := delta.Get("input_json"); args.Exists() {
+						acc.InputJSON += args.String()
+
+						openAIIndex := params.ToolCallIndexMap[index]
+						template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", openAIIndex)
+						template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", args.String())
+						hasContent = true
 					}
 				}
-				// Don't output anything yet - wait for complete tool call
-				return []string{}
+				return []string{template}
 			}
 		}
 		if hasContent {
@@ -173,26 +196,10 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 		}
 
 	case "content_block_stop":
-		// End of content block - output complete tool call if it's a tool_use block
+		// End of content block - we have already streamed everything incrementally
 		index := int(root.Get("index").Int())
 		if (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator != nil {
-			if accumulator, exists := (*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator[index]; exists {
-				// Build complete tool call with accumulated arguments
-				arguments := accumulator.Arguments.String()
-				if arguments == "" {
-					arguments = "{}"
-				}
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", index)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.id", accumulator.ID)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.type", "function")
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.name", accumulator.Name)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", arguments)
-
-				// Clean up the accumulator for this index
-				delete((*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator, index)
-
-				return []string{template}
-			}
+			delete((*param).(*ConvertAnthropicResponseToOpenAIParams).ToolCallsAccumulator, index)
 		}
 		return []string{}
 
@@ -342,10 +349,10 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 					}
 				case "input_json_delta":
 					// Accumulate tool call arguments
-					if partialJSON := delta.Get("partial_json"); partialJSON.Exists() {
+					if inputJSON := delta.Get("input_json"); inputJSON.Exists() {
 						index := int(root.Get("index").Int())
 						if accumulator, exists := toolCallsAccumulator[index]; exists {
-							accumulator.Arguments.WriteString(partialJSON.String())
+							accumulator.InputJSON += inputJSON.String()
 						}
 					}
 				}
@@ -355,8 +362,8 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 			// Finalize tool call arguments for this index when content block ends
 			index := int(root.Get("index").Int())
 			if accumulator, exists := toolCallsAccumulator[index]; exists {
-				if accumulator.Arguments.Len() == 0 {
-					accumulator.Arguments.WriteString("{}")
+				if accumulator.InputJSON == "" {
+					accumulator.InputJSON = "{}"
 				}
 			}
 
@@ -409,7 +416,7 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 				continue
 			}
 
-			arguments := accumulator.Arguments.String()
+			arguments := accumulator.InputJSON
 
 			idPath := fmt.Sprintf("choices.0.message.tool_calls.%d.id", toolCallsCount)
 			typePath := fmt.Sprintf("choices.0.message.tool_calls.%d.type", toolCallsCount)

@@ -20,6 +20,7 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 	codexauth "github.com/traylinx/switchAILocal/internal/auth/codex"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/misc"
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
@@ -215,12 +216,13 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *switchailocalau
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("codex executor: close response body error: %v", errClose)
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

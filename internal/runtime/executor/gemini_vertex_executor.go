@@ -22,6 +22,7 @@ import (
 	"github.com/tidwall/sjson"
 	vertexauth "github.com/traylinx/switchAILocal/internal/auth/vertex"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
@@ -406,12 +407,13 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("vertex executor: close response body error: %v", errClose)
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()
@@ -523,12 +525,13 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("vertex executor: close response body error: %v", errClose)
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

@@ -19,6 +19,7 @@ import (
 	"github.com/tidwall/sjson"
 	iflowauth "github.com/traylinx/switchAILocal/internal/auth/iflow"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
@@ -219,13 +220,14 @@ func (e *IFlowExecutor) ExecuteStream(ctx context.Context, auth *switchailocalau
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("iflow executor: close response body error: %v", errClose)
 			}
 		}()
 
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

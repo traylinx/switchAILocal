@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,7 +24,24 @@ const (
 	apiAttemptsKey = "API_UPSTREAM_ATTEMPTS"
 	apiRequestKey  = "API_REQUEST"
 	apiResponseKey = "API_RESPONSE"
+
+	// loggingStoreKey is the context key for the thread-safe logging store.
+	loggingStoreKey = "SWITCHAI_LOGGING_STORE"
 )
+
+// LoggingStore handles thread-safe accumulation of upstream API attempts.
+type LoggingStore struct {
+	mu       sync.RWMutex
+	attempts []*upstreamAttempt
+	cfg      *config.Config
+}
+
+// NewLoggingStore creates a new thread-safe logging store.
+func NewLoggingStore(cfg *config.Config) *LoggingStore {
+	return &LoggingStore{
+		cfg: cfg,
+	}
+}
 
 // upstreamRequestLog captures the outbound upstream request details for logging.
 type upstreamRequestLog struct {
@@ -50,11 +68,20 @@ type upstreamAttempt struct {
 	errorWritten         bool
 }
 
-// recordAPIRequest stores the upstream request metadata in Gin context for request logging.
+// recordAPIRequest stores the upstream request metadata in LoggingStore if available,
+// falling back to legacy Gin context logic for backward compatibility.
 func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequestLog) {
 	if cfg == nil || !cfg.RequestLog {
 		return
 	}
+
+	// Try to use thread-safe LoggingStore first
+	if store, ok := loggingStoreFrom(ctx); ok {
+		store.RecordRequest(info)
+		return
+	}
+
+	// Fallback to legacy Gin context logic (vulnerable to race conditions)
 	ginCtx := ginContextFrom(ctx)
 	if ginCtx == nil {
 		return
@@ -97,11 +124,143 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	updateAggregatedRequest(ginCtx, attempts)
 }
 
+// loggingStoreFrom retrieves the LoggingStore from the context if it exists.
+func loggingStoreFrom(ctx context.Context) (*LoggingStore, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if store, ok := ctx.Value(loggingStoreKey).(*LoggingStore); ok && store != nil {
+		return store, true
+	}
+	return nil, false
+}
+
+// RecordRequest records an upstream request.
+func (s *LoggingStore) RecordRequest(info upstreamRequestLog) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := len(s.attempts) + 1
+	builder := &strings.Builder{}
+	builder.WriteString(fmt.Sprintf("=== API REQUEST %d ===\n", index))
+	builder.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format(time.RFC3339Nano)))
+	if info.URL != "" {
+		builder.WriteString(fmt.Sprintf("Upstream URL: %s\n", info.URL))
+	}
+	if info.Method != "" {
+		builder.WriteString(fmt.Sprintf("HTTP Method: %s\n", info.Method))
+	}
+	if auth := formatAuthInfo(info); auth != "" {
+		builder.WriteString(fmt.Sprintf("Auth: %s\n", auth))
+	}
+	builder.WriteString("\nHeaders:\n")
+	writeHeaders(builder, info.Headers)
+	builder.WriteString("\nBody:\n")
+	if len(info.Body) > 0 {
+		builder.WriteString(string(bytes.Clone(info.Body)))
+	} else {
+		builder.WriteString("<empty>")
+	}
+	builder.WriteString("\n\n")
+
+	attempt := &upstreamAttempt{
+		index:    index,
+		request:  builder.String(),
+		response: &strings.Builder{},
+	}
+	s.attempts = append(s.attempts, attempt)
+}
+
+// RecordResponseMetadata records status code and headers for the latest attempt.
+func (s *LoggingStore) RecordResponseMetadata(status int, headers http.Header) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.attempts) == 0 {
+		return
+	}
+	attempt := s.attempts[len(s.attempts)-1]
+
+	ensureResponseIntro(attempt)
+
+	if !attempt.statusWritten {
+		attempt.response.WriteString(fmt.Sprintf("Status: %d %s\n", status, http.StatusText(status)))
+		attempt.statusWritten = true
+	}
+	if !attempt.headersWritten {
+		attempt.response.WriteString("Headers:\n")
+		writeHeaders(attempt.response, headers)
+		attempt.headersWritten = true
+		attempt.response.WriteString("\n")
+	}
+}
+
+// AppendResponseChunk appends a chunk to the latest attempt's response.
+func (s *LoggingStore) AppendResponseChunk(chunk []byte) {
+	if len(chunk) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.attempts) == 0 {
+		// Create a dummy attempt if none exists (should not happen in normal flow)
+		s.attempts = append(s.attempts, &upstreamAttempt{
+			index:    1,
+			request:  "=== API REQUEST 1 ===\n<missing>\n\n",
+			response: &strings.Builder{},
+		})
+	}
+	attempt := s.attempts[len(s.attempts)-1]
+
+	ensureResponseIntro(attempt)
+
+	if !attempt.headersWritten {
+		attempt.response.WriteString("Headers:\n")
+		writeHeaders(attempt.response, nil)
+		attempt.headersWritten = true
+		attempt.response.WriteString("\n")
+	}
+	if !attempt.bodyStarted {
+		attempt.response.WriteString("Body:\n")
+		attempt.bodyStarted = true
+	}
+	if attempt.bodyHasContent {
+		attempt.response.WriteString("\n\n")
+	}
+	attempt.response.WriteString(string(bytes.TrimSpace(bytes.Clone(chunk))))
+	attempt.bodyHasContent = true
+}
+
+// Finalize finalizes the logs and writes them to the Gin context.
+func (s *LoggingStore) Finalize(ctx context.Context) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ginCtx := ginContextFrom(ctx)
+	if ginCtx == nil {
+		return
+	}
+
+	// Update Gin context for legacy compatibility (final aggregation only)
+	ginCtx.Set(apiAttemptsKey, s.attempts)
+	updateAggregatedRequest(ginCtx, s.attempts)
+	updateAggregatedResponse(ginCtx, s.attempts)
+}
+
 // recordAPIResponseMetadata captures upstream response status/header information for the latest attempt.
 func recordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
 	if cfg == nil || !cfg.RequestLog {
 		return
 	}
+
+	// Try to use thread-safe LoggingStore first
+	if store, ok := loggingStoreFrom(ctx); ok {
+		store.RecordResponseMetadata(status, headers)
+		return
+	}
+
+	// Fallback to legacy Gin context logic
 	ginCtx := ginContextFrom(ctx)
 	if ginCtx == nil {
 		return
@@ -123,45 +282,67 @@ func recordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status i
 	updateAggregatedResponse(ginCtx, attempts)
 }
 
-// recordAPIResponseError adds an error entry for the latest attempt when no HTTP response is available.
+// recordAPIResponseError captures an upstream response error for the latest attempt.
 func recordAPIResponseError(ctx context.Context, cfg *config.Config, err error) {
 	if cfg == nil || !cfg.RequestLog || err == nil {
 		return
 	}
+
+	// Try to use thread-safe LoggingStore first
+	if store, ok := loggingStoreFrom(ctx); ok {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		if len(store.attempts) > 0 {
+			attempt := store.attempts[len(store.attempts)-1]
+			if !attempt.errorWritten {
+				attempt.response.WriteString(fmt.Sprintf("\nError: %v\n", err))
+				attempt.errorWritten = true
+			}
+		}
+		return
+	}
+
+	// Fallback to legacy Gin context logic
 	ginCtx := ginContextFrom(ctx)
 	if ginCtx == nil {
 		return
 	}
 	attempts, attempt := ensureAttempt(ginCtx)
-	ensureResponseIntro(attempt)
+	ensureResponseIntro(attempt) // Ensure intro is written for legacy path too
 
 	if attempt.bodyStarted && !attempt.bodyHasContent {
 		// Ensure body does not stay empty marker if error arrives first.
 		attempt.bodyStarted = false
 	}
-	if attempt.errorWritten {
-		attempt.response.WriteString("\n")
+	if !attempt.errorWritten {
+		attempt.response.WriteString(fmt.Sprintf("\nError: %v\n", err))
+		attempt.errorWritten = true
+		updateAggregatedResponse(ginCtx, attempts)
 	}
-	attempt.response.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
-	attempt.errorWritten = true
-
-	updateAggregatedResponse(ginCtx, attempts)
 }
 
-// appendAPIResponseChunk appends an upstream response chunk to Gin context for request logging.
+// appendAPIResponseChunk adds a chunk of the upstream response body to the latest attempt.
 func appendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byte) {
-	if cfg == nil || !cfg.RequestLog {
+	if cfg == nil || !cfg.RequestLog || len(chunk) == 0 {
 		return
 	}
-	data := bytes.TrimSpace(bytes.Clone(chunk))
-	if len(data) == 0 {
+
+	// Try to use thread-safe LoggingStore first
+	if store, ok := loggingStoreFrom(ctx); ok {
+		store.AppendResponseChunk(chunk)
 		return
 	}
+
+	// Fallback to legacy Gin context logic
 	ginCtx := ginContextFrom(ctx)
 	if ginCtx == nil {
 		return
 	}
-	attempts, attempt := ensureAttempt(ginCtx)
+	data := bytes.TrimSpace(bytes.Clone(chunk))
+	if len(data) == 0 { // Re-check after trimming
+		return
+	}
+	_, attempt := ensureAttempt(ginCtx)
 	ensureResponseIntro(attempt)
 
 	if !attempt.headersWritten {
@@ -179,7 +360,27 @@ func appendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 	}
 	attempt.response.WriteString(string(data))
 	attempt.bodyHasContent = true
+}
 
+// FinalizeAPIResponse aggregates all upstream attempts into a single request/response log.
+func FinalizeAPIResponse(ctx context.Context, cfg *config.Config) {
+	if cfg == nil || !cfg.RequestLog {
+		return
+	}
+
+	// Try to use thread-safe LoggingStore first
+	if store, ok := loggingStoreFrom(ctx); ok {
+		store.Finalize(ctx)
+		return
+	}
+
+	// Fallback to legacy Gin context logic
+	ginCtx := ginContextFrom(ctx)
+	if ginCtx == nil {
+		return
+	}
+	attempts := getAttempts(ginCtx)
+	updateAggregatedRequest(ginCtx, attempts)
 	updateAggregatedResponse(ginCtx, attempts)
 }
 

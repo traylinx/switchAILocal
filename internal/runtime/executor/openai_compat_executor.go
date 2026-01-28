@@ -17,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/constant"
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
@@ -227,12 +228,13 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	go func() {
 		defer close(out)
 		defer func() {
+			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("openai compat executor: close response body error: %v", errClose)
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

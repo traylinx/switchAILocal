@@ -340,13 +340,14 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 		go func(resp *http.Response, reqBody []byte, attempt string) {
 			defer close(out)
 			defer func() {
+				FinalizeAPIResponse(ctx, e.cfg)
 				if errClose := resp.Body.Close(); errClose != nil {
 					log.Errorf("gemini cli executor: close response body error: %v", errClose)
 				}
 			}()
 			if opts.Alt == "" {
-				scanner := bufio.NewScanner(resp.Body)
-				scanner.Buffer(nil, streamScannerBuffer)
+				scanner := bufio.NewScanner(httpResp.Body)
+				scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 				var param any
 				for scanner.Scan() {
 					line := scanner.Bytes()
