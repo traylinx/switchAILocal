@@ -107,7 +107,10 @@ func TestConvertGeminiResponseToOpenAIResponsesNonStream_FunctionCall(t *testing
 	output := ConvertGeminiResponseToOpenAIResponsesNonStream(ctx, "gemini-pro", nil, nil, rawJSON, &param)
 
 	var result map[string]interface{}
-	json.Unmarshal([]byte(output), &result)
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("Failed to unmarshal output: %v", err)
+	}
+
 	outputList := result["output"].([]interface{})
 	item := outputList[0].(map[string]interface{})
 	if item["type"] != "function_call" {
