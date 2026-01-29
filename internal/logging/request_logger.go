@@ -221,7 +221,10 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 	}
 	filePath := filepath.Join(l.logsDir, filename)
 
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
+	// Mask sensitive data in request body before logging
+	maskedBody := util.MaskSensitiveJSONBody(body)
+
+	requestBodyPath, errTemp := l.writeRequestBodyTempFile(maskedBody)
 	if errTemp != nil {
 		log.WithError(errTemp).Warn("failed to create request body temp file, falling back to direct write")
 	}
@@ -249,7 +252,7 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 		url,
 		method,
 		requestHeaders,
-		body,
+		maskedBody,
 		requestBodyPath,
 		apiRequest,
 		apiResponse,
@@ -311,7 +314,10 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		requestHeaders[key] = headerValues
 	}
 
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
+	// Mask sensitive data in request body before logging
+	maskedBody := util.MaskSensitiveJSONBody(body)
+
+	requestBodyPath, errTemp := l.writeRequestBodyTempFile(maskedBody)
 	if errTemp != nil {
 		return nil, fmt.Errorf("failed to create request body temp file: %w", errTemp)
 	}

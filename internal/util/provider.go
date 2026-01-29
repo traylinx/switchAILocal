@@ -8,8 +8,10 @@
 package util
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -424,6 +426,32 @@ func shouldMaskQueryParam(key string) bool {
 		return true
 	}
 	return false
+}
+
+var sensitiveKeyRegex = regexp.MustCompile(`(?i)"([^"]*(?:password|secret|api_?key|token|authorization|access_token)[^"]*)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
+// MaskSensitiveJSONBody masks sensitive fields in a JSON body.
+// It uses regex to identify keys like "password", "secret", "api_key" and replaces their values with "***".
+//
+// Parameters:
+//   - body: The byte slice containing potential JSON data.
+//
+// Returns:
+//   - []byte: The body with sensitive values masked, or the original body if it doesn't appear to be JSON.
+func MaskSensitiveJSONBody(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	// Perform a quick check to see if the body looks like JSON
+	trimmed := bytes.TrimSpace(body)
+	if !bytes.HasPrefix(trimmed, []byte("{")) && !bytes.HasPrefix(trimmed, []byte("[")) {
+		return body
+	}
+
+	// We convert to string for regex replacement, then back to bytes.
+	// This involves allocation but ensures safety.
+	// For logging, this overhead is acceptable to prevent leak.
+	return []byte(sensitiveKeyRegex.ReplaceAllString(string(body), `"$1": "***"`))
 }
 
 // LuaDateFormatToGo converts a LUA date format string (strftime style)
