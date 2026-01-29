@@ -350,14 +350,14 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, errMsg := h.getRequestDetails(modelName)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
 	}
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
-		Payload: cloneBytes(rawJSON),
+		Payload: body,
 	}
 	if cloned := cloneMetadata(metadata); cloned != nil {
 		req.Metadata = cloned
@@ -391,14 +391,14 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, errMsg := h.getRequestDetails(modelName)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
 	}
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
-		Payload: cloneBytes(rawJSON),
+		Payload: body,
 	}
 	if cloned := cloneMetadata(metadata); cloned != nil {
 		req.Metadata = cloned
@@ -432,7 +432,7 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, errMsg := h.getRequestDetails(modelName)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
 	if errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
@@ -442,7 +442,7 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
-		Payload: cloneBytes(rawJSON),
+		Payload: body,
 	}
 	if cloned := cloneMetadata(metadata); cloned != nil {
 		req.Metadata = cloned
@@ -560,7 +560,8 @@ func statusFromError(err error) int {
 	return 0
 }
 
-func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, metadata map[string]any, err *interfaces.ErrorMessage) {
+func (h *BaseAPIHandler) getRequestDetails(modelName string, rawJSON []byte) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
+	body = cloneBytes(rawJSON)
 	// Parse provider prefix (e.g., "ollama:llama3.2" -> provider="ollama", model="llama3.2")
 	providerPrefix, prefixedModel := util.ParseProviderPrefix(modelName)
 
@@ -580,7 +581,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 					status = http.StatusServiceUnavailable
 				}
 			}
-			return nil, "", nil, &interfaces.ErrorMessage{StatusCode: status, Error: validationErr}
+			return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: status, Error: validationErr}
 		}
 
 		// Use the explicit provider and stripped model name
@@ -598,6 +599,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 				"model":    normalizedModel,
 				"provider": providerPrefix,
 				"metadata": metadata,
+				"body":     string(body), // Pass body as string
 			}
 			modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
 			if hookErr == nil && modified != nil {
@@ -610,11 +612,14 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 				if meta, ok := modified["metadata"].(map[string]any); ok {
 					metadata = meta
 				}
+				if b, ok := modified["body"].(string); ok && b != "" {
+					body = []byte(b)
+				}
 			}
 		}
 
 		// Return the explicit provider only
-		return []string{providerPrefix}, normalizedModel, metadata, nil
+		return []string{providerPrefix}, normalizedModel, metadata, body, nil
 	}
 
 	// No prefix - use existing auto-detection logic
@@ -641,7 +646,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	}
 
 	if len(providers) == 0 {
-		return nil, "", nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", modelName)}
+		return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", modelName)}
 	}
 
 	// ROUTING: Apply LUA on_request hook if engine is enabled for auto-detected providers
@@ -650,6 +655,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 			"model":     normalizedModel,
 			"providers": providers,
 			"metadata":  metadata,
+			"body":      string(body),
 		}
 		modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
 		if hookErr == nil && modified != nil {
@@ -664,6 +670,9 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 			if meta, ok := modified["metadata"].(map[string]any); ok {
 				metadata = meta
 			}
+			if b, ok := modified["body"].(string); ok && b != "" {
+				body = []byte(b)
+			}
 		}
 	}
 
@@ -671,7 +680,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	// If it's a non-dynamic model, normalizedModel was set by normalizeModelMetadata.
 	// So, normalizedModel is already correctly set at this point.
 
-	return providers, normalizedModel, metadata, nil
+	return providers, normalizedModel, metadata, body, nil
 }
 
 func cloneBytes(src []byte) []byte {
@@ -752,3 +761,74 @@ func (h *BaseAPIHandler) LoggingAPIResponseError(ctx context.Context, err *inter
 // APIHandlerCancelFunc is a function type for canceling an API handler's context.
 // It can optionally accept parameters, which are used for logging the response.
 type APIHandlerCancelFunc func(params ...interface{})
+
+// Classify performs an LLM-based classification using the RouterModel.
+// It is used by the Lua engine to support intelligent routing decisions.
+func (h *BaseAPIHandler) Classify(ctx context.Context, prompt string) (string, error) {
+	if h.AuthManager == nil {
+		return "", fmt.Errorf("auth manager not initialized")
+	}
+
+	model := h.Cfg.Intelligence.RouterModel
+	if model == "" {
+		model = "ollama:qwen:0.5b"
+	}
+
+	// Prepare a simple chat completion payload
+	// Since we want raw output from the router, we use a minimal OpenAI-compatible format
+	payload := map[string]any{
+		"model":       model,
+		"messages":    []map[string]string{{"role": "user", "content": prompt}},
+		"temperature": 0, // Deterministic for classification
+	}
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal classification payload: %w", err)
+	}
+
+	providers, normalizedModel, metadata, reqBody, errMsg := h.getRequestDetails(model, rawPayload)
+	if errMsg != nil {
+		// If primary model failed to resolve, try fallback if available
+		fallback := h.Cfg.Intelligence.RouterFallback
+		if fallback != "" && fallback != model {
+			providers, normalizedModel, metadata, reqBody, errMsg = h.getRequestDetails(fallback, rawPayload)
+		}
+		if errMsg != nil {
+			return "", fmt.Errorf("failed to get router model details: %v", errMsg.Error)
+		}
+	}
+
+	req := coreexecutor.Request{
+		Model:    normalizedModel,
+		Payload:  reqBody,
+		Metadata: cloneMetadata(metadata),
+	}
+
+	opts := coreexecutor.Options{
+		Stream:       false,
+		SourceFormat: sdktranslator.FormatOpenAI, // Internal calls use OpenAI format by default
+	}
+
+	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
+	if err != nil {
+		return "", fmt.Errorf("classification execution failed: %w", err)
+	}
+
+	// Extract content from result. We assume it's OpenAI compatible structure.
+	var result map[string]any
+	if err := json.Unmarshal(resp.Payload, &result); err != nil {
+		return string(resp.Payload), nil // Return as is if not JSON
+	}
+
+	if choices, ok := result["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if msg, ok := choice["message"].(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok {
+					return content, nil
+				}
+			}
+		}
+	}
+
+	return string(resp.Payload), nil
+}

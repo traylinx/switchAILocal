@@ -17,8 +17,15 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/util"
+	"github.com/traylinx/switchAILocal/sdk/config"
 	lua "github.com/yuin/gopher-lua"
 )
+
+// Classifier defines the interface for LLM-based intent classification.
+// It is used by the Lua engine to delegate classification requests back to the Go host.
+type Classifier interface {
+	Classify(ctx context.Context, prompt string) (string, error)
+}
 
 // Hook types for plugin execution points
 const (
@@ -26,21 +33,27 @@ const (
 	HookOnResponse = "on_response"
 )
 
-// LuaEngine manages LUA script execution with a pool of LUA states for concurrency.
 type LuaEngine struct {
 	pool      sync.Pool
 	pluginDir string
 	scripts   map[string]*lua.FunctionProto
 	scriptsMu sync.RWMutex
 	enabled   bool
+
+	intelConfig    config.IntelligenceConfig
+	classifier     Classifier
+	enabledPlugins []string
 }
 
-// Config holds configuration for the LUA plugin engine.
 type Config struct {
 	// Enabled determines if the plugin engine is active
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// PluginDir is the directory containing LUA scripts
 	PluginDir string `yaml:"plugin-dir" json:"plugin-dir"`
+	// Intelligence holds settings for the Cortex routing engine
+	Intelligence config.IntelligenceConfig
+	// EnabledPlugins specifies a list of plugin IDs to load
+	EnabledPlugins []string
 }
 
 // NewLuaEngine creates a new LUA plugin engine with the given configuration.
@@ -50,9 +63,11 @@ func NewLuaEngine(cfg Config) *LuaEngine {
 	}
 
 	engine := &LuaEngine{
-		pluginDir: cfg.PluginDir,
-		scripts:   make(map[string]*lua.FunctionProto),
-		enabled:   true,
+		pluginDir:      cfg.PluginDir,
+		scripts:        make(map[string]*lua.FunctionProto),
+		enabled:        true,
+		intelConfig:    cfg.Intelligence,
+		enabledPlugins: cfg.EnabledPlugins,
 	}
 
 	engine.pool = sync.Pool{
@@ -63,10 +78,11 @@ func NewLuaEngine(cfg Config) *LuaEngine {
 			})
 
 			// Manually load ONLY safe libraries
-			lua.OpenBase(L)   // Basic functions (assert, error, pairs, etc.)
-			lua.OpenTable(L)  // Table manipulation
-			lua.OpenString(L) // String manipulation
-			lua.OpenMath(L)   // Math functions
+			lua.OpenBase(L)    // Basic functions (assert, error, pairs, etc.)
+			lua.OpenTable(L)   // Table manipulation
+			lua.OpenString(L)  // String manipulation
+			lua.OpenMath(L)    // Math functions
+			lua.OpenPackage(L) // Package require support
 			// lua.OpenOS(L)    <-- EXPLICITLY DISABLED (unsafe)
 
 			// Provide a safe subset of OS library (date/time only)
@@ -90,6 +106,9 @@ func NewLuaEngine(cfg Config) *LuaEngine {
 			// if they exist (though SkipOpenLibs usually handles this, we double check)
 			L.SetGlobal("dofile", lua.LNil)
 			L.SetGlobal("loadfile", lua.LNil)
+
+			// Register switchai global module
+			engine.registerSwitchAIModule(L)
 
 			return L
 		},
@@ -122,7 +141,7 @@ func (e *LuaEngine) putState(L *lua.LState) {
 	e.pool.Put(L)
 }
 
-// LoadPlugins loads all .lua files from the plugin directory.
+// LoadPlugins loads all plugin directories from the plugin dir.
 func (e *LuaEngine) LoadPlugins() error {
 	if e.pluginDir == "" {
 		return nil
@@ -139,41 +158,103 @@ func (e *LuaEngine) LoadPlugins() error {
 		return fmt.Errorf("failed to read plugin directory: %w", err)
 	}
 
+	if len(e.enabledPlugins) == 0 {
+		log.Debug("no plugins explicitly enabled, skipping discovery")
+		return nil
+	}
+
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".lua" {
+		// We now look for DIRECTORIES, not files
+		if !entry.IsDir() {
 			continue
 		}
 
-		scriptPath := filepath.Join(e.pluginDir, entry.Name())
-		if err := e.loadScript(scriptPath); err != nil {
-			log.Warnf("failed to load script %s: %v", entry.Name(), err)
+		pluginID := entry.Name()
+
+		// Validate Plugin ID (Slug only)
+		// This regex ensures no spaces, special chars, etc.
+		if !util.IsValidPluginID(pluginID) {
+			log.Warnf("skipping plugin with invalid directory name '%s' (must be slug-style)", pluginID)
 			continue
 		}
-		log.Infof("loaded LUA plugin: %s", entry.Name())
+
+		// Check if enabled
+		enabled := false
+		for _, id := range e.enabledPlugins {
+			if id == pluginID {
+				enabled = true
+				break
+			}
+		}
+
+		if !enabled {
+			continue
+		}
+
+		if err := e.loadPlugin(pluginID); err != nil {
+			log.Warnf("failed to load plugin %s: %v", pluginID, err)
+			continue
+		}
 	}
 
 	return nil
 }
 
-// loadScript compiles and caches a LUA script.
-func (e *LuaEngine) loadScript(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read script: %w", err)
-	}
+// loadPlugin loads a plugin from its directory (schema.lua + handler.lua)
+func (e *LuaEngine) loadPlugin(pluginID string) error {
+	pluginPath := filepath.Join(e.pluginDir, pluginID)
+	schemaPath := filepath.Join(pluginPath, "schema.lua")
+	handlerPath := filepath.Join(pluginPath, "handler.lua")
 
+	// 1. Load Schema (Metadata)
 	L := e.getState()
 	defer e.putState(L)
 
-	// Compile the script
-	fn, err := L.LoadString(string(content))
+	// We set package.path so 'require("schema")' works inside handler.lua
+	// This adds the plugin directory to the search path for this load
+	pathLVar := L.GetField(L.GetGlobal("package"), "path")
+	oldPath := ""
+	if str, ok := pathLVar.(lua.LString); ok {
+		oldPath = string(str)
+	}
+	newPath := fmt.Sprintf("%s/?.lua;%s", pluginPath, oldPath)
+	if err := L.DoString(fmt.Sprintf("package.path = [[%s]]", newPath)); err != nil {
+		return fmt.Errorf("failed to set package.path: %w", err)
+	}
+
+	// Load Schema
+	if err := L.DoFile(schemaPath); err != nil {
+		return fmt.Errorf("failed to load schema.lua: %w", err)
+	}
+	schemaTbl := L.Get(-1) // The return value of schema.lua
+	if schemaTbl.Type() != lua.LTTable {
+		return fmt.Errorf("schema.lua must return a table")
+	}
+
+	// Validate Identity
+	nameL := L.GetField(schemaTbl, "name")
+	if nameL.String() != pluginID {
+		return fmt.Errorf("schema.name ('%s') does not match folder name ('%s')", nameL.String(), pluginID)
+	}
+	displayName := L.GetField(schemaTbl, "display_name").String()
+	log.Infof("loading plugin: %s (%s)", displayName, pluginID)
+
+	// 2. Load Handler (Logic)
+	// We compile the handler and store its proto
+	handlerContent, err := os.ReadFile(handlerPath)
 	if err != nil {
-		return fmt.Errorf("failed to compile script: %w", err)
+		return fmt.Errorf("failed to read handler.lua: %w", err)
+	}
+
+	fn, err := L.LoadString(string(handlerContent))
+	if err != nil {
+		return fmt.Errorf("failed to compile handler.lua: %w", err)
 	}
 
 	e.scriptsMu.Lock()
 	defer e.scriptsMu.Unlock()
-	e.scripts[filepath.Base(path)] = fn.Proto
+	e.scripts[pluginID] = fn.Proto
+
 	return nil
 }
 
@@ -207,30 +288,69 @@ func (e *LuaEngine) executeHook(ctx context.Context, scriptName string, proto *l
 	L := e.getState()
 	defer e.putState(L)
 
-	// Load the compiled script
-	fn := L.NewFunctionFromProto(proto)
-	L.Push(fn)
-
-	// Set context for script execution to support timeouts
-	L.SetContext(ctx)
-
-	if err := L.PCall(0, 0, nil); err != nil {
-		return nil, fmt.Errorf("failed to execute script: %w", err)
+	// Set package.path for this specific plugin so it can require() its own files
+	pluginPath := filepath.Join(e.pluginDir, scriptName)
+	pathLVar := L.GetField(L.GetGlobal("package"), "path")
+	oldPath := ""
+	if str, ok := pathLVar.(lua.LString); ok {
+		oldPath = string(str)
+	}
+	// Add plugin dir to path
+	newPath := fmt.Sprintf("%s/?.lua;%s", pluginPath, oldPath)
+	if err := L.DoString(fmt.Sprintf("package.path = [[%s]]", newPath)); err != nil {
+		log.Errorf("failed to set package.path in hook: %v", err)
 	}
 
-	// Get the hook function
-	hookFn := L.GetGlobal(hookName)
+	// Load the compiled script (handler.lua)
+	// It returns a table (the Plugin object)
+	fn := L.NewFunctionFromProto(proto)
+	L.Push(fn)
+	// PCall the main chunk to get the Plugin table
+	if err := L.PCall(0, 1, nil); err != nil {
+		return nil, fmt.Errorf("failed to load handler: %w", err)
+	}
+	pluginTbl := L.Get(-1)
+	L.Pop(1) // Pop the table
+
+	if pluginTbl.Type() != lua.LTTable {
+		log.Debugf("plugin %s handler did not return a table, falling back to global scope", scriptName)
+	}
+
+	// Set context for script execution
+	L.SetContext(ctx)
+
+	// Look for the hook function
+	// 1. Try method on Plugin Table: Plugin:on_request(req)
+	//    In Lua: Plugin["on_request"](Plugin, req)
+	var hookFn lua.LValue
+	if pluginTbl.Type() == lua.LTTable {
+		hookFn = L.GetField(pluginTbl, hookName)
+	} else {
+		// Global fallback
+		hookFn = L.GetGlobal(hookName)
+	}
+
 	if hookFn == lua.LNil || hookFn.Type() != lua.LTFunction {
-		return nil, nil // Hook not defined in this script
+		return nil, nil // Hook not implemented
 	}
 
 	// Convert Go map to Lua table
 	luaData := e.goMapToLuaTable(L, data)
 
-	// Call the hook function
+	// Call the function
 	L.Push(hookFn)
-	L.Push(luaData)
-	if err := L.PCall(1, 1, nil); err != nil {
+
+	nArgs := 1
+	if pluginTbl.Type() == lua.LTTable {
+		// Pass 'self' (the plugin table) as first argument -> :CallingConvention
+		L.Push(pluginTbl)
+		L.Push(luaData)
+		nArgs = 2
+	} else {
+		L.Push(luaData)
+	}
+
+	if err := L.PCall(nArgs, 1, nil); err != nil {
 		return nil, fmt.Errorf("hook %s failed: %w", hookName, err)
 	}
 
@@ -352,4 +472,51 @@ func (e *LuaEngine) Close() {
 	e.scripts = nil
 	e.scriptsMu.Unlock()
 	e.enabled = false
+}
+
+// SetClassifier sets the classifier implementation for the engine.
+func (e *LuaEngine) SetClassifier(c Classifier) {
+	if e == nil {
+		return
+	}
+	e.classifier = c
+}
+
+// registerSwitchAIModule registers the 'switchai' global table with host functions.
+func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
+	mod := L.NewTable()
+
+	// switchai.classify(prompt) -> response_json
+	L.SetField(mod, "classify", L.NewFunction(func(L *lua.LState) int {
+		prompt := L.CheckString(1)
+		if e.classifier == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("classifier not configured"))
+			return 2
+		}
+
+		ctx := L.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		res, err := e.classifier.Classify(ctx, prompt)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LString(res))
+		return 1
+	}))
+
+	// switchai.log(message)
+	L.SetField(mod, "log", L.NewFunction(func(L *lua.LState) int {
+		msg := L.CheckString(1)
+		log.Infof("[LUA] %s", msg)
+		return 0
+	}))
+
+	L.SetGlobal("switchai", mod)
 }

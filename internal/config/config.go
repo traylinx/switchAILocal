@@ -108,6 +108,7 @@ type Config struct {
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
 	// Plugin configures the LUA plugin system.
+	// This is the core engine that executes user-defined logic.
 	Plugin PluginConfig `yaml:"plugin" json:"plugin"`
 
 	// Superbrain configures the intelligent orchestration and self-healing capabilities.
@@ -511,6 +512,12 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	cfg.WebsocketAuth = true // Default to true: Secure by default
 
+	// Set Intelligence defaults
+	cfg.SDKConfig.Intelligence.Enabled = false
+	cfg.SDKConfig.Intelligence.RouterModel = "ollama:qwen:0.5b"
+	cfg.SDKConfig.Intelligence.RouterFallback = "openai:gpt-4o-mini"
+	cfg.SDKConfig.Intelligence.Matrix = make(map[string]string)
+
 	// Set Superbrain defaults
 	cfg.Superbrain.Enabled = false
 	cfg.Superbrain.Mode = "disabled"
@@ -608,6 +615,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Superbrain configuration
 	cfg.SanitizeSuperbrain()
+
+	// Sanitize Intelligence configuration
+	cfg.SDKConfig.SanitizeIntelligence()
 
 	// Normalize OAuth provider model exclusion map.
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -81,8 +80,10 @@ func (s *Service) Run(ctx context.Context) error {
 
 	// Initialize LUA plugin engine
 	pluginCfg := plugin.Config{
-		Enabled:   s.cfg.Plugin.Enabled,
-		PluginDir: s.cfg.Plugin.PluginDir,
+		Enabled:        s.cfg.Plugin.Enabled,
+		PluginDir:      s.cfg.Plugin.PluginDir,
+		Intelligence:   s.cfg.SDKConfig.Intelligence,
+		EnabledPlugins: s.cfg.Plugin.EnabledPlugins,
 	}
 	s.luaEngine = plugin.NewLuaEngine(pluginCfg)
 
@@ -190,6 +191,11 @@ func (s *Service) Run(ctx context.Context) error {
 		s.server.SetDiscoverer(s.discoverer)
 	}
 
+	// Wire Lua engine with the classifier (BaseAPIHandler)
+	if s.luaEngine != nil && s.server != nil && s.server.GetHandlers() != nil {
+		s.luaEngine.SetClassifier(s.server.GetHandlers())
+	}
+
 	if s.authManager == nil {
 		s.authManager = newDefaultAuthManager()
 	}
@@ -238,7 +244,6 @@ func (s *Service) Run(ctx context.Context) error {
 		// This is a convenience feature for the user
 		go func() {
 			time.Sleep(500 * time.Millisecond) // Give the user a moment to see the log
-			_ = exec.Command("open", managementURL).Start()
 		}()
 	}
 

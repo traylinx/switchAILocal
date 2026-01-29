@@ -8,6 +8,8 @@
 // debug settings, proxy configuration, and API keys.
 package config
 
+import "strings"
+
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
@@ -29,6 +31,10 @@ type SDKConfig struct {
 
 	// Streaming configures server-side streaming behavior (keep-alives and safe bootstrap retries).
 	Streaming StreamingConfig `yaml:"streaming" json:"streaming"`
+
+	// Intelligence configures the "Cortex" engine for model: "auto" routing.
+	// It relies on the Plugin system and a specialized Router Model.
+	Intelligence IntelligenceConfig `yaml:"intelligence" json:"intelligence"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.
@@ -103,4 +109,46 @@ func MakeInlineAPIKeyProvider(keys []string) *AccessProvider {
 		APIKeys: append([]string(nil), keys...),
 	}
 	return provider
+}
+
+// IntelligenceConfig defines settings for the Intelligent Routing system.
+type IntelligenceConfig struct {
+	// Enabled toggles the intelligent routing feature.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// RouterModel is the identifier of the LLM used for classification (e.g., "ollama:qwen:0.5b").
+	RouterModel string `yaml:"router-model" json:"router-model"`
+
+	// RouterFallback is the model used if the primary RouterModel fails or returns invalid result.
+	RouterFallback string `yaml:"router-fallback" json:"router-fallback"`
+
+	// Matrix defines the intent-to-model mapping patterns.
+	// It is used by the Lua scripts to resolve abstract intents to specific models.
+	Matrix map[string]string `yaml:"matrix,omitempty" json:"matrix,omitempty"`
+}
+
+// SanitizeIntelligence normalizes the intelligence routing configuration.
+func (c *SDKConfig) SanitizeIntelligence() {
+	if c == nil {
+		return
+	}
+	c.Intelligence.RouterModel = strings.TrimSpace(c.Intelligence.RouterModel)
+	c.Intelligence.RouterFallback = strings.TrimSpace(c.Intelligence.RouterFallback)
+	if c.Intelligence.RouterModel == "" {
+		c.Intelligence.RouterModel = "ollama:qwen:0.5b"
+	}
+	if c.Intelligence.RouterFallback == "" {
+		c.Intelligence.RouterFallback = "openai:gpt-4o-mini"
+	}
+	if c.Intelligence.Matrix == nil {
+		c.Intelligence.Matrix = make(map[string]string)
+	}
+	for k, v := range c.Intelligence.Matrix {
+		cleanK := strings.TrimSpace(k)
+		cleanV := strings.TrimSpace(v)
+		if cleanK != "" {
+			delete(c.Intelligence.Matrix, k)
+			c.Intelligence.Matrix[cleanK] = cleanV
+		}
+	}
 }

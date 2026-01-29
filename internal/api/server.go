@@ -1111,3 +1111,11 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 		}
 	}
 }
+
+// GetHandlers returns the base API handlers instance.
+func (s *Server) GetHandlers() *handlers.BaseAPIHandler {
+	if s == nil {
+		return nil
+	}
+	return s.handlers
+}
