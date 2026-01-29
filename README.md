@@ -21,15 +21,15 @@
 
 ### Key Benefits
 
-| Feature                      | Description                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------- |
-| 🔑 **Use Your Subscriptions** | Connect Gemini CLI, Claude Code, Codex, Ollama, and more—no API keys needed |
-| 🎯 **Single Endpoint**        | Any OpenAI-compatible tool works with `http://localhost:18080`              |
-| 📎 **CLI Attachments**        | Pass files and folders directly to CLI providers via `extra_body.cli`       |
+| Feature                       | Description                                                                                                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔑 **Use Your Subscriptions**  | Connect Gemini CLI, Claude Code, Codex, Ollama, and more—no API keys needed                                                                                          |
+| 🎯 **Single Endpoint**         | Any OpenAI-compatible tool works with `http://localhost:18080`                                                                                                       |
+| 📎 **CLI Attachments**         | Pass files and folders directly to CLI providers via `extra_body.cli`                                                                                                |
 | 🧠 **Superbrain Intelligence** | Autonomous self-healing: monitors executions, diagnoses failures with AI, auto-responds to prompts, restarts with corrective flags, and routes to fallback providers |
-| ⚖️ **Load Balancing**         | Round-robin across multiple accounts per provider                           |
-| 🔄 **Intelligent Failover**   | Smart routing to alternatives based on capabilities and success rates       |
-| 🔒 **Local-First**            | Everything runs on your machine, your data never leaves                     |
+| ⚖️ **Load Balancing**          | Round-robin across multiple accounts per provider                                                                                                                    |
+| 🔄 **Intelligent Failover**    | Smart routing to alternatives based on capabilities and success rates                                                                                                |
+| 🔒 **Local-First**             | Everything runs on your machine, your data never leaves                                                                                                              |
 
 ---
 
@@ -314,17 +314,17 @@ plugin:
 
 ### For Users
 
-| Guide                                                     | Description                                |
-| --------------------------------------------------------- | ------------------------------------------ |
-| [Installation](docs/user/installation.md)                 | Build, run, and Docker setup               |
-| [Configuration](docs/user/configuration.md)               | All `config.yaml` options                  |
-| [Provider Setup](docs/user/providers.md)                  | Connect all your AI providers              |
-| [Superbrain Intelligence](docs/user/superbrain.md)        | AI-powered self-healing and autonomous recovery |
-| [Examples](docs/user/examples.md)                         | Practical usage examples with curl         |
-| [API Reference](docs/user/api-reference.md)               | Endpoints and examples                     |
-| [CLI Reference](docs/user/cli-reference.md)               | All command-line flags                     |
-| [Advanced Features](docs/user/advanced-features.md)       | Payload overrides, TLS, CLI capabilities   |
 | [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
+
+### Build from Source
+
+```bash
+# Build the main server
+go build -o switchAILocal ./cmd/server
+
+# Build the Management UI (optional)
+./ail_ui.sh
+```
 
 ### For Developers
 

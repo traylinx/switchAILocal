@@ -33,7 +33,7 @@ curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "switchai-fast",
+    "model": "switchai:switchai-fast",
     "messages": [{"role": "user", "content": "Tell me a joke about robots."}]
   }'
 ```
@@ -317,7 +317,7 @@ curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "switchai-reasoner",
+    "model": "switchai:switchai-reasoner",
     "messages": [{"role": "user", "content": "Explain quantum entanglement in 3 sentences."}],
     "stream": true
   }'
@@ -339,7 +339,7 @@ curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "switchai-fast",
+    "model": "switchai:switchai-fast",
     "messages": [{"role": "user", "content": "Who are you?"}]
   }'
 ```

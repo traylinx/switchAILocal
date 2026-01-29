@@ -1,57 +1,63 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { LoginScreen } from './LoginScreen';
+import { SetupScreen } from './SetupScreen';
 
 export function AuthGuard({ children }) {
-  const { isAuthenticated, login } = useAppStore();
-  const [isCheckingLocalhost, setIsCheckingLocalhost] = useState(true);
+  const { isAuthenticated, isConfigured, login, setConfigured } = useAppStore();
+  const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   
   useEffect(() => {
-    // 1. Check for URL parameter ?key=
-    const params = new URLSearchParams(window.location.search);
-    const keyFromUrl = params.get('key');
-    
-    if (keyFromUrl) {
-      // 2. Store key and trigger login
-      login(keyFromUrl);
-      
-      // 3. Clean URL without refreshing page
-      const newUrl = window.location.pathname + window.location.hash;
-      window.history.replaceState({}, document.title, newUrl);
-      setIsCheckingLocalhost(false);
-      return;
-    }
-    
-    // 4. Check if we're on localhost and can bypass auth
-    const isLocalhost = window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1' ||
-                       window.location.hostname === '::1';
-    
-    if (isLocalhost) {
-      // Try to access config without auth to see if localhost bypass is enabled
-      fetch('/v0/management/config', {
-        headers: { 'Authorization': 'Bearer localhost-bypass-check' }
-      })
-      .then(response => {
-        if (response.ok || response.headers.get('X-Management-Auth') === 'localhost-bypass') {
-          // Localhost bypass is enabled, auto-login with special token
-          login('localhost-bypass');
-          setIsCheckingLocalhost(false);
-        } else {
-          // Localhost bypass not enabled, show login
-          setIsCheckingLocalhost(false);
+    const checkStatus = async () => {
+      try {
+        // 1. Check setup status
+        const statusRes = await fetch('/v0/management/setup-status');
+        if (statusRes.ok) {
+          const data = await statusRes.json();
+          setConfigured(data.isConfigured);
         }
-      })
-      .catch(() => {
-        // Network error, show login
-        setIsCheckingLocalhost(false);
-      });
-    } else {
-      setIsCheckingLocalhost(false);
-    }
-  }, [login]);
+
+        // 2. Check for URL parameter ?key=
+        const params = new URLSearchParams(window.location.search);
+        const keyFromUrl = params.get('key');
+        
+        if (keyFromUrl) {
+          login(keyFromUrl);
+          const newUrl = window.location.pathname + window.location.hash;
+          window.history.replaceState({}, document.title, newUrl);
+          setIsCheckingStatus(false);
+          return;
+        }
+        
+        // 3. Check if we're on localhost and can bypass auth
+        const isLocalhost = window.location.hostname === 'localhost' || 
+                           window.location.hostname === '127.0.0.1' ||
+                           window.location.hostname === '::1';
+        
+        if (isLocalhost) {
+          try {
+            const response = await fetch('/v0/management/config', {
+              headers: { 'Authorization': 'Bearer localhost-bypass-check' }
+            });
+            
+            if (response.ok || response.headers.get('X-Management-Auth') === 'localhost-bypass') {
+              login('localhost-bypass');
+            }
+          } catch (err) {
+            console.error('Localhost bypass check failed:', err);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch setup status:', err);
+      } finally {
+        setIsCheckingStatus(false);
+      }
+    };
+
+    checkStatus();
+  }, [login, setConfigured]);
   
-  if (isCheckingLocalhost) {
+  if (isCheckingStatus) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -74,6 +80,10 @@ export function AuthGuard({ children }) {
         </div>
       </div>
     );
+  }
+  
+  if (!isConfigured) {
+    return <SetupScreen />;
   }
   
   if (!isAuthenticated) {

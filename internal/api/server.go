@@ -490,6 +490,15 @@ func (s *Server) registerManagementRoutes() {
 	log.Info("management routes registered after secret key configuration")
 
 	mgmt := s.engine.Group("/v0/management")
+	// Setup endpoints are accessible without full management key check by Middleware()
+	// because they are registered BEFORE the Middleware() is added to the group.
+	// Wait, Gin groups work by adding middleware to the group's internal list.
+	// If I put mgmt.Use AFTER these routes, they won't have the middleware.
+	mgmt.GET("/setup-status", s.mgmt.GetSetupStatus)
+	mgmt.POST("/initialize", s.mgmt.InitializeSecret)
+	mgmt.POST("/skip", s.mgmt.SkipSecret)
+	mgmt.POST("/reset", s.mgmt.ResetSecret)
+
 	mgmt.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware())
 	{
 		mgmt.GET("/usage", s.mgmt.GetUsageStatistics)

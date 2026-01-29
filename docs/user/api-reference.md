@@ -16,7 +16,7 @@ http://localhost:18080/v1
 
 ### Auto-Routing (No Provider Prefix)
 
-switchAILocal automatically routes to an available provider:
+`switchAILocal` automatically routes to an available provider:
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
@@ -116,17 +116,17 @@ curl http://localhost:18080/v1/chat/completions \
 
 ### Provider Prefixes
 
-| Prefix | Provider | Description |
-|--------|----------|-------------|
-| `switchai:` | Traylinx switchAI | Unified AI gateway (recommended) |
-| `geminicli:` | Gemini CLI | Google Gemini via local CLI |
-| `gemini:` | Gemini API | Google AI Studio API |
-| `claudecli:` | Claude CLI | Anthropic Claude via local CLI |
-| `claude:` | Claude API | Anthropic API |
-| `codex:` | Codex | OpenAI Codex |
-| `ollama:` | Ollama | Local Ollama models |
-| `vibe:` | Vibe CLI | Mistral Vibe CLI |
-| `openai-compat:` | OpenAI Compatible | OpenRouter, etc. |
+| Prefix           | Provider          | Description                      |
+| ---------------- | ----------------- | -------------------------------- |
+| `switchai:`      | switchAILocal     | Unified AI gateway (recommended) |
+| `geminicli:`     | Gemini CLI        | Google Gemini via local CLI      |
+| `gemini:`        | Gemini API        | Google AI Studio API             |
+| `claudecli:`     | Claude CLI        | Anthropic Claude via local CLI   |
+| `claude:`        | Claude API        | Anthropic API                    |
+| `codex:`         | Codex             | OpenAI Codex                     |
+| `ollama:`        | Ollama            | Local Ollama models              |
+| `vibe:`          | Vibe CLI          | Mistral Vibe CLI                 |
+| `openai-compat:` | OpenAI Compatible | OpenRouter, etc.                 |
 
 ---
 
@@ -169,7 +169,7 @@ curl http://localhost:18080/v1/providers \
     },
     {
       "id": "switchai",
-      "name": "SwitchAI",
+      "name": "switchAILocal",
       "type": "api",
       "mode": "online",
       "status": "active",
@@ -212,20 +212,20 @@ When using CLI providers (`geminicli:`, `vibe:`, `claudecli:`, `codex:`), you ca
 
 Pass local files or folders as context to CLI providers:
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `file` | Single file | `{"type": "file", "path": "./main.go"}` |
-| `folder` | Directory | `{"type": "folder", "path": "./src/"}` |
+| Type     | Description | Example                                 |
+| -------- | ----------- | --------------------------------------- |
+| `file`   | Single file | `{"type": "file", "path": "./main.go"}` |
+| `folder` | Directory   | `{"type": "folder", "path": "./src/"}`  |
 
 ### Flags
 
 Provider-agnostic flags mapped to CLI-specific arguments:
 
-| Flag | Description | geminicli | vibe | claudecli | codex |
-|------|-------------|-----------|------|-----------|-------|
-| `sandbox` | Restricted execution | `-s` | - | - | `--sandbox` |
-| `auto_approve` | Skip confirmations | `-y` | `--auto-approve` | `--dangerously-skip-permissions` | `--full-auto` |
-| `yolo` | Maximum autonomy | `--yolo` | `--auto-approve` | `--dangerously-skip-permissions` | `--full-auto` |
+| Flag           | Description          | geminicli | vibe             | claudecli                        | codex         |
+| -------------- | -------------------- | --------- | ---------------- | -------------------------------- | ------------- |
+| `sandbox`      | Restricted execution | `-s`      | -                | -                                | `--sandbox`   |
+| `auto_approve` | Skip confirmations   | `-y`      | `--auto-approve` | `--dangerously-skip-permissions` | `--full-auto` |
+| `yolo`         | Maximum autonomy     | `--yolo`  | `--auto-approve` | `--dangerously-skip-permissions` | `--full-auto` |
 
 ### Session Management
 
@@ -246,7 +246,7 @@ curl http://localhost:18080/v1/chat/completions \
 
 ## Management Dashboard
 
-**URL**: `http://localhost:18080/management.html`
+**URL**: `http://localhost:18080/management`
 
 Access the graphical dashboard to:
 

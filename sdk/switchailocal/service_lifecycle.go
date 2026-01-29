@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -229,6 +230,17 @@ func (s *Service) Run(ctx context.Context) error {
 
 	time.Sleep(100 * time.Millisecond)
 	fmt.Printf("API server started successfully on: %s:%d\n", s.cfg.Host, s.cfg.Port)
+	if !s.cfg.RemoteManagement.DisableControlPanel {
+		managementURL := fmt.Sprintf("http://localhost:%d/management", s.cfg.Port)
+		fmt.Printf("Management UI available at: %s\n", managementURL)
+
+		// Attempt to open the browser automatically (macOS only for now)
+		// This is a convenience feature for the user
+		go func() {
+			time.Sleep(500 * time.Millisecond) // Give the user a moment to see the log
+			_ = exec.Command("open", managementURL).Start()
+		}()
+	}
 
 	if s.hooks.OnAfterStart != nil {
 		s.hooks.OnAfterStart(s)

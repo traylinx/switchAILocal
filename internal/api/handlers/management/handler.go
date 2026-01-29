@@ -44,6 +44,7 @@ type Handler struct {
 	allowRemoteOverride bool
 	envSecret           string
 	logDir              string
+	configLoaded        bool
 }
 
 // NewHandler creates a new management handler instance.
@@ -157,7 +158,7 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		}
 		// LOCALHOST BYPASS: If accessing from localhost and remote management is not enabled,
 		// allow access without authentication for better UX
-		if localClient && !allowRemote && secretHash == "" && envSecret == "" {
+		if localClient && !allowRemote && (secretHash == "" || secretHash == "disabled") && envSecret == "" {
 			c.Header("X-Management-Auth", "localhost-bypass")
 			c.Next()
 			return
@@ -281,4 +282,107 @@ func (h *Handler) updateStringField(c *gin.Context, set func(string)) {
 	}
 	set(*body.Value)
 	h.persist(c)
+}
+
+// GetSetupStatus returns whether a management password is currently configured.
+func (h *Handler) GetSetupStatus(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	isConfigured := h.cfg != nil && h.cfg.RemoteManagement.SecretKey != ""
+	if h.envSecret != "" {
+		isConfigured = true
+	}
+	// Special case: "disabled" means explicitly configured to have no auth (localhost only)
+	if h.cfg != nil && h.cfg.RemoteManagement.SecretKey == "disabled" {
+		isConfigured = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"isConfigured": isConfigured,
+	})
+}
+
+// InitializeSecret allows setting the initial management password if none is configured.
+func (h *Handler) InitializeSecret(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Check if already configured
+	if (h.cfg != nil && h.cfg.RemoteManagement.SecretKey != "") || h.envSecret != "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "management secret is already configured"})
+		return
+	}
+
+	var body struct {
+		Secret string `json:"secret"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Secret == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "message": "secret is required"})
+		return
+	}
+
+	// Hash and store the new secret
+	hashed, err := hashSecret(body.Secret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash_failed", "message": err.Error()})
+		return
+	}
+
+	h.cfg.RemoteManagement.SecretKey = hashed
+	h.cfg.RemoteManagement.AllowRemote = true // Enable remote management by default when setting initial secret
+
+	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "management secret initialized successfully"})
+}
+
+func (h *Handler) SkipSecret(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	clientIP := c.ClientIP()
+	if clientIP != "127.0.0.1" && clientIP != "::1" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "skip setup only allowed from localhost"})
+		return
+	}
+
+	h.cfg.RemoteManagement.SecretKey = "disabled"
+	h.cfg.RemoteManagement.AllowRemote = false // Enforce local only for no-auth
+
+	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "auth disabled for localhost"})
+}
+
+func (h *Handler) ResetSecret(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Only allow reset from localhost for safety
+	clientIP := c.ClientIP()
+	if clientIP != "127.0.0.1" && clientIP != "::1" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "reset only allowed from localhost"})
+		return
+	}
+
+	h.cfg.RemoteManagement.SecretKey = ""
+
+	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "configuration reset"})
+}
+
+func hashSecret(secret string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
+	return string(bytes), err
 }

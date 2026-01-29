@@ -4,6 +4,7 @@ export const useAppStore = create((set) => ({
   // Auth state
   isAuthenticated: !!localStorage.getItem('switchai_management_key'),
   managementKey: localStorage.getItem('switchai_management_key'),
+  isConfigured: true, // Default to true, will be updated by AuthGuard
   
   // UI state
   currentView: 'providers',
@@ -28,4 +29,5 @@ export const useAppStore = create((set) => ({
     document.documentElement.setAttribute('data-theme', newTheme);
     return { theme: newTheme };
   }),
+  setConfigured: (configured) => set({ isConfigured: configured }),
 }));

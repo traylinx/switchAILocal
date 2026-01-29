@@ -25,6 +25,19 @@ This guide will walk you through setting up `switchAILocal` on your machine.
     ./switchAILocal --version
     ```
 
+## Building the Management UI (Optional)
+
+If you wish to build the management dashboard from source:
+
+1.  **Run the UI build script**:
+    ```bash
+    ./ail_ui.sh
+    ```
+    This script handles the `npm install` and `npm run build` processes and ensures the compiled dashboard is correctly placed in the `static/` directory.
+
+2.  **Verify the artifact**:
+    Check that `static/management.html` has been created.
+
 ## Running the Server
 
 To start the server with default settings:

@@ -4,23 +4,23 @@
 
 ## Server Settings
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `host` | Interface to bind to (`""` for all, `127.0.0.1` for local only). | `""` |
-| `port` | Network port for the API server. | `18080` |
-| `debug` | Enable verbose debug logging. | `false` |
-| `logging-to-file` | Write logs to rotating files in `logs/` directory. | `false` |
-| `logs-max-total-size-mb` | Max total size of log files before rotation. | `0` (unlimited) |
-| `usage-statistics-enabled` | Enable in-memory usage aggregation for the dashboard. | `false` |
-| `disable-cooling` | Disable quota cooldown scheduling. | `false` |
-| `request-retry` | Number of retries for failed requests. | `0` |
-| `max-retry-interval` | Max wait time (seconds) before retrying a cooled-down credential. | `0` |
+| Parameter                  | Description                                                       | Default         |
+| -------------------------- | ----------------------------------------------------------------- | --------------- |
+| `host`                     | Interface to bind to (`""` for all, `127.0.0.1` for local only).  | `""`            |
+| `port`                     | Network port for the API server.                                  | `18080`         |
+| `debug`                    | Enable verbose debug logging.                                     | `false`         |
+| `logging-to-file`          | Write logs to rotating files in `logs/` directory.                | `false`         |
+| `logs-max-total-size-mb`   | Max total size of log files before rotation.                      | `0` (unlimited) |
+| `usage-statistics-enabled` | Enable in-memory usage aggregation for the dashboard.             | `false`         |
+| `disable-cooling`          | Disable quota cooldown scheduling.                                | `false`         |
+| `request-retry`            | Number of retries for failed requests.                            | `0`             |
+| `max-retry-interval`       | Max wait time (seconds) before retrying a cooled-down credential. | `0`             |
 
 ---
 
 ## Remote Management
 
-The Management Control Panel (found at `/management.html`) allows for GUI-based administration.
+The Management Control Panel (found at `/management`) allows for GUI-based administration.
 
 ```yaml
 remote-management:

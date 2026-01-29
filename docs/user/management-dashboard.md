@@ -1,6 +1,6 @@
 # Enhanced Management Dashboard
 
-The **SwitchAI Local Management Dashboard** provides a sophisticated graphical interface for configuring your AI providers, managing models, and monitoring system status.
+The **switchAILocal Management Dashboard** provides a sophisticated graphical interface for configuring your AI providers, managing models, and monitoring system status.
 
 Access the dashboard at: `http://localhost:18080/management`
 
@@ -41,10 +41,24 @@ Verify your configuration before saving. The "Test Connection" feature validates
 ### 5. Hot Reload
 All changes made in the dashboard are saved to `config.yaml` and applied immediately without requiring a server restart. Existing comments in your YAML file are preserved.
 
-## usage
+## Usage
 
 1. **Open the Dashboard**: Navigate to `http://localhost:18080/management`.
 2. **Select a Provider**: Click "Configure" on any provider card.
 3. **Edit Settings**: Switch between Basic and Advanced tabs to modify settings.
 4. **Discover Models**: (Optional) In the Advanced tab, click "Fetch Models" to browse available models from the provider.
 5. **Test & Save**: Click "Test Connection" to verify, then "Save" to apply changes instantly.
+
+---
+
+## Building from Source
+
+If you are developing `switchAILocal` or want to customize the dashboard, you can build it yourself:
+
+1.  **Navigate to the root directory**.
+2.  **Run the UI build script**:
+    ```bash
+    ./ail_ui.sh
+    ```
+3.  **Result**: The build process will generate `static/management.html` in the project root.
+4.  **Verification**: The server will automatically pick up the new `management.html` from the `static/` directory when started.

@@ -4,13 +4,13 @@ This document explains how switchAILocal integrates with [OpenCode](https://gith
 
 ## Architecture
 
-SwitchAILocal treats the OpenCode server as an **upstream provider**, similar to Ollama or LM Studio.
+S`switchAILocal` integrates with OpenCode by treating it as an upstream provider. This allows you to route requests to OpenCode models (`build`, `plan`, `explore`) while leveraging `switchAILocal`'s shared authentication, logging, and unified API interface.
 
 ```
 Client (Cursor, Continue, etc.)
        │
        ▼
-SwitchAILocal Gateway (/v1/chat/completions)
+switchAILocal Gateway (/v1/chat/completions)
        │
        ▼
 OpenCode Server (localhost:4096)

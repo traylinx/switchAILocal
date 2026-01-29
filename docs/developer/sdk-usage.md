@@ -161,4 +161,3 @@ _ = svc.Shutdown(ctx)
 
 - Hot reload: changes to `config.yaml` and `auths/` are picked up automatically.
 - Request logging can be toggled at runtime via the Management API.
-- Gemini Web features (`gemini-web.*`) are honored in the embedded server.
