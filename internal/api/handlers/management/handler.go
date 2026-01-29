@@ -44,7 +44,6 @@ type Handler struct {
 	allowRemoteOverride bool
 	envSecret           string
 	logDir              string
-	configLoaded        bool
 }
 
 // NewHandler creates a new management handler instance.
