@@ -35,6 +35,21 @@ type SDKConfig struct {
 	// Intelligence configures the "Cortex" engine for model: "auto" routing.
 	// It relies on the Plugin system and a specialized Router Model.
 	Intelligence IntelligenceConfig `yaml:"intelligence" json:"intelligence"`
+
+	// Routing controls credential selection behavior and auto-resolver priority.
+	Routing RoutingConfig `yaml:"routing,omitempty" json:"routing,omitempty"`
+}
+
+// RoutingConfig configures how credentials are selected for requests.
+type RoutingConfig struct {
+	// Strategy selects the credential selection strategy.
+	// Supported values: "round-robin" (default), "fill-first".
+	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// AutoModelPriority defines a prioritized list of model IDs to use when "auto" is requested.
+	// The server will pick the first available model from this list.
+	// If none are available, it falls back to the default timestamp-based selection.
+	AutoModelPriority []string `yaml:"auto-model-priority,omitempty" json:"auto-model-priority,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.
@@ -125,6 +140,9 @@ type IntelligenceConfig struct {
 	// Matrix defines the intent-to-model mapping patterns.
 	// It is used by the Lua scripts to resolve abstract intents to specific models.
 	Matrix map[string]string `yaml:"matrix,omitempty" json:"matrix,omitempty"`
+
+	// SkillsPath defines the directory where Agent Skills are stored (SKILL.md).
+	SkillsPath string `yaml:"skills-path" json:"skills-path"`
 }
 
 // SanitizeIntelligence normalizes the intelligence routing configuration.

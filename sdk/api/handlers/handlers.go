@@ -350,7 +350,7 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
 	}
@@ -391,7 +391,7 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
 	}
@@ -432,7 +432,7 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
-	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(modelName, rawJSON)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
@@ -560,7 +560,7 @@ func statusFromError(err error) int {
 	return 0
 }
 
-func (h *BaseAPIHandler) getRequestDetails(modelName string, rawJSON []byte) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
+func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string, rawJSON []byte) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
 	body = cloneBytes(rawJSON)
 	// Parse provider prefix (e.g., "ollama:llama3.2" -> provider="ollama", model="llama3.2")
 	providerPrefix, prefixedModel := util.ParseProviderPrefix(modelName)
@@ -623,13 +623,43 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string, rawJSON []byte) (pr
 	}
 
 	// No prefix - use existing auto-detection logic
-	// Resolve "auto" model to an actual available model first
-	resolvedModelName := util.ResolveAutoModel(modelName)
+	// 1. Initial normalization
+	normalizedModel, metadata = normalizeModelMetadata(modelName)
 
-	// Normalize the model name to handle dynamic thinking suffixes before determining the provider.
-	normalizedModel, metadata = normalizeModelMetadata(resolvedModelName)
+	// 2. ROUTING: Apply LUA on_request hook early so it can intercept "auto" or "cortex"
+	if h.LuaEngine.IsEnabled() && ctx.Value(plugin.SkipLuaContextKey) == nil {
+		reqData := map[string]any{
+			"model":    normalizedModel,
+			"metadata": metadata,
+			"body":     string(body),
+		}
+		modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
+		if hookErr == nil && modified != nil {
+			if m, ok := modified["model"].(string); ok && m != "" {
+				normalizedModel = m
+			}
+			if meta, ok := modified["metadata"].(map[string]any); ok {
+				metadata = meta
+			}
+			if b, ok := modified["body"].(string); ok && b != "" {
+				body = []byte(b)
+			}
+			// If LUA explicitly chose a provider, use it and shortcut
+			if p, ok := modified["provider"].(string); ok && p != "" {
+				return []string{p}, normalizedModel, metadata, body, nil
+			}
+			if ps, ok := modified["providers"].([]string); ok && len(ps) > 0 {
+				return ps, normalizedModel, metadata, body, nil
+			}
+		}
+	}
 
-	// Use the normalizedModel to get the provider name.
+	// 3. If it's still "auto", resolve it via standard logic
+	if normalizedModel == "auto" || normalizedModel == "cortex" {
+		normalizedModel = util.ResolveAutoModel(normalizedModel, h.Cfg.Routing.AutoModelPriority)
+	}
+
+	// 4. Determine providers for the (possibly resolved/modified) model
 	providers = util.GetProviderName(normalizedModel)
 	if len(providers) == 0 && metadata != nil {
 		if originalRaw, ok := metadata[util.ThinkingOriginalModelMetadataKey]; ok {
@@ -646,39 +676,8 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string, rawJSON []byte) (pr
 	}
 
 	if len(providers) == 0 {
-		return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", modelName)}
+		return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", normalizedModel)}
 	}
-
-	// ROUTING: Apply LUA on_request hook if engine is enabled for auto-detected providers
-	if h.LuaEngine.IsEnabled() {
-		reqData := map[string]any{
-			"model":     normalizedModel,
-			"providers": providers,
-			"metadata":  metadata,
-			"body":      string(body),
-		}
-		modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
-		if hookErr == nil && modified != nil {
-			if m, ok := modified["model"].(string); ok && m != "" {
-				normalizedModel = m
-			}
-			if p, ok := modified["providers"].([]string); ok && len(p) > 0 {
-				providers = p
-			} else if p, ok := modified["provider"].(string); ok && p != "" {
-				providers = []string{p}
-			}
-			if meta, ok := modified["metadata"].(map[string]any); ok {
-				metadata = meta
-			}
-			if b, ok := modified["body"].(string); ok && b != "" {
-				body = []byte(b)
-			}
-		}
-	}
-
-	// If it's a dynamic model, the normalizedModel was already set to extractedModelName.
-	// If it's a non-dynamic model, normalizedModel was set by normalizeModelMetadata.
-	// So, normalizedModel is already correctly set at this point.
 
 	return providers, normalizedModel, metadata, body, nil
 }
@@ -769,6 +768,9 @@ func (h *BaseAPIHandler) Classify(ctx context.Context, prompt string) (string, e
 		return "", fmt.Errorf("auth manager not initialized")
 	}
 
+	// Prevent infinite recursion by marking this context to skip LUA plugins
+	ctx = context.WithValue(ctx, plugin.SkipLuaContextKey, true)
+
 	model := h.Cfg.Intelligence.RouterModel
 	if model == "" {
 		model = "ollama:qwen:0.5b"
@@ -777,8 +779,29 @@ func (h *BaseAPIHandler) Classify(ctx context.Context, prompt string) (string, e
 	// Prepare a simple chat completion payload
 	// Since we want raw output from the router, we use a minimal OpenAI-compatible format
 	payload := map[string]any{
-		"model":       model,
-		"messages":    []map[string]string{{"role": "user", "content": prompt}},
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": `You are the Cortex Router. Your ONLY job is to analyze the user's request and classify it into JSON for routing. Do not answer the user's question.
+
+Routing Rules:
+1. Intent:
+   - "coding": Writing, debugging, or explaining code.
+   - "reasoning": Math, logic puzzles, step-by-step analysis.
+   - "creative": Storytelling, poetry, roleplay.
+   - "factual": History, science, definitions.
+   - "chat": Casual conversation, greetings.
+
+2. Complexity:
+   - "simple": Can be answered instantly (e.g., "Hi", "What is HTTP?").
+   - "complex": Requires planning, multi-step thought, or deep domain knowledge.
+
+3. Privacy:
+   - "pii": Contains emails, phone numbers, API keys.
+   - "public": Safe general knowledge.
+
+Output Format: Valid JSON only. No markdown limits.`},
+			{"role": "user", "content": prompt},
+		},
 		"temperature": 0, // Deterministic for classification
 	}
 	rawPayload, err := json.Marshal(payload)
@@ -786,12 +809,12 @@ func (h *BaseAPIHandler) Classify(ctx context.Context, prompt string) (string, e
 		return "", fmt.Errorf("failed to marshal classification payload: %w", err)
 	}
 
-	providers, normalizedModel, metadata, reqBody, errMsg := h.getRequestDetails(model, rawPayload)
+	providers, normalizedModel, metadata, reqBody, errMsg := h.getRequestDetails(ctx, model, rawPayload)
 	if errMsg != nil {
 		// If primary model failed to resolve, try fallback if available
 		fallback := h.Cfg.Intelligence.RouterFallback
 		if fallback != "" && fallback != model {
-			providers, normalizedModel, metadata, reqBody, errMsg = h.getRequestDetails(fallback, rawPayload)
+			providers, normalizedModel, metadata, reqBody, errMsg = h.getRequestDetails(ctx, fallback, rawPayload)
 		}
 		if errMsg != nil {
 			return "", fmt.Errorf("failed to get router model details: %v", errMsg.Error)

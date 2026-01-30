@@ -10,15 +10,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/util"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	lua "github.com/yuin/gopher-lua"
+)
+
+type contextKey string
+
+const (
+	// SkipLuaContextKey is a context key used to prevent recursive LUA execution.
+	SkipLuaContextKey contextKey = "skip_lua"
 )
 
 // Classifier defines the interface for LLM-based intent classification.
@@ -43,6 +54,19 @@ type LuaEngine struct {
 	intelConfig    config.IntelligenceConfig
 	classifier     Classifier
 	enabledPlugins []string
+	cache          map[string]string
+	cacheMu        sync.RWMutex
+
+	// Internal cache for expensive operations like scanning
+	scanCache sync.Map
+}
+
+// SkillDefinition represents a parsed SKILL.md
+type SkillDefinition struct {
+	Name               string `yaml:"name"`
+	Description        string `yaml:"description"`
+	RequiredCapability string `yaml:"required-capability"`
+	Content            string `yaml:"-"` // Full content of SKILL.md
 }
 
 type Config struct {
@@ -68,6 +92,7 @@ func NewLuaEngine(cfg Config) *LuaEngine {
 		enabled:        true,
 		intelConfig:    cfg.Intelligence,
 		enabledPlugins: cfg.EnabledPlugins,
+		cache:          make(map[string]string),
 	}
 
 	engine.pool = sync.Pool{
@@ -518,5 +543,230 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 		return 0
 	}))
 
+	// switchai.exec(cmd, args...) -> (output, err)
+	L.SetField(mod, "exec", L.NewFunction(func(L *lua.LState) int {
+		if L.GetTop() < 1 {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("missing command"))
+			return 2
+		}
+		cmdName := L.CheckString(1)
+
+		// ALLOWLIST (Strict Sandbox)
+		allowed := map[string]bool{
+			"ls": true, "cat": true, "echo": true, "date": true,
+			"git": true, "whoami": true, "pwd": true, "grep": true,
+		}
+		if !allowed[cmdName] {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("command not allowed: " + cmdName))
+			return 2
+		}
+
+		// Git Safety Check
+		var args []string
+		for i := 2; i <= L.GetTop(); i++ {
+			args = append(args, L.CheckString(i))
+		}
+
+		if cmdName == "git" {
+			if len(args) > 0 {
+				sub := args[0]
+				// Only allow read-only git operations
+				safeGit := map[string]bool{
+					"status": true, "diff": true, "log": true, "show": true,
+					"branch": true, "ls-files": true, "grep": true,
+				}
+				if !safeGit[sub] {
+					L.Push(lua.LNil)
+					L.Push(lua.LString("git subcommand not allowed: " + sub))
+					return 2
+				}
+			}
+		}
+
+		ctx := L.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		// Hard timeout for safety
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, cmdName, args...)
+
+		// Capture combined output
+		out, err := cmd.CombinedOutput()
+		output := string(out)
+
+		// Truncate if too huge to prevent context explosion
+		const maxOutputSize = 8192 // 8KB
+		if len(output) > maxOutputSize {
+			output = output[:maxOutputSize] + "\n...[truncated (output too large)]"
+		}
+
+		L.Push(lua.LString(output))
+		if err != nil {
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		return 1
+	}))
+
+	// switchai.get_cache(key) -> value
+	L.SetField(mod, "get_cache", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		e.cacheMu.RLock()
+		val, ok := e.cache[key]
+		e.cacheMu.RUnlock()
+		if !ok {
+			L.Push(lua.LNil)
+		} else {
+			L.Push(lua.LString(val))
+		}
+		return 1
+	}))
+
+	// switchai.set_cache(key, value)
+	L.SetField(mod, "set_cache", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		val := L.CheckString(2)
+		e.cacheMu.Lock()
+		// Simple cap at 1000 items
+		if len(e.cache) > 1000 {
+			// Clear all (simplest LRU-ish behavior)
+			e.cache = make(map[string]string)
+		}
+		e.cache[key] = val
+		e.cacheMu.Unlock()
+		return 0
+	}))
+
+	// switchai.config
+	configTbl := L.NewTable()
+	L.SetField(configTbl, "router_model", lua.LString(e.intelConfig.RouterModel))
+	L.SetField(configTbl, "router_fallback", lua.LString(e.intelConfig.RouterFallback))
+	L.SetField(configTbl, "skills_path", lua.LString(e.intelConfig.SkillsPath))
+
+	matrixTbl := L.NewTable()
+	for k, v := range e.intelConfig.Matrix {
+		L.SetField(matrixTbl, k, lua.LString(v))
+	}
+	L.SetField(configTbl, "matrix", matrixTbl)
+	L.SetField(mod, "config", configTbl)
+
+	// switchai.scan_skills(path) -> table
+	L.SetField(mod, "scan_skills", L.NewFunction(func(L *lua.LState) int {
+		path := L.CheckString(1)
+		skills, err := e.scanSkills(path)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		skillsTbl := L.NewTable()
+		for _, skill := range skills {
+			s := L.NewTable()
+			L.SetField(s, "name", lua.LString(skill.Name))
+			L.SetField(s, "description", lua.LString(skill.Description))
+			L.SetField(s, "required_capability", lua.LString(skill.RequiredCapability))
+			L.SetField(s, "content", lua.LString(skill.Content))
+			L.SetField(skillsTbl, skill.Name, s)
+		}
+		L.Push(skillsTbl)
+		return 1
+	}))
+
+	// switchai.json_inject(json_str, content_to_inject) -> new_json
+	// Safe injection using encoding/json
+	L.SetField(mod, "json_inject", L.NewFunction(func(L *lua.LState) int {
+		jsonStr := L.CheckString(1)
+		injection := L.CheckString(2)
+
+		var payload map[string]interface{}
+		// If unmarshal fails, return original string (graceful fallback)
+		if err := json.Unmarshal([]byte(jsonStr), &payload); err != nil {
+			log.Warnf("LUA json_inject: invalid JSON, fallback to append: %v", err)
+			L.Push(lua.LString(jsonStr + "\n\n" + injection))
+			return 1
+		}
+
+		// Inject as System Message
+		// Check for "messages" array
+		if messages, ok := payload["messages"].([]interface{}); ok {
+			sysMsg := map[string]interface{}{
+				"role":    "system",
+				"content": injection,
+			}
+			// Prepend system message
+			newMessages := append([]interface{}{sysMsg}, messages...)
+			payload["messages"] = newMessages
+		}
+
+		// Marshal back
+		newBytes, err := json.Marshal(payload)
+		if err != nil {
+			L.Push(lua.LString(jsonStr))
+			return 1
+		}
+
+		L.Push(lua.LString(string(newBytes)))
+		return 1
+	}))
+
 	L.SetGlobal("switchai", mod)
+}
+
+// scanSkills walks the directory and parses SKILL.md files (Cached)
+func (e *LuaEngine) scanSkills(root string) ([]SkillDefinition, error) {
+	// 1. Check Cache
+	if val, ok := e.scanCache.Load(root); ok {
+		log.Debugf("Returning cached skills for %s", root)
+		return val.([]SkillDefinition), nil
+	}
+
+	log.Infof("Scanning for skills in %s...", root)
+
+	var newSkills []SkillDefinition
+	count := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), "SKILL.md") {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				log.Warnf("Failed to read SKILL.md at %s: %v", path, err)
+				return nil
+			}
+
+			// Parse Frontmatter (YAML)
+			parts := strings.SplitN(string(content), "---", 3)
+			if len(parts) >= 3 {
+				var skill SkillDefinition
+				if err := yaml.Unmarshal([]byte(parts[1]), &skill); err == nil {
+					if skill.Name == "" {
+						skill.Name = filepath.Base(filepath.Dir(path))
+					}
+					skill.Content = string(content)
+					newSkills = append(newSkills, skill)
+					count++
+				} else {
+					log.Warnf("Failed to parse SKILL.md frontmatter at %s: %v", path, err)
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Store in Cache
+	e.scanCache.Store(root, newSkills)
+	log.Infof("Cached %d skills for %s", count, root)
+
+	return newSkills, nil
 }

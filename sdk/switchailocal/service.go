@@ -112,5 +112,6 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewClaudeAuthenticator(),
 		sdkAuth.NewQwenAuthenticator(),
 		sdkAuth.NewVibeAuthenticator(),
+		sdkAuth.NewOllamaAuthenticator(),
 	)
 }

@@ -890,16 +890,17 @@ func (r *ModelRegistry) CleanupExpiredQuotas() {
 }
 
 // GetFirstAvailableModel returns the first available model for the given handler type.
-// It prioritizes models by their creation timestamp (newest first) and checks if they have
-// available clients that are not suspended or over quota.
+// It first checks the provided priorityList. If no model from the list is available,
+// it prioritizes remaining models by their creation timestamp (newest first).
 //
 // Parameters:
 //   - handlerType: The API handler type (e.g., "openai", "claude", "gemini")
+//   - priorityList: Optional list of model IDs to check first
 //
 // Returns:
 //   - string: The model ID of the first available model, or empty string if none available
 //   - error: An error if no models are available
-func (r *ModelRegistry) GetFirstAvailableModel(handlerType string) (string, error) {
+func (r *ModelRegistry) GetFirstAvailableModel(handlerType string, priorityList []string) (string, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
@@ -909,7 +910,35 @@ func (r *ModelRegistry) GetFirstAvailableModel(handlerType string) (string, erro
 		return "", fmt.Errorf("no models available for handler type: %s", handlerType)
 	}
 
-	// Sort models by creation timestamp (newest first)
+	// 1. Check priority list first
+	for _, priorityID := range priorityList {
+		var requiredProvider string
+		targetModelID := priorityID
+
+		// Check for provider prefix (e.g. "ollama:gpt-oss:120b-cloud")
+		if parts := strings.SplitN(priorityID, ":", 2); len(parts) == 2 {
+			requiredProvider = parts[0]
+			targetModelID = parts[1]
+		}
+
+		for _, model := range models {
+			// Check ID match (case-insensitive)
+			if id, ok := model["id"].(string); ok && strings.EqualFold(id, targetModelID) {
+				// If a specific provider was requested, enforce it
+				if requiredProvider != "" {
+					if ownedBy, ok := model["owned_by"].(string); !ok || !strings.EqualFold(ownedBy, requiredProvider) {
+						continue // Provider mismatch
+					}
+				}
+
+				if r.getModelCountLocked(id) > 0 {
+					return id, nil
+				}
+			}
+		}
+	}
+
+	// 2. Sort remaining models by creation timestamp (newest first)
 	sort.Slice(models, func(i, j int) bool {
 		// Extract created timestamps from map
 		createdI, okI := models[i]["created"].(int64)

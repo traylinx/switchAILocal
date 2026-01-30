@@ -12,6 +12,8 @@ plugins/
   ├── my-cool-plugin/         <-- Plugin ID (Folder Name)
   │     ├── handler.lua       <-- The Logic (Hooks)
   │     ├── schema.lua        <-- Metadata & Config
+  │     ├── README.md         <-- Entry point documentation
+  │     ├── docs/             <-- Detailed documentation (Manuals, Guides)
   │     └── lib/              <-- Optional helper files
   │           └── utils.lua
 ```

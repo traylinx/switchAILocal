@@ -223,16 +223,17 @@ func GetLoginHint(provider string) string {
 //
 // Parameters:
 //   - modelName: The model name to check (should be "auto")
+//   - priorityList: Optional list of model IDs to prioritize
 //
 // Returns:
 //   - string: The resolved model name, or the original if not "auto" or resolution fails
-func ResolveAutoModel(modelName string) string {
+func ResolveAutoModel(modelName string, priorityList []string) string {
 	if modelName != "auto" {
 		return modelName
 	}
 
 	// Use empty string as handler type to get any available model
-	firstModel, err := registry.GetGlobalRegistry().GetFirstAvailableModel("")
+	firstModel, err := registry.GetGlobalRegistry().GetFirstAvailableModel("", priorityList)
 	if err != nil {
 		log.Warnf("Failed to resolve 'auto' model: %v, falling back to original model name", err)
 		return modelName

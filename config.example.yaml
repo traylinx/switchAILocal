@@ -70,6 +70,19 @@ quota-exceeded:
 routing:
   strategy: "round-robin" # round-robin (default), fill-first
 
+  # Priority list for "auto" model resolution strategy.
+  # When set, the system checks these models in order and picks the first active one.
+  #
+  # Supports "provider:model" syntax to disambiguate identical model IDs across providers.
+  # If no provider prefix is specified, it matches ANY provider with that model ID.
+  #
+  # If none are active (or if this list is empty), it falls back to the default
+  # "newest model" timestamp-based selection.
+  # auto-model-priority:
+  #   - "ollama:gpt-oss:120b-cloud"  # Prefer Ollama provider for this model
+  #   - "switchai-chat"              # Alias defined in switchai-api-key
+  #   - "gemini-2.5-flash"           # Generic model ID (any provider)
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: true
 # Streaming behavior (SSE keep-alives + safe bootstrap retries).
