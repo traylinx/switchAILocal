@@ -149,9 +149,14 @@ ws-auth: true
 #   groq/compound-mini       - Fast agentic
 
 # Google Gemini API keys
-# gemini-api-key:
-#   - api-key: "AIzaSy...01"
-#     prefix: "test" # optional: require calls like "test/gemini-3-pro-preview" to target this credential
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    # models:
+    #   - name: "gemini-2.0-flash-exp" # Upstream model name
+    #     alias: "flash"               # Client-facing alias
+    #   - name: "gemini-1.5-pro"
+    #     alias: "pro"
+    prefix: "test" # optional: require calls like "test/gemini-3-pro-preview" to target this credential
 #     base-url: "https://generativelanguage.googleapis.com"
 #     models-url: "https://generativelanguage.googleapis.com/v1beta/models" # Optional: Dynamic model discovery
 #     headers:
@@ -164,10 +169,15 @@ ws-auth: true
 #       - "*flash*"            # wildcard matching substring (e.g. gemini-2.5-flash-lite)
 #   - api-key: "AIzaSy...02"
 
-# Codex API keys
-# codex-api-key:
-#   - api-key: "sk-atSM..."
-#     prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
+# Codex API keys (OpenAI)
+codex-api-key:
+  - api-key: "sk-atSM..."
+    # models:
+    #   - name: "gpt-4o"            # Upstream model name
+    #     alias: "4o"               # Client-facing alias
+    #   - name: "gpt-4-turbo"
+    #     alias: "gpt4"
+    prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
 #     base-url: "https://www.example.com" # use the custom codex API endpoint
 #     models-url: "https://www.example.com/models" # Optional: Dynamic model discovery
 #     headers:
@@ -369,3 +379,14 @@ ws-auth: true
 #     forbidden_operations:            # Operations requiring human approval
 #       - "file_delete"
 #       - "system_command"
+
+# Intelligence: Task-to-Model Mapping Matrix
+# This matrix defines which models are used for specific capabilities like image generation,
+# audio transcription, and speech when no specific model is requested.
+# NOTE: Starting from v1.5, NO default models are hardcoded. You MUST define these here.
+# intelligence:
+#   enabled: true
+#   matrix:
+#     image_gen: "gemini:imagen-3.0"   # Default model for /v1/images/generations
+#     transcription: "openai:whisper-1" # Default model for /v1/audio/transcriptions
+#     speech: "openai:tts-1"           # Default model for /v1/audio/speech

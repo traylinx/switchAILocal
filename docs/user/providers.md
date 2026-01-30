@@ -19,7 +19,9 @@ If you have official CLI tools installed (like `gemini`, `claude`, or `vibe`), *
 **Cons:** Slightly slower (spawns a process).
 
 ### Usage Example (Gemini CLI)
+
 Use the `cli:` suffix to target your local binary:
+
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -d '{
@@ -44,16 +46,24 @@ The best way to use Cloud APIs if you already have an API key. Just add your key
 ### API Key Configuration
 
 1. Open `config.yaml`.
-2. Find your provider section and add your key:
+2. Find your provider section and add your key.
+3. **Crucial**: You must explicitly list each model you wish to use.
 
 ```yaml
+
 # Google AI Studio
 gemini-api-key:
   - api-key: "AIza..."
+    models:
+      - name: "gemini-1.5-pro"
+        alias: "pro"
 
 # Anthropic
 claude-api-key:
   - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "sonnet"
 ```
 
 ---
@@ -67,6 +77,7 @@ Use this if you want `switchAILocal` to act as a standalone server using your pe
 ### Cloud Proxy Setup
 
 Run the login command once to link your account:
+
 ```bash
 # For Gemini
 ./switchAILocal --login

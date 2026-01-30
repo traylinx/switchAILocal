@@ -684,3 +684,106 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 		},
 	})
 }
+
+// ImagesGenerations handles /v1/images/generations
+func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
+		return
+	}
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["image_gen"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'image_gen' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "images_generations", "application/json")
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}
+
+// AudioSpeech handles /v1/audio/speech
+func (h *OpenAIAPIHandler) AudioSpeech(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
+		return
+	}
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["speech"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'speech' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "audio_speech", "application/json")
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	// Response is binary audio usually (mp3)
+	c.Data(http.StatusOK, "audio/mpeg", resp)
+	cliCancel()
+}
+
+// AudioTranscriptions handles /v1/audio/transcriptions
+func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) {
+	// For multipart, we need to read the whole body to forward it,
+	// but also inspect it to find the 'model' field.
+	// Since we can't easily peek multipart without parsing, and parsing consumes it,
+	// we will read all bytes, then try to extract model from the form if possible,
+	// or fallback to default.
+
+	// Issue: To forward headers including boundary, we need the original Content-Type.
+	contentType := c.GetHeader("Content-Type")
+
+	// Read full body
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("read error: %v", err)})
+		return
+	}
+
+	// Hacky model extraction: search for form-data name="model"
+	// This is not robust but keeps us from needing full multipart parsing + reconstruction.
+	// Users usually put model first or last.
+	// Use config default if not found.
+	modelName := ""
+
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["transcription"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'transcription' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, bodyBytes, "", "audio_transcriptions", contentType)
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}

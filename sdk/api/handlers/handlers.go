@@ -429,6 +429,57 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 	return cloneBytes(resp.Payload), nil
 }
 
+// ExecuteMultimodalWithAuthManager executes a multimodal request (audio/image) via the core auth manager.
+// It injects operation and content-type metadata for the executor.
+func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, operation string, contentType string) ([]byte, *interfaces.ErrorMessage) {
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
+	if errMsg != nil {
+		return nil, errMsg
+	}
+
+	// Inject operation metadata
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	metadata["operation"] = operation
+	if contentType != "" {
+		metadata["content_type"] = contentType
+	}
+
+	reqMeta := requestExecutionMetadata(ctx)
+	req := coreexecutor.Request{
+		Model:   normalizedModel,
+		Payload: body,
+	}
+	if cloned := cloneMetadata(metadata); cloned != nil {
+		req.Metadata = cloned
+	}
+	opts := coreexecutor.Options{
+		Stream:          false,
+		Alt:             alt,
+		OriginalRequest: cloneBytes(rawJSON),
+		SourceFormat:    sdktranslator.FromString(handlerType),
+	}
+	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
+	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
+			if code := se.StatusCode(); code > 0 {
+				status = code
+			}
+		}
+		var addon http.Header
+		if he, ok := err.(interface{ Headers() http.Header }); ok && he != nil {
+			if hdr := he.Headers(); hdr != nil {
+				addon = hdr.Clone()
+			}
+		}
+		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
+	}
+	return cloneBytes(resp.Payload), nil
+}
+
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
@@ -790,6 +841,9 @@ Routing Rules:
    - "creative": Storytelling, poetry, roleplay.
    - "factual": History, science, definitions.
    - "chat": Casual conversation, greetings.
+   - "image_generation": Create or generate images.
+   - "audio_transcription": transcribe audio to text.
+   - "audio_speech": convert text to spoken audio.
 
 2. Complexity:
    - "simple": Can be answered instantly (e.g., "Hi", "What is HTTP?").

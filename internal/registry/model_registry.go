@@ -1122,3 +1122,29 @@ func (r *ModelRegistry) GetAllProviders() []ProviderInfo {
 
 	return providers
 }
+
+// GetModelsWithMinContext returns all active models that support at least the given context length.
+func (mr *ModelRegistry) GetModelsWithMinContext(minContext int) []*ModelInfo {
+	mr.mutex.RLock()
+	defer mr.mutex.RUnlock()
+
+	var suitable []*ModelInfo
+	for _, reg := range mr.models {
+		// Only consider models with count > 0 (active)
+		// Or maybe we want all registered models?
+		// For recommendations, usually we want things the user CAN use.
+		// If Count is 0, it means no clients are connected/configured for it.
+		// But if it's in the registry, it's "known".
+		// Let's stick to active models or those with explicit config.
+		// For now, return all registered models as they might represent configured-but-inactive providers.
+		// But simpler: just check context length.
+		if reg.Info.ContextLength >= minContext {
+			suitable = append(suitable, reg.Info)
+		}
+	}
+	// Sort by context length (ascending)
+	sort.Slice(suitable, func(i, j int) bool {
+		return suitable[i].ContextLength < suitable[j].ContextLength
+	})
+	return suitable
+}

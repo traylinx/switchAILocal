@@ -55,32 +55,57 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		return
 	}
 
-	// Translate inbound request to OpenAI format
-	from := opts.SourceFormat
-	to := sdktranslator.FromString("openai")
-	translated := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), opts.Stream)
-	modelOverride := e.resolveUpstreamModel(req.Model, auth)
-	if modelOverride != "" {
-		translated = e.overrideModel(translated, modelOverride)
-	}
-	translated = applyPayloadConfigWithRoot(e.cfg, req.Model, to.String(), "", translated)
-	allowCompat := e.allowCompatReasoningEffort(req.Model, auth)
-	translated = ApplyReasoningEffortMetadata(translated, req.Metadata, req.Model, "reasoning_effort", allowCompat)
-	upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
-	if upstreamModel != "" && modelOverride == "" {
-		translated, _ = sjson.SetBytes(translated, "model", upstreamModel)
-	}
-	translated = NormalizeThinkingConfig(translated, upstreamModel, allowCompat)
-	if errValidate := ValidateThinkingConfig(translated, upstreamModel); errValidate != nil {
-		return resp, errValidate
+	// Determine operation-specific configs
+	endpoint := "/chat/completions"
+	skipTranslation := false
+	contentType := "application/json"
+
+	if op, ok := req.Metadata["operation"].(string); ok && op != "" {
+		switch op {
+		case "images_generations":
+			endpoint = "/images/generations"
+		case "audio_transcriptions":
+			endpoint = "/audio/transcriptions"
+			skipTranslation = true
+			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
+				contentType = ct
+			}
+		case "audio_speech":
+			endpoint = "/audio/speech"
+		}
 	}
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	var translated []byte
+	if skipTranslation {
+		translated = req.Payload
+	} else {
+		// Translate inbound request to OpenAI format
+		from := opts.SourceFormat
+		to := sdktranslator.FromString("openai")
+		translated = sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), opts.Stream)
+		modelOverride := e.resolveUpstreamModel(req.Model, auth)
+		if modelOverride != "" {
+			translated = e.overrideModel(translated, modelOverride)
+		}
+		translated = applyPayloadConfigWithRoot(e.cfg, req.Model, to.String(), "", translated)
+		allowCompat := e.allowCompatReasoningEffort(req.Model, auth)
+		translated = ApplyReasoningEffortMetadata(translated, req.Metadata, req.Model, "reasoning_effort", allowCompat)
+		upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
+		if upstreamModel != "" && modelOverride == "" {
+			translated, _ = sjson.SetBytes(translated, "model", upstreamModel)
+		}
+		translated = NormalizeThinkingConfig(translated, upstreamModel, allowCompat)
+		if errValidate := ValidateThinkingConfig(translated, upstreamModel); errValidate != nil {
+			return resp, errValidate
+		}
+	}
+
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return resp, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", contentType)
 	if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -136,10 +161,18 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 	reporter.publish(ctx, parseOpenAIUsage(body))
 	// Ensure we at least record the request even if upstream doesn't return usage
 	reporter.ensurePublished(ctx)
-	// Translate response back to source format when needed
-	var param any
-	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, body, &param)
-	resp = switchailocalexecutor.Response{Payload: []byte(out)}
+
+	// Pass through response payload directly for binary/special ops, or translate if standard JSON
+	if skipTranslation {
+		resp = switchailocalexecutor.Response{Payload: body}
+	} else {
+		// Translate response back to source format when needed
+		fromFmt := opts.SourceFormat
+		toFmt := sdktranslator.FromString("openai")
+		var param any
+		out := sdktranslator.TranslateNonStream(ctx, toFmt, fromFmt, req.Model, bytes.Clone(opts.OriginalRequest), translated, body, &param)
+		resp = switchailocalexecutor.Response{Payload: []byte(out)}
+	}
 	return resp, nil
 }
 

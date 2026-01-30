@@ -65,6 +65,41 @@ switchai-api-key:
 
 ---
 
+### Explicit Model Configuration
+
+**IMPORTANT**: Starting from v1.5, `switchAILocal` does **not** have hardcoded default models for API providers (Gemini, Claude, OpenAI).
+If you configure an API key but do not list any models, that provider will have **zero** models available.
+
+You must explicitly list the models you wish to use:
+
+```yaml
+gemini-api-key:
+  - api-key: "AIza..."
+    models:
+      - name: "gemini-1.5-pro"  # Upstream model name
+        alias: "pro"            # Client-facing alias
+```
+
+---
+
+## Intelligence & Capabilities
+
+The `intelligence` section controls the "Cortex" routing engine and defines which models are used for specific non-chat capabilities.
+
+### Capability Matrix
+Use the `matrix` to map tasks to models when no specific model is requested by the client.
+
+```yaml
+intelligence:
+  enabled: true
+  matrix:
+    image_gen: "gemini:imagen-3.0"   # Default for /v1/images/generations
+    transcription: "openai:whisper-1" # Default for /v1/audio/transcriptions
+    speech: "openai:tts-1"           # Default for /v1/audio/speech
+```
+
+---
+
 ## Model Aliases
 
 Create shortcuts for long model names. This works for any provider.
@@ -87,6 +122,7 @@ switchai-api-key:
 ```
 
 Now you can use:
+
 ```bash
 curl -d '{"model": "switchai:reasoner", ...}'  # → deepseek-reasoner
 curl -d '{"model": "switchai:llama4", ...}'    # → llama-4-maverick
@@ -112,6 +148,7 @@ openai-compatibility:
 
 ```yaml
 gemini-api-key:
+
   - api-key: "AIza..."
     prefix: "prod"         # Optional model namespace (prod/gemini-...)
     proxy-url: "..."       # Optional per-key proxy
@@ -134,6 +171,7 @@ claude-api-key:
 ## Local Systems
 
 ### Ollama
+
 ```yaml
 ollama:
   enabled: true
@@ -142,6 +180,7 @@ ollama:
 ```
 
 ### LM Studio
+
 ```yaml
 lmstudio:
   enabled: true
@@ -150,6 +189,7 @@ lmstudio:
 ```
 
 ### LUA Plugins
+
 ```yaml
 plugin:
   enabled: true

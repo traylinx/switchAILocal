@@ -1,10 +1,12 @@
 package sculptor
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/superbrain/types"
 )
 
@@ -146,7 +148,6 @@ func (co *ContentOptimizer) Optimize(files []FileWithPriority, targetLimit int, 
 
 	return result
 }
-
 
 // scoreFiles assigns priority scores to files based on various criteria.
 func (co *ContentOptimizer) scoreFiles(files []FileWithPriority, queryKeywords []string) []FileWithPriority {
@@ -440,7 +441,6 @@ func (co *ContentOptimizer) GenerateDirectoryTree(files []string) string {
 	return strings.Join(lines, "\n")
 }
 
-
 // BuildHighDensityMap creates a comprehensive HighDensityMap from optimization results.
 // This provides transparency about what content was excluded and why.
 func (co *ContentOptimizer) BuildHighDensityMap(result *OptimizationResult) *types.HighDensityMap {
@@ -504,7 +504,6 @@ func CreateHighDensityMapFromFiles(includedFiles, excludedFiles []string, tokens
 	return hdm
 }
 
-
 // UnreducibleContentError represents a failure to reduce content below the context limit.
 type UnreducibleContentError struct {
 	// CurrentTokens is the token count after maximum optimization.
@@ -539,16 +538,6 @@ type ModelRecommendation struct {
 	Reason string `json:"reason"`
 }
 
-// LargeContextModels maps models with large context windows for recommendations.
-var LargeContextModels = []ModelRecommendation{
-	{Model: "gemini-1.5-pro", ContextLimit: 1000000, Provider: "gemini", Reason: "1M token context window"},
-	{Model: "gemini-2.0-flash", ContextLimit: 1000000, Provider: "gemini", Reason: "1M token context window"},
-	{Model: "claude-3-opus", ContextLimit: 200000, Provider: "claude", Reason: "200K token context window"},
-	{Model: "claude-sonnet-4", ContextLimit: 200000, Provider: "claude", Reason: "200K token context window"},
-	{Model: "gpt-4-turbo", ContextLimit: 128000, Provider: "openai", Reason: "128K token context window"},
-	{Model: "gpt-4o", ContextLimit: 128000, Provider: "openai", Reason: "128K token context window"},
-}
-
 // CheckUnreducible checks if content cannot be reduced to fit the target limit.
 // Returns an UnreducibleContentError with recommendations if content is unreducible.
 func (co *ContentOptimizer) CheckUnreducible(result *OptimizationResult, targetLimit int) *UnreducibleContentError {
@@ -563,7 +552,7 @@ func (co *ContentOptimizer) CheckUnreducible(result *OptimizationResult, targetL
 		CurrentTokens:     result.TotalTokens,
 		TargetLimit:       targetLimit,
 		RecommendedModels: recommendations,
-		Message: formatUnreducibleMessage(result.TotalTokens, targetLimit, recommendations),
+		Message:           formatUnreducibleMessage(result.TotalTokens, targetLimit, recommendations),
 	}
 }
 
@@ -571,10 +560,15 @@ func (co *ContentOptimizer) CheckUnreducible(result *OptimizationResult, targetL
 func (co *ContentOptimizer) findSuitableModels(tokenCount int) []ModelRecommendation {
 	var suitable []ModelRecommendation
 
-	for _, model := range LargeContextModels {
-		if model.ContextLimit >= tokenCount {
-			suitable = append(suitable, model)
-		}
+	// Dynamically query the global registry for models that fit
+	regModels := registry.GetGlobalRegistry().GetModelsWithMinContext(tokenCount)
+	for _, m := range regModels {
+		suitable = append(suitable, ModelRecommendation{
+			Model:        m.ID,
+			ContextLimit: m.ContextLength,
+			Provider:     m.Type,
+			Reason:       fmt.Sprintf("%s token context window", formatTokenCount(m.ContextLength)),
+		})
 	}
 
 	// Sort by context limit (smallest sufficient first)
@@ -684,7 +678,7 @@ func (co *ContentOptimizer) PerformPreFlight(files []FileWithPriority, targetMod
 	if tokensForRecommendation == 0 {
 		tokensForRecommendation = result.Analysis.EstimatedTokens
 	}
-	
+
 	unreducibleErr := &UnreducibleContentError{
 		CurrentTokens:     tokensForRecommendation,
 		TargetLimit:       result.Analysis.ModelContextLimit,

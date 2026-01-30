@@ -376,6 +376,9 @@ type CodexKey struct {
 	// Headers optionally adds extra HTTP headers for requests sent with this key.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
+	// Models defines upstream model names and aliases for request routing.
+	Models []OpenAICompatibilityModel `yaml:"models,omitempty" json:"models,omitempty"`
+
 	// ExcludedModels lists model IDs that should be excluded for this provider.
 	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
 }
@@ -400,6 +403,9 @@ type GeminiKey struct {
 
 	// Headers optionally adds extra HTTP headers for requests sent with this key.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// Models defines upstream model names and aliases for request routing.
+	Models []OpenAICompatibilityModel `yaml:"models,omitempty" json:"models,omitempty"`
 
 	// ExcludedModels lists model IDs that should be excluded for this provider.
 	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`

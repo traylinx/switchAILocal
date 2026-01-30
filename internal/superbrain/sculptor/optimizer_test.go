@@ -3,7 +3,24 @@ package sculptor
 import (
 	"strings"
 	"testing"
+
+	"github.com/traylinx/switchAILocal/internal/registry"
 )
+
+func setupTestRegistry() {
+	reg := registry.GetGlobalRegistry()
+	// Register active models to simulate a real environment
+	models := []*registry.ModelInfo{
+		{ID: "gemini-1.5-pro", ContextLength: 1000000, Type: "gemini"},
+		{ID: "gemini-2.0-flash", ContextLength: 1000000, Type: "gemini"},
+		{ID: "claude-3-opus", ContextLength: 200000, Type: "claude"},
+		{ID: "claude-sonnet-4", ContextLength: 200000, Type: "claude"},
+		{ID: "gpt-4-turbo", ContextLength: 128000, Type: "openai"},
+		{ID: "gpt-4o", ContextLength: 128000, Type: "openai"},
+		{ID: "gpt-4", ContextLength: 8192, Type: "openai"},
+	}
+	reg.RegisterClient("test-client", "test-provider", models)
+}
 
 func TestNewContentOptimizer(t *testing.T) {
 	te := NewTokenEstimator("simple")
@@ -296,7 +313,6 @@ func TestFormatFileContent(t *testing.T) {
 	}
 }
 
-
 func TestBuildHighDensityMap(t *testing.T) {
 	te := NewTokenEstimator("simple")
 	fa := NewFileAnalyzer(te, ".")
@@ -356,8 +372,8 @@ func TestCreateHighDensityMapFromFiles(t *testing.T) {
 	})
 }
 
-
 func TestCheckUnreducible(t *testing.T) {
+	setupTestRegistry()
 	te := NewTokenEstimator("simple")
 	fa := NewFileAnalyzer(te, ".")
 	co := NewContentOptimizer(te, fa, nil)
@@ -415,6 +431,7 @@ func TestCheckUnreducible(t *testing.T) {
 }
 
 func TestPerformPreFlight(t *testing.T) {
+	setupTestRegistry()
 	te := NewTokenEstimator("simple")
 	fa := NewFileAnalyzer(te, ".")
 	co := NewContentOptimizer(te, fa, nil)
@@ -489,6 +506,7 @@ func TestUnreducibleContentError(t *testing.T) {
 }
 
 func TestFindSuitableModels(t *testing.T) {
+	setupTestRegistry()
 	te := NewTokenEstimator("simple")
 	fa := NewFileAnalyzer(te, ".")
 	co := NewContentOptimizer(te, fa, nil)

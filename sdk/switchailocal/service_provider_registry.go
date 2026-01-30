@@ -197,8 +197,10 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	var models []*ModelInfo
 	switch provider {
 	case "gemini":
-		models = registry.GetGeminiModels()
 		if entry := s.resolveConfigGeminiKey(a); entry != nil {
+			if len(entry.Models) > 0 {
+				models = buildGenericConfigModels(entry.Models)
+			}
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
 			}
@@ -214,11 +216,11 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		}
 		models = applyExcludedModels(models, excluded)
 	case "geminicli":
-		models = registry.GetGeminiCLIModels()
-		models = mergeWithDiscovered(models, "geminicli")
+		// Removed defaults.
+		models = mergeWithDiscovered(nil, "geminicli")
 		models = applyExcludedModels(models, excluded)
 	case "aistudio":
-		models = registry.GetAIStudioModels()
+		// Removed defaults.
 		models = applyExcludedModels(models, excluded)
 	case "antigravity":
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -226,7 +228,6 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		cancel()
 		models = applyExcludedModels(models, excluded)
 	case "claude":
-		models = registry.GetClaudeModels()
 		if entry := s.resolveConfigClaudeKey(a); entry != nil {
 			if len(entry.Models) > 0 {
 				models = buildClaudeConfigModels(entry)
@@ -240,19 +241,22 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		models = mergeWithDiscovered(nil, "claudecli")
 		models = applyExcludedModels(models, excluded)
 	case "codex":
-		models = registry.GetOpenAIModels()
+		// Removed defaults.
 		models = mergeWithDiscovered(models, "codex")
 		if entry := s.resolveConfigCodexKey(a); entry != nil {
+			if len(entry.Models) > 0 {
+				models = buildGenericConfigModels(entry.Models)
+			}
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
 			}
 		}
 		models = applyExcludedModels(models, excluded)
 	case "qwen":
-		models = registry.GetQwenModels()
+		// Removed defaults.
 		models = applyExcludedModels(models, excluded)
 	case "iflow":
-		models = registry.GetIFlowModels()
+		// Removed defaults.
 		models = applyExcludedModels(models, excluded)
 	case "ollama":
 		models = mergeWithDiscovered(nil, "ollama")
@@ -270,17 +274,11 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		models = mergeWithDiscovered(models, "switchai")
 		models = applyExcludedModels(models, excluded)
 	case "vibe":
-		// Register default Vibe models
-		models = []*ModelInfo{
-			{ID: "mistral-large-latest", Object: "model", Created: time.Now().Unix(), OwnedBy: "mistral", Type: "vibe", DisplayName: "Mistral Large"},
-			{ID: "mistral-small-latest", Object: "model", Created: time.Now().Unix(), OwnedBy: "mistral", Type: "vibe", DisplayName: "Mistral Small"},
-			{ID: "codestral-latest", Object: "model", Created: time.Now().Unix(), OwnedBy: "mistral", Type: "vibe", DisplayName: "Codestral"},
-			{ID: "vibe", Object: "model", Created: time.Now().Unix(), OwnedBy: "mistral", Type: "vibe", DisplayName: "Vibe CLI"},
-		}
+		// Removed hardcoded default Vibe models.
 		models = mergeWithDiscovered(models, "vibe")
 		models = applyExcludedModels(models, excluded)
 	case "opencode":
-		models = registry.GetOpenCodeModels()
+		// Removed defaults.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if discovered := executor.FetchOpenCodeModels(ctx, s.cfg); len(discovered) > 0 {
 			models = append(models, discovered...)
@@ -799,6 +797,44 @@ func buildSwitchAIConfigModels(entry *config.SwitchAIKey) []*ModelInfo {
 			Created:     now,
 			OwnedBy:     "switchai",
 			Type:        "switchai",
+			DisplayName: display,
+		})
+	}
+	return out
+}
+
+func buildGenericConfigModels(models []config.OpenAICompatibilityModel) []*ModelInfo {
+	if len(models) == 0 {
+		return nil
+	}
+	now := time.Now().Unix()
+	out := make([]*ModelInfo, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for i := range models {
+		model := models[i]
+		name := strings.TrimSpace(model.Name)
+		alias := strings.TrimSpace(model.Alias)
+		if alias == "" {
+			alias = name
+		}
+		if alias == "" {
+			continue
+		}
+		key := strings.ToLower(alias)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		display := name
+		if display == "" {
+			display = alias
+		}
+		out = append(out, &ModelInfo{
+			ID:          alias,
+			Object:      "model",
+			Created:     now,
+			OwnedBy:     "generic",
+			Type:        "generic",
 			DisplayName: display,
 		})
 	}
