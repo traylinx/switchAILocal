@@ -123,6 +123,11 @@ Format:
 **Learning:** `filepath.Clean` is insufficient to prevent traversal; it resolves `..` but doesn't prevent going outside a root if the input starts with `../` or `/`.
 **Prevention:** Use `filepath.Rel(cwd, absPath)` and check if the result starts with `..` to ensure the path is contained within the current working directory.
 
+## 2026-05-30 - Sensitive Data Exposure in Request Logs
+**Vulnerability:** Request logging mechanism wrote full JSON bodies to disk/logs, including sensitive fields like `api_key`, `password`, and `token` in plain text.
+**Learning:** General-purpose request logging often overlooks the sensitivity of specific JSON fields in the body, focusing only on headers. Regex-based masking must handle escaped quotes (`\"`) in JSON values to prevent partial leakage and invalid JSON structure.
+**Prevention:** Implement strict body sanitization (`MaskSensitiveJSONBody`) before logging any request. Use specialized redaction (`******`) for high-value secrets like passwords, and partial masking (`sk-...1234`) for API keys.
+
 ---
 
 ## Sentinel's Daily Process
