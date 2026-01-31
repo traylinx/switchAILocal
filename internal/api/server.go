@@ -29,6 +29,8 @@ import (
 	"github.com/traylinx/switchAILocal/internal/api/modules"
 	ampmodule "github.com/traylinx/switchAILocal/internal/api/modules/amp"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/intelligence"
+	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/managementasset"
 	"github.com/traylinx/switchAILocal/internal/plugin"
@@ -61,6 +63,7 @@ type serverOptionConfig struct {
 	keepAliveEnabled     bool
 	keepAliveTimeout     time.Duration
 	keepAliveOnTimeout   func()
+	intelligenceService  IntelligenceService
 }
 
 // ServerOption customises HTTP server construction.
@@ -118,6 +121,13 @@ func WithKeepAliveEndpoint(timeout time.Duration, onTimeout func()) ServerOption
 func WithRequestLoggerFactory(factory func(*config.Config, string) logging.RequestLogger) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.requestLoggerFactory = factory
+	}
+}
+
+// WithIntelligenceService sets the intelligence service for the server.
+func WithIntelligenceService(svc IntelligenceService) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.intelligenceService = svc
 	}
 }
 
@@ -183,6 +193,16 @@ type Server struct {
 
 	// discoverer is the model discovery service for dynamic model refresh.
 	discoverer ModelDiscoverer
+
+	// intelligenceService manages Phase 2 intelligent routing features.
+	intelligenceService IntelligenceService
+}
+
+// IntelligenceService defines the interface for accessing intelligence features.
+type IntelligenceService interface {
+	IsEnabled() bool
+	GetSkillRegistry() *skills.Registry
+	GetSemanticCache() intelligence.SemanticCacheInterface
 }
 
 // NewServer creates and initializes a new API server instance.
@@ -256,6 +276,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		currentPath:         wd,
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
+		intelligenceService: optionState.intelligenceService,
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	if !cfg.WebsocketAuth {
@@ -279,6 +300,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		logDir = filepath.Join(base, "logs")
 	}
 	s.mgmt.SetLogDirectory(logDir)
+	
+	// Set intelligence service if available
+	if s.intelligenceService != nil {
+		s.mgmt.SetIntelligenceService(s.intelligenceService)
+	}
+	
 	s.localPassword = optionState.localPassword
 
 	// Setup routes
@@ -510,6 +537,24 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/config.yaml", s.mgmt.GetConfigYAML)
 		mgmt.PUT("/config.yaml", s.mgmt.PutConfigYAML)
 		mgmt.GET("/latest-version", s.mgmt.GetLatestVersion)
+
+		// Intelligence services endpoints
+		if s.intelligenceService != nil {
+			if intelSvc, ok := s.intelligenceService.(*intelligence.Service); ok {
+				skillsHandler := managementHandlers.NewSkillsHandler(intelSvc)
+				mgmt.GET("/skills", skillsHandler.GetSkills)
+				
+				// Feedback endpoints
+				feedbackHandler := managementHandlers.NewFeedbackHandler(intelSvc)
+				mgmt.POST("/feedback", feedbackHandler.SubmitFeedback)
+				mgmt.GET("/feedback/stats", feedbackHandler.GetFeedbackStats)
+				mgmt.GET("/feedback/recent", feedbackHandler.GetRecentFeedback)
+			}
+			
+			// Cache endpoints
+			mgmt.GET("/cache/metrics", gin.WrapF(s.mgmt.HandleCacheMetrics))
+			mgmt.POST("/cache/clear", gin.WrapF(s.mgmt.HandleCacheClear))
+		}
 
 		mgmt.GET("/debug", s.mgmt.GetDebug)
 		mgmt.PUT("/debug", s.mgmt.PutDebug)

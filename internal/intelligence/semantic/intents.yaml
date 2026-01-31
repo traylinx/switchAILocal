@@ -1,0 +1,124 @@
+# Intent Taxonomy for Semantic Routing
+# This file defines the 12 intents used by the semantic tier for intent matching.
+# Each intent has a name, description, and examples for embedding computation.
+
+intents:
+  - name: coding
+    description: "Writing, debugging, reviewing, or explaining code in any programming language"
+    examples:
+      - "Write a Python function to sort a list"
+      - "Debug this JavaScript code"
+      - "Explain how this algorithm works"
+      - "Review my code for bugs"
+      - "Help me fix this error in my program"
+      - "Create a REST API endpoint"
+
+  - name: reasoning
+    description: "Complex logical analysis, mathematical problem solving, or multi-step reasoning tasks"
+    examples:
+      - "Solve this math problem step by step"
+      - "Analyze the pros and cons of this approach"
+      - "What are the logical implications of this statement"
+      - "Help me think through this complex decision"
+      - "Prove this mathematical theorem"
+      - "Compare and contrast these two options"
+
+  - name: creative
+    description: "Creative writing, storytelling, brainstorming, or artistic content generation"
+    examples:
+      - "Write a short story about a robot"
+      - "Help me brainstorm ideas for my project"
+      - "Create a poem about nature"
+      - "Generate creative names for my startup"
+      - "Write a compelling product description"
+      - "Help me with creative writing"
+
+  - name: fast
+    description: "Quick factual questions, simple lookups, or brief conversational responses"
+    examples:
+      - "What is the capital of France"
+      - "How many days are in a year"
+      - "What time is it in Tokyo"
+      - "Define the word ephemeral"
+      - "Who wrote Romeo and Juliet"
+      - "What is 2 plus 2"
+
+  - name: secure
+    description: "Requests involving sensitive data, personal information, or privacy-critical operations"
+    examples:
+      - "Process this confidential document"
+      - "Handle my personal information securely"
+      - "Analyze this private data"
+      - "Work with this sensitive financial data"
+      - "Process this medical record"
+      - "Handle this encrypted information"
+
+  - name: vision
+    description: "Image analysis, visual content understanding, or requests involving pictures"
+    examples:
+      - "What is in this image"
+      - "Describe what you see in this picture"
+      - "Analyze this chart or graph"
+      - "Read the text in this screenshot"
+      - "Identify objects in this photo"
+      - "Compare these two images"
+
+  - name: long_context
+    description: "Tasks requiring analysis of long documents, extensive context, or large text processing"
+    examples:
+      - "Summarize this long document"
+      - "Analyze this entire book chapter"
+      - "Review this lengthy report"
+      - "Process this large dataset description"
+      - "Read through all these meeting notes"
+      - "Analyze this extensive research paper"
+
+  - name: image_generation
+    description: "Creating, generating, or producing images, artwork, or visual content"
+    examples:
+      - "Generate an image of a sunset"
+      - "Create a logo for my company"
+      - "Draw a picture of a cat"
+      - "Make an illustration for my blog"
+      - "Design a banner image"
+      - "Create artwork showing a forest"
+
+  - name: transcription
+    description: "Converting audio to text, speech recognition, or audio transcription tasks"
+    examples:
+      - "Transcribe this audio file"
+      - "Convert this recording to text"
+      - "What is being said in this audio"
+      - "Write out the speech from this file"
+      - "Transcribe this podcast episode"
+      - "Convert this voice memo to text"
+
+  - name: speech
+    description: "Text-to-speech conversion, voice synthesis, or audio generation from text"
+    examples:
+      - "Read this text aloud"
+      - "Convert this to speech"
+      - "Generate audio from this text"
+      - "Create a voice recording of this"
+      - "Speak this message"
+      - "Make an audio version of this"
+
+  - name: research
+    description: "Information gathering, fact-finding, or research-oriented queries"
+    examples:
+      - "Research the history of artificial intelligence"
+      - "Find information about climate change"
+      - "What are the latest developments in quantum computing"
+      - "Gather data about market trends"
+      - "Look up scientific studies on this topic"
+      - "Find sources about this subject"
+
+  - name: chat
+    description: "General conversation, casual chat, or unstructured dialogue"
+    examples:
+      - "Hello, how are you"
+      - "Tell me a joke"
+      - "What do you think about this"
+      - "Let's have a conversation"
+      - "I'm bored, entertain me"
+      - "Just chatting with you"

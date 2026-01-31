@@ -87,6 +87,20 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	s.luaEngine = plugin.NewLuaEngine(pluginCfg)
 
+	// Initialize intelligence service (if enabled)
+	if s.intelligenceService != nil {
+		initCtx, initCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := s.intelligenceService.Initialize(initCtx); err != nil {
+			log.Warnf("failed to initialize intelligence service: %v", err)
+		}
+		initCancel()
+
+		// Pass intelligence service to Lua engine
+		if s.luaEngine != nil {
+			s.luaEngine.SetIntelligenceService(s.intelligenceService)
+		}
+	}
+
 	// Initialize model discovery
 	cacheDir := filepath.Join(s.cfg.AuthDir, "cache", "discovery")
 	disc, err := discovery.NewDiscoverer(cacheDir)
@@ -184,7 +198,8 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	// handlers no longer depend on legacy clients; pass nil slice initially
-	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.luaEngine, s.serverOptions...)
+	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.luaEngine, 
+		append(s.serverOptions, api.WithIntelligenceService(s.intelligenceService))...)
 
 	// Wire discoverer for /v1/models/refresh endpoint
 	if s.discoverer != nil && s.server != nil {
@@ -395,6 +410,18 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if s.authQueueStop != nil {
 			s.authQueueStop()
 			s.authQueueStop = nil
+		}
+
+		// Shutdown intelligence service
+		if s.intelligenceService != nil {
+			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := s.intelligenceService.Shutdown(shutdownCtx); err != nil {
+				log.Errorf("failed to shutdown intelligence service: %v", err)
+				if shutdownErr == nil {
+					shutdownErr = err
+				}
+			}
+			cancel()
 		}
 
 		if s.server != nil {

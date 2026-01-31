@@ -426,6 +426,15 @@ func convertChatCompletionsStreamChunkToCompletions(chunkData []byte) []byte {
 //   - rawJSON: The raw JSON bytes of the OpenAI-compatible request
 func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
 	c.Header("Content-Type", "application/json")
+	
+	// Set skill metadata header if available
+	if metadata, exists := c.Get("request_metadata"); exists {
+		if metaMap, ok := metadata.(map[string]any); ok {
+			if skillName, ok := metaMap["matched_skill"].(string); ok && skillName != "" {
+				c.Header("X-Matched-Skill", skillName)
+			}
+		}
+	}
 
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
@@ -469,6 +478,15 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 		c.Header("Connection", "keep-alive")
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("X-Accel-Buffering", "no")
+		
+		// Set skill metadata header if available
+		if metadata, exists := c.Get("request_metadata"); exists {
+			if metaMap, ok := metadata.(map[string]any); ok {
+				if skillName, ok := metaMap["matched_skill"].(string); ok && skillName != "" {
+					c.Header("X-Matched-Skill", skillName)
+				}
+			}
+		}
 	}
 
 	// Peek at the first chunk to determine success or failure before setting headers
