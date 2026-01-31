@@ -30,6 +30,8 @@ type ToolDefinition struct {
 	AutoApproveFlag     string // CLI flag for auto-approval (e.g., "-y")
 	YoloFlag            string // CLI flag for YOLO mode (e.g., "--yolo")
 	SessionFlag         string // CLI flag for sessions (e.g., "--resume=" or "--continue")
+	// Security fields
+	PositionalArgsSeparator string // Separator to use before positional arguments (e.g., "--")
 }
 
 // DiscoveredTool represents a tool found on the local system.
@@ -55,6 +57,7 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "-y",
 		YoloFlag:            "--yolo",
 		SessionFlag:         "--resume=",
+		PositionalArgsSeparator: "--",
 	},
 	{
 		Name:                "Mistral Vibe CLI",

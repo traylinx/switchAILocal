@@ -123,6 +123,11 @@ Format:
 **Learning:** `filepath.Clean` is insufficient to prevent traversal; it resolves `..` but doesn't prevent going outside a root if the input starts with `../` or `/`.
 **Prevention:** Use `filepath.Rel(cwd, absPath)` and check if the result starts with `..` to ensure the path is contained within the current working directory.
 
+## 2026-05-26 - Parameter Injection in CLI Executor
+**Vulnerability:** The `LocalCLIExecutor` passed user prompts directly as positional arguments to CLI tools. If a user provided a prompt starting with `-`, it could be interpreted as a flag (Argument/Parameter Injection), potentially altering the tool's behavior (e.g., overriding output format or executing dangerous flags).
+**Learning:** Even when using `exec.Command` (which avoids shell injection), simply passing untrusted input as an argument is unsafe if the underlying tool parses flags. Not all tools enforce positional arguments after flags without a separator.
+**Prevention:** Explicitly inject a positional argument separator (`--`) before user content for tools that support it. This ensures subsequent arguments are treated as positional values, not flags. Configuration-driven security (via `PositionalArgsSeparator` field) allows granular control per tool.
+
 ---
 
 ## Sentinel's Daily Process

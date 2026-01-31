@@ -41,24 +41,28 @@ type LocalCLIExecutor struct {
 	AutoApproveFlag     string
 	YoloFlag            string
 	SessionFlag         string
+
+	// Security fields
+	PositionalArgsSeparator string
 }
 
 // NewLocalCLIExecutor creates a new executor from a discovered CLI tool.
 func NewLocalCLIExecutor(tool cli.DiscoveredTool) *LocalCLIExecutor {
 	return &LocalCLIExecutor{
-		Provider:            tool.Definition.ProviderKey,
-		BinaryPath:          tool.Path,
-		Args:                tool.Definition.DefaultArgs,
-		JSONFormatArgs:      tool.Definition.JSONFormatArgs,
-		StreamFormatArgs:    tool.Definition.StreamFormatArgs,
-		SupportsJSON:        tool.Definition.SupportsJSON,
-		SupportsStream:      tool.Definition.SupportsStream,
-		SupportsAttachments: tool.Definition.SupportsAttachments,
-		AttachmentPrefix:    tool.Definition.AttachmentPrefix,
-		SandboxFlag:         tool.Definition.SandboxFlag,
-		AutoApproveFlag:     tool.Definition.AutoApproveFlag,
-		YoloFlag:            tool.Definition.YoloFlag,
-		SessionFlag:         tool.Definition.SessionFlag,
+		Provider:                tool.Definition.ProviderKey,
+		BinaryPath:              tool.Path,
+		Args:                    tool.Definition.DefaultArgs,
+		JSONFormatArgs:          tool.Definition.JSONFormatArgs,
+		StreamFormatArgs:        tool.Definition.StreamFormatArgs,
+		SupportsJSON:            tool.Definition.SupportsJSON,
+		SupportsStream:          tool.Definition.SupportsStream,
+		SupportsAttachments:     tool.Definition.SupportsAttachments,
+		AttachmentPrefix:        tool.Definition.AttachmentPrefix,
+		SandboxFlag:             tool.Definition.SandboxFlag,
+		AutoApproveFlag:         tool.Definition.AutoApproveFlag,
+		YoloFlag:                tool.Definition.YoloFlag,
+		SessionFlag:             tool.Definition.SessionFlag,
+		PositionalArgsSeparator: tool.Definition.PositionalArgsSeparator,
 	}
 }
 
@@ -87,59 +91,11 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	// Extract CLI options from extra_body FIRST
 	cliOpts, _ := extractCLIOptions(req.Payload)
 
-	// Build control flags from options
-	var flags []string
-	if cliOpts != nil {
-		if cliOpts.Flags.Sandbox && e.SandboxFlag != "" {
-			flags = append(flags, e.SandboxFlag)
-		}
-		if cliOpts.Flags.AutoApprove && e.AutoApproveFlag != "" {
-			flags = append(flags, e.AutoApproveFlag)
-		}
-		if cliOpts.Flags.Yolo && e.YoloFlag != "" {
-			flags = append(flags, e.YoloFlag)
-		}
-		if cliOpts.SessionID != "" && e.SessionFlag != "" {
-			if strings.HasSuffix(e.SessionFlag, "=") {
-				flags = append(flags, e.SessionFlag+cliOpts.SessionID)
-			} else {
-				flags = append(flags, e.SessionFlag, cliOpts.SessionID)
-			}
-		}
-	}
-
-	// Phase 0 Quick Fix: Auto-inject --dangerously-skip-permissions for claudecli
-	// This prevents silent hangs on permission prompts when running in non-TTY environments
-	if e.Provider == "claudecli" && !e.hasTTY() {
-		skipPermFlag := "--dangerously-skip-permissions"
-		// Only add if not already present
-		if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
-			flags = append(flags, skipPermFlag)
-			log.Infof("Auto-injected %s for claudecli (no TTY detected)", skipPermFlag)
-		}
-	}
-
-	// Build command args: [Control Flags] -> [Default Args] -> [Format Args] -> [Prompt]
-	// 1. Control flags first (sandbox, auto-approve, session)
-	finalArgs := append([]string{}, flags...)
-
-	// 2. Default tool arguments (like -p)
-	finalArgs = append(finalArgs, e.Args...)
-
-	// 3. Format arguments (like --output-format=json)
-	if e.SupportsJSON && len(e.JSONFormatArgs) > 0 {
-		finalArgs = append(finalArgs, e.JSONFormatArgs...)
-	}
-
-	// Build attachment prefix (for Gemini/Vibe style @-commands)
-	attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+	// Build arguments using helper
+	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.JSONFormatArgs)
 	if err != nil {
-		return switchailocalexecutor.Response{}, fmt.Errorf("invalid attachment: %w", err)
+		return switchailocalexecutor.Response{}, err
 	}
-
-	// Combine attachments and prompt as the final argument
-	finalPrompt := attachmentPrefix + prompt
-	finalArgs = append(finalArgs, finalPrompt)
 
 	// Check for remote execution bridge
 	if remoteHost := os.Getenv("REMOTE_COMMAND_HOST"); remoteHost != "" {
@@ -317,59 +273,11 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	// Extract CLI options from extra_body FIRST
 	cliOpts, _ := extractCLIOptions(req.Payload)
 
-	// Build control flags from options
-	var flags []string
-	if cliOpts != nil {
-		if cliOpts.Flags.Sandbox && e.SandboxFlag != "" {
-			flags = append(flags, e.SandboxFlag)
-		}
-		if cliOpts.Flags.AutoApprove && e.AutoApproveFlag != "" {
-			flags = append(flags, e.AutoApproveFlag)
-		}
-		if cliOpts.Flags.Yolo && e.YoloFlag != "" {
-			flags = append(flags, e.YoloFlag)
-		}
-		if cliOpts.SessionID != "" && e.SessionFlag != "" {
-			if strings.HasSuffix(e.SessionFlag, "=") {
-				flags = append(flags, e.SessionFlag+cliOpts.SessionID)
-			} else {
-				flags = append(flags, e.SessionFlag, cliOpts.SessionID)
-			}
-		}
-	}
-
-	// Phase 0 Quick Fix: Auto-inject --dangerously-skip-permissions for claudecli
-	// This prevents silent hangs on permission prompts when running in non-TTY environments
-	if e.Provider == "claudecli" && !e.hasTTY() {
-		skipPermFlag := "--dangerously-skip-permissions"
-		// Only add if not already present
-		if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
-			flags = append(flags, skipPermFlag)
-			log.Infof("Auto-injected %s for claudecli (no TTY detected)", skipPermFlag)
-		}
-	}
-
-	// Build command args: [Control Flags] -> [Default Args] -> [Stream Format Args] -> [Prompt]
-	// 1. Control flags first (sandbox, auto-approve, session)
-	finalArgs := append([]string{}, flags...)
-
-	// 2. Default tool arguments (like -p)
-	finalArgs = append(finalArgs, e.Args...)
-
-	// 3. Stream format arguments
-	if e.SupportsStream && len(e.StreamFormatArgs) > 0 {
-		finalArgs = append(finalArgs, e.StreamFormatArgs...)
-	}
-
-	// Build attachment prefix (for Gemini/Vibe style @-commands)
-	attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+	// Build arguments using helper
+	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.StreamFormatArgs)
 	if err != nil {
-		return nil, fmt.Errorf("invalid attachment: %w", err)
+		return nil, err
 	}
-
-	// Combine attachments and prompt as the final argument
-	finalPrompt := attachmentPrefix + prompt
-	finalArgs = append(finalArgs, finalPrompt)
 
 	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
 	stdout, err := cmd.StdoutPipe()
@@ -732,6 +640,72 @@ func (e *LocalCLIExecutor) containsFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// buildFinalArgs constructs the command arguments list.
+func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, formatArgs []string) ([]string, error) {
+	// Build control flags from options
+	var flags []string
+	if cliOpts != nil {
+		if cliOpts.Flags.Sandbox && e.SandboxFlag != "" {
+			flags = append(flags, e.SandboxFlag)
+		}
+		if cliOpts.Flags.AutoApprove && e.AutoApproveFlag != "" {
+			flags = append(flags, e.AutoApproveFlag)
+		}
+		if cliOpts.Flags.Yolo && e.YoloFlag != "" {
+			flags = append(flags, e.YoloFlag)
+		}
+		if cliOpts.SessionID != "" && e.SessionFlag != "" {
+			if strings.HasSuffix(e.SessionFlag, "=") {
+				flags = append(flags, e.SessionFlag+cliOpts.SessionID)
+			} else {
+				flags = append(flags, e.SessionFlag, cliOpts.SessionID)
+			}
+		}
+	}
+
+	// Phase 0 Quick Fix: Auto-inject --dangerously-skip-permissions for claudecli
+	// This prevents silent hangs on permission prompts when running in non-TTY environments
+	if e.Provider == "claudecli" && !e.hasTTY() {
+		skipPermFlag := "--dangerously-skip-permissions"
+		// Only add if not already present
+		if !e.containsFlag(flags, skipPermFlag) && !e.containsFlag(e.Args, skipPermFlag) {
+			flags = append(flags, skipPermFlag)
+			log.Infof("Auto-injected %s for claudecli (no TTY detected)", skipPermFlag)
+		}
+	}
+
+	// Build command args: [Control Flags] -> [Default Args] -> [Format Args] -> [Separator] -> [Prompt]
+	// 1. Control flags first (sandbox, auto-approve, session)
+	finalArgs := append([]string{}, flags...)
+
+	// 2. Default tool arguments (like -p)
+	finalArgs = append(finalArgs, e.Args...)
+
+	// 3. Format arguments (like --output-format=json)
+	if e.SupportsJSON && len(formatArgs) > 0 {
+		finalArgs = append(finalArgs, formatArgs...)
+	}
+
+	// 4. Positional Argument Separator (Security Fix)
+	// If configured, inject a separator (like "--") before the prompt to prevent
+	// the prompt from being interpreted as a flag.
+	if e.PositionalArgsSeparator != "" {
+		finalArgs = append(finalArgs, e.PositionalArgsSeparator)
+	}
+
+	// Build attachment prefix (for Gemini/Vibe style @-commands)
+	attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid attachment: %w", err)
+	}
+
+	// Combine attachments and prompt as the final argument
+	finalPrompt := attachmentPrefix + prompt
+	finalArgs = append(finalArgs, finalPrompt)
+
+	return finalArgs, nil
 }
 
 // extractErrorHint extracts the last 10 lines of stderr and provides a helpful hint.
