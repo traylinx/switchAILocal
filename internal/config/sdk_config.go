@@ -128,7 +128,8 @@ func MakeInlineAPIKeyProvider(keys []string) *AccessProvider {
 
 // IntelligenceConfig defines settings for the Intelligent Routing system.
 type IntelligenceConfig struct {
-	// Enabled toggles the intelligent routing feature.
+	// Enabled toggles the intelligent routing feature (master switch).
+	// When false, all Phase 2 features are disabled.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// RouterModel is the identifier of the LLM used for classification (e.g., "ollama:qwen:0.5b").
@@ -143,6 +144,112 @@ type IntelligenceConfig struct {
 
 	// SkillsPath defines the directory where Agent Skills are stored (SKILL.md).
 	SkillsPath string `yaml:"skills-path" json:"skills-path"`
+
+	// Discovery configures model discovery settings.
+	Discovery DiscoveryConfig `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+
+	// CapabilityAnalysis enables automatic capability inference from model metadata.
+	CapabilityAnalysis FeatureFlag `yaml:"capability-analysis,omitempty" json:"capability-analysis,omitempty"`
+
+	// AutoAssign configures automatic model-to-capability slot assignment.
+	AutoAssign AutoAssignConfig `yaml:"auto-assign,omitempty" json:"auto-assign,omitempty"`
+
+	// Skills configures the skill registry.
+	Skills SkillsConfig `yaml:"skills,omitempty" json:"skills,omitempty"`
+
+	// Embedding configures the embedding engine.
+	Embedding EmbeddingConfig `yaml:"embedding,omitempty" json:"embedding,omitempty"`
+
+	// SemanticTier configures semantic intent matching.
+	SemanticTier SemanticTierConfig `yaml:"semantic-tier,omitempty" json:"semantic-tier,omitempty"`
+
+	// SkillMatching configures skill matching behavior.
+	SkillMatching SkillMatchingConfig `yaml:"skill-matching,omitempty" json:"skill-matching,omitempty"`
+
+	// SemanticCache configures semantic caching.
+	SemanticCache SemanticCacheConfig `yaml:"semantic-cache,omitempty" json:"semantic-cache,omitempty"`
+
+	// Confidence enables confidence scoring for classifications.
+	Confidence FeatureFlag `yaml:"confidence,omitempty" json:"confidence,omitempty"`
+
+	// Verification configures classification verification.
+	Verification VerificationConfig `yaml:"verification,omitempty" json:"verification,omitempty"`
+
+	// Cascade configures model cascading behavior.
+	Cascade CascadeConfig `yaml:"cascade,omitempty" json:"cascade,omitempty"`
+
+	// Feedback configures feedback collection.
+	Feedback FeedbackConfig `yaml:"feedback,omitempty" json:"feedback,omitempty"`
+}
+
+// FeatureFlag represents a simple on/off toggle for a feature.
+type FeatureFlag struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
+// DiscoveryConfig configures model discovery behavior.
+type DiscoveryConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`
+	RefreshInterval int    `yaml:"refresh-interval,omitempty" json:"refresh-interval,omitempty"` // seconds
+	CacheDir        string `yaml:"cache-dir,omitempty" json:"cache-dir,omitempty"`
+}
+
+// AutoAssignConfig configures automatic model assignment.
+type AutoAssignConfig struct {
+	Enabled          bool              `yaml:"enabled" json:"enabled"`
+	PreferLocal      bool              `yaml:"prefer-local,omitempty" json:"prefer-local,omitempty"`
+	CostOptimization bool              `yaml:"cost-optimization,omitempty" json:"cost-optimization,omitempty"`
+	Overrides        map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+}
+
+// SkillsConfig configures the skill registry.
+type SkillsConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Directory string `yaml:"directory,omitempty" json:"directory,omitempty"`
+}
+
+// EmbeddingConfig configures the embedding engine.
+type EmbeddingConfig struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Model   string `yaml:"model,omitempty" json:"model,omitempty"`
+}
+
+// SemanticTierConfig configures semantic intent matching.
+type SemanticTierConfig struct {
+	Enabled             bool    `yaml:"enabled" json:"enabled"`
+	ConfidenceThreshold float64 `yaml:"confidence-threshold,omitempty" json:"confidence-threshold,omitempty"`
+}
+
+// SkillMatchingConfig configures skill matching behavior.
+type SkillMatchingConfig struct {
+	Enabled             bool    `yaml:"enabled" json:"enabled"`
+	ConfidenceThreshold float64 `yaml:"confidence-threshold,omitempty" json:"confidence-threshold,omitempty"`
+}
+
+// SemanticCacheConfig configures semantic caching.
+type SemanticCacheConfig struct {
+	Enabled             bool    `yaml:"enabled" json:"enabled"`
+	SimilarityThreshold float64 `yaml:"similarity-threshold,omitempty" json:"similarity-threshold,omitempty"`
+	MaxSize             int     `yaml:"max-size,omitempty" json:"max-size,omitempty"`
+}
+
+// VerificationConfig configures classification verification.
+type VerificationConfig struct {
+	Enabled                  bool    `yaml:"enabled" json:"enabled"`
+	ConfidenceThresholdLow   float64 `yaml:"confidence-threshold-low,omitempty" json:"confidence-threshold-low,omitempty"`
+	ConfidenceThresholdHigh  float64 `yaml:"confidence-threshold-high,omitempty" json:"confidence-threshold-high,omitempty"`
+}
+
+// CascadeConfig configures model cascading.
+type CascadeConfig struct {
+	Enabled          bool    `yaml:"enabled" json:"enabled"`
+	QualityThreshold float64 `yaml:"quality-threshold,omitempty" json:"quality-threshold,omitempty"`
+}
+
+// FeedbackConfig configures feedback collection.
+type FeedbackConfig struct {
+	Enabled       bool `yaml:"enabled" json:"enabled"`
+	RetentionDays int  `yaml:"retention-days,omitempty" json:"retention-days,omitempty"`
 }
 
 // SanitizeIntelligence normalizes the intelligence routing configuration.
@@ -150,6 +257,8 @@ func (c *SDKConfig) SanitizeIntelligence() {
 	if c == nil {
 		return
 	}
+	
+	// Existing v1.0 fields
 	c.Intelligence.RouterModel = strings.TrimSpace(c.Intelligence.RouterModel)
 	c.Intelligence.RouterFallback = strings.TrimSpace(c.Intelligence.RouterFallback)
 	if c.Intelligence.RouterModel == "" {
@@ -168,5 +277,65 @@ func (c *SDKConfig) SanitizeIntelligence() {
 			delete(c.Intelligence.Matrix, k)
 			c.Intelligence.Matrix[cleanK] = cleanV
 		}
+	}
+	
+	// Phase 2 defaults (all disabled by default when master switch is off)
+	// Discovery defaults
+	if c.Intelligence.Discovery.RefreshInterval == 0 {
+		c.Intelligence.Discovery.RefreshInterval = 3600 // 1 hour
+	}
+	if c.Intelligence.Discovery.CacheDir == "" {
+		c.Intelligence.Discovery.CacheDir = "~/.switchailocal/cache/discovery"
+	}
+	
+	// Auto-assign defaults
+	if c.Intelligence.AutoAssign.Overrides == nil {
+		c.Intelligence.AutoAssign.Overrides = make(map[string]string)
+	}
+	
+	// Skills defaults
+	if c.Intelligence.Skills.Directory == "" {
+		c.Intelligence.Skills.Directory = "plugins/cortex-router/skills"
+	}
+	
+	// Embedding defaults
+	if c.Intelligence.Embedding.Model == "" {
+		c.Intelligence.Embedding.Model = "all-MiniLM-L6-v2"
+	}
+	
+	// Semantic tier defaults
+	if c.Intelligence.SemanticTier.ConfidenceThreshold == 0 {
+		c.Intelligence.SemanticTier.ConfidenceThreshold = 0.85
+	}
+	
+	// Skill matching defaults
+	if c.Intelligence.SkillMatching.ConfidenceThreshold == 0 {
+		c.Intelligence.SkillMatching.ConfidenceThreshold = 0.80
+	}
+	
+	// Semantic cache defaults
+	if c.Intelligence.SemanticCache.SimilarityThreshold == 0 {
+		c.Intelligence.SemanticCache.SimilarityThreshold = 0.95
+	}
+	if c.Intelligence.SemanticCache.MaxSize == 0 {
+		c.Intelligence.SemanticCache.MaxSize = 10000
+	}
+	
+	// Verification defaults
+	if c.Intelligence.Verification.ConfidenceThresholdLow == 0 {
+		c.Intelligence.Verification.ConfidenceThresholdLow = 0.60
+	}
+	if c.Intelligence.Verification.ConfidenceThresholdHigh == 0 {
+		c.Intelligence.Verification.ConfidenceThresholdHigh = 0.90
+	}
+	
+	// Cascade defaults
+	if c.Intelligence.Cascade.QualityThreshold == 0 {
+		c.Intelligence.Cascade.QualityThreshold = 0.70
+	}
+	
+	// Feedback defaults
+	if c.Intelligence.Feedback.RetentionDays == 0 {
+		c.Intelligence.Feedback.RetentionDays = 90
 	}
 }

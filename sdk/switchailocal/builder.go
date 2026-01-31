@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/traylinx/switchAILocal/internal/api"
+	"github.com/traylinx/switchAILocal/internal/intelligence"
 	sdkaccess "github.com/traylinx/switchAILocal/sdk/access"
 	sdkAuth "github.com/traylinx/switchAILocal/sdk/auth"
 	"github.com/traylinx/switchAILocal/sdk/config"
@@ -232,5 +233,9 @@ func (b *Builder) Build() (*Service, error) {
 		coreManager:    coreManager,
 		serverOptions:  append([]api.ServerOption(nil), b.serverOptions...),
 	}
+
+	// Initialize intelligence service (optional, disabled by default)
+	service.intelligenceService = intelligence.NewService(&b.cfg.SDKConfig.Intelligence)
+
 	return service, nil
 }

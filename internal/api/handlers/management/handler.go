@@ -19,11 +19,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/buildinfo"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/usage"
 	sdkAuth "github.com/traylinx/switchAILocal/sdk/auth"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// IntelligenceService defines the interface for accessing intelligence features.
+type IntelligenceService interface {
+	IsEnabled() bool
+	GetSemanticCache() intelligence.SemanticCacheInterface
+}
 
 type attemptInfo struct {
 	count        int
@@ -32,18 +39,19 @@ type attemptInfo struct {
 
 // Handler aggregates config reference, persistence path and helpers.
 type Handler struct {
-	cfg                 *config.Config
-	configFilePath      string
-	mu                  sync.Mutex
-	attemptsMu          sync.Mutex
-	failedAttempts      map[string]*attemptInfo // keyed by client IP
-	authManager         *coreauth.Manager
-	usageStats          *usage.RequestStatistics
-	tokenStore          coreauth.Store
-	localPassword       string
-	allowRemoteOverride bool
-	envSecret           string
-	logDir              string
+	cfg                  *config.Config
+	configFilePath       string
+	mu                   sync.Mutex
+	attemptsMu           sync.Mutex
+	failedAttempts       map[string]*attemptInfo // keyed by client IP
+	authManager          *coreauth.Manager
+	usageStats           *usage.RequestStatistics
+	tokenStore           coreauth.Store
+	localPassword        string
+	allowRemoteOverride  bool
+	envSecret            string
+	logDir               string
+	intelligenceService  IntelligenceService
 }
 
 // NewHandler creates a new management handler instance.
@@ -86,6 +94,11 @@ func (h *Handler) SetLogDirectory(dir string) {
 		}
 	}
 	h.logDir = dir
+}
+
+// SetIntelligenceService updates the intelligence service reference.
+func (h *Handler) SetIntelligenceService(svc IntelligenceService) {
+	h.intelligenceService = svc
 }
 
 // Middleware enforces access control for management endpoints.

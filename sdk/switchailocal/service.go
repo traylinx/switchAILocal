@@ -11,6 +11,7 @@ import (
 
 	"github.com/traylinx/switchAILocal/internal/api"
 	"github.com/traylinx/switchAILocal/internal/discovery"
+	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/plugin"
 	"github.com/traylinx/switchAILocal/internal/watcher"
 	"github.com/traylinx/switchAILocal/internal/wsrelay"
@@ -87,6 +88,9 @@ type Service struct {
 
 	// discoverer handles dynamic model discovery from GitHub and API sources.
 	discoverer *discovery.Discoverer
+
+	// intelligenceService manages Phase 2 intelligent routing features.
+	intelligenceService *intelligence.Service
 }
 
 // CoreManager returns the underlying core authentication manager.
@@ -101,6 +105,15 @@ func (s *Service) CoreManager() *coreauth.Manager {
 //   - plugin: The usage plugin to register
 func (s *Service) RegisterUsagePlugin(plugin usage.Plugin) {
 	usage.RegisterPlugin(plugin)
+}
+
+// GetIntelligenceService returns the intelligence service instance.
+// Returns nil if intelligence services are not enabled or not initialized.
+//
+// Returns:
+//   - *intelligence.Service: The intelligence service instance, or nil
+func (s *Service) GetIntelligenceService() *intelligence.Service {
+	return s.intelligenceService
 }
 
 // newDefaultAuthManager creates a default authentication manager with all supported providers.

@@ -310,6 +310,80 @@ plugin:
 
 ---
 
+## Cortex Router: Intelligent Model Selection
+
+The **Cortex Router** plugin provides intelligent, multi-tier routing that automatically selects the optimal model based on request content.
+
+### Quick Start
+
+Enable intelligent routing in `config.yaml`:
+
+```yaml
+plugin:
+  enabled: true
+  enabled-plugins:
+    - "cortex-router"
+
+intelligence:
+  enabled: true
+  router-model: "ollama:qwen:0.5b"  # Fast classification model
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    fast: "switchai-fast"
+    secure: "ollama:llama3.2"  # Local model for sensitive data
+```
+
+### How It Works
+
+When you use `model="auto"` or `model="cortex"`, the router analyzes your request through multiple tiers:
+
+1. **Reflex Tier** (<1ms): Pattern matching for obvious cases (code blocks → coding model, PII → secure model)
+2. **Semantic Tier** (<20ms): Embedding-based intent matching (requires Phase 2)
+3. **Cognitive Tier** (200-500ms): LLM-based classification with confidence scoring
+
+```python
+# Automatic intelligent routing
+completion = client.chat.completions.create(
+    model="auto",  # Let Cortex Router decide
+    messages=[{"role": "user", "content": "Write a Python function to sort a list"}]
+)
+# → Routes to coding model automatically
+```
+
+### Phase 2 Features (Optional)
+
+Enable advanced features for even smarter routing:
+
+```yaml
+intelligence:
+  enabled: true
+  
+  # Semantic matching (faster than LLM classification)
+  embedding:
+    enabled: true
+  semantic-tier:
+    enabled: true
+  
+  # Skill-based prompt augmentation
+  skill-matching:
+    enabled: true
+  
+  # Quality-based model cascading
+  cascade:
+    enabled: true
+```
+
+**21 Pre-built Skills** including:
+- Language experts (Go, Python, TypeScript)
+- Infrastructure (Docker, Kubernetes, DevOps)
+- Security, Testing, Debugging
+- Frontend, Vision, and more
+
+📖 See [Cortex Router Phase 2 Guide](docs/CORTEX_ROUTER_PHASE2.md) for full documentation.
+
+---
+
 ## Documentation
 
 ### For Users

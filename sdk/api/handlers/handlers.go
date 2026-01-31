@@ -354,6 +354,14 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	if errMsg != nil {
 		return nil, errMsg
 	}
+
+	// Store metadata in Gin context for response header setting
+	if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+		if metadata != nil {
+			ginCtx.Set("request_metadata", metadata)
+		}
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -385,6 +393,18 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		}
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	// ROUTING: Apply LUA on_response hook
+	if h.LuaEngine.IsEnabled() {
+		resData := map[string]any{
+			"body":           string(resp.Payload),
+			"model":          normalizedModel,
+			"provider":       providers[0],
+			"metadata":       metadata,
+			"original_query": string(body),
+		}
+		_, _ = h.LuaEngine.RunHook(ctx, plugin.HookOnResponse, resData)
+	}
+
 	return cloneBytes(resp.Payload), nil
 }
 
@@ -490,6 +510,14 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		close(errChan)
 		return nil, errChan
 	}
+
+	// Store metadata in Gin context for response header setting
+	if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+		if metadata != nil {
+			ginCtx.Set("request_metadata", metadata)
+		}
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -853,7 +881,14 @@ Routing Rules:
    - "pii": Contains emails, phone numbers, API keys.
    - "public": Safe general knowledge.
 
-Output Format: Valid JSON only. No markdown limits.`},
+4. Confidence:
+   - A float between 0.0 and 1.0 indicating your certainty in the intent classification.
+   - 1.0: Very certain.
+   - 0.5: Uncertain.
+   - 0.1: Very uncertain.
+
+Output Format: Valid JSON only. No markdown limits.
+Example: {"intent": "coding", "complexity": "complex", "privacy": "public", "confidence": 0.95}`},
 			{"role": "user", "content": prompt},
 		},
 		"temperature": 0, // Deterministic for classification

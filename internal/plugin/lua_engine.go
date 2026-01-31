@@ -14,12 +14,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/goccy/go-yaml"
 	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/intelligence"
+	"github.com/traylinx/switchAILocal/internal/intelligence/confidence"
+	"github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
+	"github.com/traylinx/switchAILocal/internal/intelligence/verification"
 	"github.com/traylinx/switchAILocal/internal/util"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	lua "github.com/yuin/gopher-lua"
@@ -38,6 +44,23 @@ type Classifier interface {
 	Classify(ctx context.Context, prompt string) (string, error)
 }
 
+// IntelligenceService defines the interface for Phase 2 intelligent routing features.
+// It provides access to advanced capabilities like discovery, semantic matching, and skill registry.
+type IntelligenceService interface {
+	IsEnabled() bool
+	GetDiscoveryService() intelligence.DiscoveryServiceInterface
+	GetMatrixBuilder() intelligence.MatrixBuilderInterface
+	IsModelAvailable(modelID string) bool
+	GetSkillRegistry() *skills.Registry
+	GetEmbeddingEngine() *embedding.Engine
+	GetSemanticTier() intelligence.SemanticTierInterface
+	GetSemanticCache() intelligence.SemanticCacheInterface
+	GetConfidenceScorer() *confidence.Scorer
+	GetVerifier() *verification.Verifier
+	GetCascadeManager() intelligence.CascadeManagerInterface
+	GetFeedbackCollector() intelligence.FeedbackCollectorInterface
+}
+
 // Hook types for plugin execution points
 const (
 	HookOnRequest  = "on_request"
@@ -51,11 +74,12 @@ type LuaEngine struct {
 	scriptsMu sync.RWMutex
 	enabled   bool
 
-	intelConfig    config.IntelligenceConfig
-	classifier     Classifier
-	enabledPlugins []string
-	cache          map[string]string
-	cacheMu        sync.RWMutex
+	intelConfig         config.IntelligenceConfig
+	classifier          Classifier
+	enabledPlugins      []string
+	cache               map[string]string
+	cacheMu             sync.RWMutex
+	intelligenceService IntelligenceService
 
 	// Internal cache for expensive operations like scanning
 	scanCache sync.Map
@@ -313,6 +337,10 @@ func (e *LuaEngine) executeHook(ctx context.Context, scriptName string, proto *l
 	L := e.getState()
 	defer e.putState(L)
 
+	// Set context for script execution immediately
+	// This is CRITICAL because the pooled state might hold a stale/canceled context from a previous request.
+	L.SetContext(ctx)
+
 	// Set package.path for this specific plugin so it can require() its own files
 	pluginPath := filepath.Join(e.pluginDir, scriptName)
 	pathLVar := L.GetField(L.GetGlobal("package"), "path")
@@ -340,9 +368,6 @@ func (e *LuaEngine) executeHook(ctx context.Context, scriptName string, proto *l
 	if pluginTbl.Type() != lua.LTTable {
 		log.Debugf("plugin %s handler did not return a table, falling back to global scope", scriptName)
 	}
-
-	// Set context for script execution
-	L.SetContext(ctx)
 
 	// Look for the hook function
 	// 1. Try method on Plugin Table: Plugin:on_request(req)
@@ -505,6 +530,15 @@ func (e *LuaEngine) SetClassifier(c Classifier) {
 		return
 	}
 	e.classifier = c
+}
+
+// SetIntelligenceService sets the intelligence service implementation for the engine.
+// This allows Lua plugins to access Phase 2 intelligent routing features.
+func (e *LuaEngine) SetIntelligenceService(svc IntelligenceService) {
+	if e == nil {
+		return
+	}
+	e.intelligenceService = svc
 }
 
 // registerSwitchAIModule registers the 'switchai' global table with host functions.
@@ -678,6 +712,50 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 		return 1
 	}))
 
+	// switchai.get_skills() -> table or nil, error
+	// Returns skills from the enhanced skill registry (Phase 2)
+	L.SetField(mod, "get_skills", L.NewFunction(func(L *lua.LState) int {
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get skill registry
+		registry := e.intelligenceService.GetSkillRegistry()
+		if registry == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("skill registry not available"))
+			return 2
+		}
+
+		// Get all skills
+		skills := registry.GetAllSkills()
+
+		// Convert to Lua table
+		skillsTbl := L.NewTable()
+		for _, skill := range skills {
+			s := L.NewTable()
+			L.SetField(s, "id", lua.LString(skill.GetID()))
+			L.SetField(s, "name", lua.LString(skill.GetName()))
+			L.SetField(s, "description", lua.LString(skill.GetDescription()))
+			L.SetField(s, "required_capability", lua.LString(skill.GetRequiredCapability()))
+			L.SetField(s, "system_prompt", lua.LString(skill.GetSystemPrompt()))
+			L.SetField(s, "has_embedding", lua.LBool(skill.GetEmbeddingLength() > 0))
+			L.SetField(skillsTbl, skill.GetID(), s)
+		}
+
+		// Add metadata
+		metaTbl := L.NewTable()
+		L.SetField(metaTbl, "count", lua.LNumber(registry.GetSkillCount()))
+		L.SetField(metaTbl, "embeddings_available", lua.LBool(registry.HasEmbeddings()))
+		L.SetField(skillsTbl, "_meta", metaTbl)
+
+		L.Push(skillsTbl)
+		return 1
+	}))
+
 	// switchai.json_inject(json_str, content_to_inject) -> new_json
 	// Safe injection using encoding/json
 	L.SetField(mod, "json_inject", L.NewFunction(func(L *lua.LState) int {
@@ -712,6 +790,852 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 		}
 
 		L.Push(lua.LString(string(newBytes)))
+		return 1
+	}))
+
+	// switchai.get_available_models() -> table or nil, error
+	// Returns discovered models from the intelligence discovery service
+	L.SetField(mod, "get_available_models", L.NewFunction(func(L *lua.LState) int {
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get discovery service
+		discoverySvc := e.intelligenceService.GetDiscoveryService()
+		if discoverySvc == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("discovery service not available"))
+			return 2
+		}
+
+		// Get available models as maps
+		models := discoverySvc.GetAvailableModelsAsMap()
+
+		// Convert to Lua table
+		modelsTbl := L.NewTable()
+		for i, model := range models {
+			modelTbl := L.NewTable()
+			for k, v := range model {
+				switch val := v.(type) {
+				case string:
+					L.SetField(modelTbl, k, lua.LString(val))
+				case bool:
+					L.SetField(modelTbl, k, lua.LBool(val))
+				case int:
+					L.SetField(modelTbl, k, lua.LNumber(val))
+				case float64:
+					L.SetField(modelTbl, k, lua.LNumber(val))
+				case map[string]interface{}:
+					// Handle nested capabilities map
+					capTbl := L.NewTable()
+					for ck, cv := range val {
+						switch cval := cv.(type) {
+						case string:
+							L.SetField(capTbl, ck, lua.LString(cval))
+						case bool:
+							L.SetField(capTbl, ck, lua.LBool(cval))
+						case int:
+							L.SetField(capTbl, ck, lua.LNumber(cval))
+						case float64:
+							L.SetField(capTbl, ck, lua.LNumber(cval))
+						}
+					}
+					L.SetField(modelTbl, k, capTbl)
+				}
+			}
+			L.RawSetInt(modelsTbl, i+1, modelTbl)
+		}
+
+		L.Push(modelsTbl)
+		return 1
+	}))
+
+	// switchai.get_dynamic_matrix() -> table or nil, error
+	// Returns the dynamic capability matrix from the intelligence service
+	L.SetField(mod, "get_dynamic_matrix", L.NewFunction(func(L *lua.LState) int {
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get matrix builder
+		matrixBuilder := e.intelligenceService.GetMatrixBuilder()
+		if matrixBuilder == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("dynamic matrix builder not available"))
+			return 2
+		}
+
+		// Get current matrix as map
+		matrixMap := matrixBuilder.GetCurrentMatrixAsMap()
+		if matrixMap == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("no matrix has been built yet"))
+			return 2
+		}
+
+		// Convert to Lua table
+		matrixTbl := L.NewTable()
+		for slot, assignment := range matrixMap {
+			if assignMap, ok := assignment.(map[string]interface{}); ok {
+				slotTbl := L.NewTable()
+
+				// Set primary
+				if primary, ok := assignMap["primary"].(string); ok {
+					L.SetField(slotTbl, "primary", lua.LString(primary))
+				}
+
+				// Set score
+				if score, ok := assignMap["score"].(float64); ok {
+					L.SetField(slotTbl, "score", lua.LNumber(score))
+				}
+
+				// Set reason
+				if reason, ok := assignMap["reason"].(string); ok {
+					L.SetField(slotTbl, "reason", lua.LString(reason))
+				}
+
+				// Set fallbacks as array
+				if fallbacks, ok := assignMap["fallbacks"].([]string); ok {
+					fallbacksTbl := L.NewTable()
+					for i, fb := range fallbacks {
+						L.RawSetInt(fallbacksTbl, i+1, lua.LString(fb))
+					}
+					L.SetField(slotTbl, "fallbacks", fallbacksTbl)
+				}
+
+				L.SetField(matrixTbl, slot, slotTbl)
+			}
+		}
+
+		L.Push(matrixTbl)
+		return 1
+	}))
+
+	// switchai.is_model_available(model_id) -> bool
+	// Checks if a model is in the discovered models
+	L.SetField(mod, "is_model_available", L.NewFunction(func(L *lua.LState) int {
+		modelID := L.CheckString(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LBool(false))
+			return 1
+		}
+
+		// Check if model is available
+		available := e.intelligenceService.IsModelAvailable(modelID)
+		L.Push(lua.LBool(available))
+		return 1
+	}))
+
+	// switchai.embed(text) -> table (embedding) or nil, error
+	// Computes a 384-dimensional embedding vector for the given text
+	L.SetField(mod, "embed", L.NewFunction(func(L *lua.LState) int {
+		text := L.CheckString(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get embedding engine
+		engine := e.intelligenceService.GetEmbeddingEngine()
+		if engine == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("embedding engine not available"))
+			return 2
+		}
+
+		// Compute embedding
+		embeddingVec, err := engine.Embed(text)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Convert to Lua table (array of numbers)
+		embeddingTbl := L.NewTable()
+		for i, val := range embeddingVec {
+			L.RawSetInt(embeddingTbl, i+1, lua.LNumber(val))
+		}
+
+		L.Push(embeddingTbl)
+		return 1
+	}))
+
+	// switchai.cosine_similarity(a, b) -> number
+	// Computes the cosine similarity between two embedding vectors
+	L.SetField(mod, "cosine_similarity", L.NewFunction(func(L *lua.LState) int {
+		aTbl := L.CheckTable(1)
+		bTbl := L.CheckTable(2)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+
+		// Get embedding engine
+		engine := e.intelligenceService.GetEmbeddingEngine()
+		if engine == nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+
+		// Convert Lua tables to float32 slices
+		a := make([]float32, 0)
+		b := make([]float32, 0)
+
+		aTbl.ForEach(func(_, v lua.LValue) {
+			if num, ok := v.(lua.LNumber); ok {
+				a = append(a, float32(num))
+			}
+		})
+
+		bTbl.ForEach(func(_, v lua.LValue) {
+			if num, ok := v.(lua.LNumber); ok {
+				b = append(b, float32(num))
+			}
+		})
+
+		// Compute cosine similarity
+		similarity := engine.CosineSimilarity(a, b)
+		L.Push(lua.LNumber(similarity))
+		return 1
+	}))
+
+	// switchai.semantic_match_intent(text) -> table {intent, confidence} or nil, error
+	// Matches a query to the best matching intent using semantic similarity
+	L.SetField(mod, "semantic_match_intent", L.NewFunction(func(L *lua.LState) int {
+		text := L.CheckString(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get semantic tier
+		semanticTier := e.intelligenceService.GetSemanticTier()
+		if semanticTier == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic tier not available"))
+			return 2
+		}
+
+		if !semanticTier.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic tier not initialized"))
+			return 2
+		}
+
+		// Match intent
+		result, err := semanticTier.MatchIntent(text)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// No match above threshold
+		if result == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		// Convert result to Lua table
+		resultTbl := L.NewTable()
+		L.SetField(resultTbl, "intent", lua.LString(result.Intent))
+		L.SetField(resultTbl, "confidence", lua.LNumber(result.Confidence))
+		L.SetField(resultTbl, "latency_ms", lua.LNumber(result.LatencyMs))
+
+		L.Push(resultTbl)
+		return 1
+	}))
+
+	// switchai.match_skill(text) -> table {skill, confidence} or nil, error
+	// Matches a query to the best matching skill using semantic similarity
+	L.SetField(mod, "match_skill", L.NewFunction(func(L *lua.LState) int {
+		text := L.CheckString(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get skill registry
+		skillRegistry := e.intelligenceService.GetSkillRegistry()
+		if skillRegistry == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("skill registry not available"))
+			return 2
+		}
+
+		// Get embedding engine
+		embeddingEngine := e.intelligenceService.GetEmbeddingEngine()
+		if embeddingEngine == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("embedding engine not available"))
+			return 2
+		}
+
+		// Compute query embedding
+		queryEmbedding, err := embeddingEngine.Embed(text)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("failed to compute embedding: %v", err)))
+			return 2
+		}
+
+		// Match skill
+		result, err := skillRegistry.MatchSkill(queryEmbedding)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// No match above threshold
+		if result == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		// Convert result to Lua table
+		resultTbl := L.NewTable()
+
+		// Create skill table
+		skillTbl := L.NewTable()
+		L.SetField(skillTbl, "id", lua.LString(result.Skill.ID))
+		L.SetField(skillTbl, "name", lua.LString(result.Skill.Name))
+		L.SetField(skillTbl, "description", lua.LString(result.Skill.Description))
+		L.SetField(skillTbl, "required_capability", lua.LString(result.Skill.RequiredCapability))
+		L.SetField(skillTbl, "system_prompt", lua.LString(result.Skill.SystemPrompt))
+
+		L.SetField(resultTbl, "skill", skillTbl)
+		L.SetField(resultTbl, "confidence", lua.LNumber(result.Confidence))
+
+		L.Push(resultTbl)
+		return 1
+	}))
+
+	// switchai.cache_lookup(query) -> table {decision, metadata} or nil, error
+	// Looks up a cached routing decision based on semantic similarity
+	L.SetField(mod, "cache_lookup", L.NewFunction(func(L *lua.LState) int {
+		query := L.CheckString(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get semantic cache
+		cacheInterface := e.intelligenceService.GetSemanticCache()
+		if cacheInterface == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not available"))
+			return 2
+		}
+
+		if !cacheInterface.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not initialized"))
+			return 2
+		}
+
+		// Lookup in cache
+		result, err := cacheInterface.Lookup(query)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("cache lookup failed: %v", err)))
+			return 2
+		}
+
+		// Cache miss
+		if result == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		// Convert result to Lua table
+		// The result is a *cache.CacheEntry, extract fields using reflection
+		resultTbl := L.NewTable()
+
+		v := reflect.ValueOf(result)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+
+		if v.Kind() == reflect.Struct {
+			// Get Decision field
+			if decisionField := v.FieldByName("Decision"); decisionField.IsValid() {
+				L.SetField(resultTbl, "decision", lua.LString(decisionField.String()))
+			}
+
+			// Get Metadata field
+			if metadataField := v.FieldByName("Metadata"); metadataField.IsValid() {
+				if metadata, ok := metadataField.Interface().(map[string]interface{}); ok && metadata != nil {
+					metadataTbl := L.NewTable()
+					for k, val := range metadata {
+						switch v := val.(type) {
+						case string:
+							L.SetField(metadataTbl, k, lua.LString(v))
+						case float64:
+							L.SetField(metadataTbl, k, lua.LNumber(v))
+						case bool:
+							L.SetField(metadataTbl, k, lua.LBool(v))
+						default:
+							jsonBytes, _ := json.Marshal(val)
+							L.SetField(metadataTbl, k, lua.LString(string(jsonBytes)))
+						}
+					}
+					L.SetField(resultTbl, "metadata", metadataTbl)
+				}
+			}
+		}
+
+		L.Push(resultTbl)
+		return 1
+	}))
+
+	// switchai.cache_store(query, decision, metadata) -> nil, error
+	// Stores a routing decision in the semantic cache
+	L.SetField(mod, "cache_store", L.NewFunction(func(L *lua.LState) int {
+		query := L.CheckString(1)
+		decision := L.CheckString(2)
+		metadataTable := L.OptTable(3, nil)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get semantic cache
+		cache := e.intelligenceService.GetSemanticCache()
+		if cache == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not available"))
+			return 2
+		}
+
+		if !cache.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not initialized"))
+			return 2
+		}
+
+		// Get embedding engine
+		embeddingEngine := e.intelligenceService.GetEmbeddingEngine()
+		if embeddingEngine == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("embedding engine not available"))
+			return 2
+		}
+
+		// Compute query embedding
+		queryEmbedding, err := embeddingEngine.Embed(query)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("failed to compute embedding: %v", err)))
+			return 2
+		}
+
+		// Convert Lua metadata table to Go map
+		metadata := make(map[string]interface{})
+		if metadataTable != nil {
+			metadataTable.ForEach(func(k, v lua.LValue) {
+				key := k.String()
+				switch val := v.(type) {
+				case lua.LString:
+					metadata[key] = string(val)
+				case lua.LNumber:
+					metadata[key] = float64(val)
+				case lua.LBool:
+					metadata[key] = bool(val)
+				default:
+					metadata[key] = v.String()
+				}
+			})
+		}
+
+		// Store in cache
+		if err := cache.Store(query, queryEmbedding, decision, metadata); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("cache store failed: %v", err)))
+			return 2
+		}
+
+		L.Push(lua.LNil)
+		return 1
+	}))
+
+	// switchai.cache_metrics() -> table {hits, misses, size, hit_rate} or nil, error
+	// Returns cache performance metrics
+	L.SetField(mod, "cache_metrics", L.NewFunction(func(L *lua.LState) int {
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get semantic cache
+		cache := e.intelligenceService.GetSemanticCache()
+		if cache == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not available"))
+			return 2
+		}
+
+		if !cache.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("semantic cache not initialized"))
+			return 2
+		}
+
+		// Get metrics
+		metrics := cache.GetMetricsAsMap()
+
+		// Convert to Lua table
+		metricsTbl := L.NewTable()
+		for k, v := range metrics {
+			switch val := v.(type) {
+			case int64:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case int:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case float64:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case string:
+				L.SetField(metricsTbl, k, lua.LString(val))
+			default:
+				L.SetField(metricsTbl, k, lua.LString(fmt.Sprintf("%v", val)))
+			}
+		}
+
+		L.Push(metricsTbl)
+		return 1
+	}))
+
+	// switchai.parse_confidence(json_str) -> table {intent, complexity, confidence} or nil, error
+	L.SetField(mod, "parse_confidence", L.NewFunction(func(L *lua.LState) int {
+		jsonStr := L.CheckString(1)
+
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		scorer := e.intelligenceService.GetConfidenceScorer()
+		if scorer == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("confidence scorer not available"))
+			return 2
+		}
+
+		res, err := scorer.Parse(jsonStr)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		resTbl := L.NewTable()
+		L.SetField(resTbl, "intent", lua.LString(res.Intent))
+		L.SetField(resTbl, "complexity", lua.LString(res.Complexity))
+		L.SetField(resTbl, "confidence", lua.LNumber(res.Confidence))
+		L.Push(resTbl)
+		return 1
+	}))
+
+	// switchai.verify_intent(tier1_intent, tier2_intent) -> bool
+	L.SetField(mod, "verify_intent", L.NewFunction(func(L *lua.LState) int {
+		t1 := L.CheckString(1)
+		t2 := L.CheckString(2)
+
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LBool(t1 == t2)) // Fallback to simple comparison
+			return 1
+		}
+
+		verifier := e.intelligenceService.GetVerifier()
+		if verifier == nil {
+			L.Push(lua.LBool(t1 == t2))
+			return 1
+		}
+
+		match := verifier.Verify(t1, t2)
+		L.Push(lua.LBool(match))
+		return 1
+	}))
+
+	// switchai.evaluate_response(response, current_tier) -> table {should_cascade, next_tier, quality_score, reason, signals} or nil, error
+	// Evaluates a response for quality and determines if cascade is needed
+	L.SetField(mod, "evaluate_response", L.NewFunction(func(L *lua.LState) int {
+		response := L.CheckString(1)
+		currentTier := L.CheckString(2)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get cascade manager
+		cascadeManager := e.intelligenceService.GetCascadeManager()
+		if cascadeManager == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("cascade manager not available"))
+			return 2
+		}
+
+		if !cascadeManager.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("cascade manager not enabled"))
+			return 2
+		}
+
+		// Evaluate response
+		decision := cascadeManager.EvaluateResponse(response, currentTier)
+		if decision == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		// Convert to Lua table
+		resultTbl := L.NewTable()
+		L.SetField(resultTbl, "should_cascade", lua.LBool(decision.ShouldCascade))
+		L.SetField(resultTbl, "current_tier", lua.LString(decision.CurrentTier))
+		L.SetField(resultTbl, "next_tier", lua.LString(decision.NextTier))
+		L.SetField(resultTbl, "quality_score", lua.LNumber(decision.QualityScore))
+		L.SetField(resultTbl, "reason", lua.LString(decision.Reason))
+
+		// Convert signals to Lua table
+		signalsTbl := L.NewTable()
+		for i, signal := range decision.Signals {
+			signalTbl := L.NewTable()
+			L.SetField(signalTbl, "type", lua.LString(signal.Type))
+			L.SetField(signalTbl, "severity", lua.LNumber(signal.Severity))
+			L.SetField(signalTbl, "description", lua.LString(signal.Description))
+			L.RawSetInt(signalsTbl, i+1, signalTbl)
+		}
+		L.SetField(resultTbl, "signals", signalsTbl)
+
+		L.Push(resultTbl)
+		return 1
+	}))
+
+	// switchai.get_cascade_metrics() -> table or nil, error
+	// Returns cascade performance metrics
+	L.SetField(mod, "get_cascade_metrics", L.NewFunction(func(L *lua.LState) int {
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get cascade manager
+		cascadeManager := e.intelligenceService.GetCascadeManager()
+		if cascadeManager == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("cascade manager not available"))
+			return 2
+		}
+
+		// Get metrics
+		metrics := cascadeManager.GetMetricsAsMap()
+
+		// Convert to Lua table
+		metricsTbl := L.NewTable()
+		for k, v := range metrics {
+			switch val := v.(type) {
+			case int64:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case int:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case float64:
+				L.SetField(metricsTbl, k, lua.LNumber(val))
+			case string:
+				L.SetField(metricsTbl, k, lua.LString(val))
+			case map[string]int64:
+				tierTbl := L.NewTable()
+				for tk, tv := range val {
+					L.SetField(tierTbl, tk, lua.LNumber(tv))
+				}
+				L.SetField(metricsTbl, k, tierTbl)
+			default:
+				L.SetField(metricsTbl, k, lua.LString(fmt.Sprintf("%v", val)))
+			}
+		}
+
+		L.Push(metricsTbl)
+		return 1
+	}))
+
+	// switchai.get_intelligence_metrics() -> table
+	L.SetField(mod, "get_intelligence_metrics", L.NewFunction(func(L *lua.LState) int {
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		metrics := L.NewTable()
+
+		if scorer := e.intelligenceService.GetConfidenceScorer(); scorer != nil {
+			scorerTbl := L.NewTable()
+			for k, v := range scorer.GetMetrics() {
+				L.SetField(scorerTbl, k, e.goValueToLua(L, v))
+			}
+			L.SetField(metrics, "confidence", scorerTbl)
+		}
+
+		if verifier := e.intelligenceService.GetVerifier(); verifier != nil {
+			verifierTbl := L.NewTable()
+			for k, v := range verifier.GetMetrics() {
+				L.SetField(verifierTbl, k, e.goValueToLua(L, v))
+			}
+			L.SetField(metrics, "verification", verifierTbl)
+		}
+
+		if cascadeManager := e.intelligenceService.GetCascadeManager(); cascadeManager != nil {
+			cascadeTbl := L.NewTable()
+			for k, v := range cascadeManager.GetMetricsAsMap() {
+				L.SetField(cascadeTbl, k, e.goValueToLua(L, v))
+			}
+			L.SetField(metrics, "cascade", cascadeTbl)
+		}
+
+		L.Push(metrics)
+		return 1
+	}))
+
+	// switchai.record_feedback(data) -> nil, error
+	// Records routing feedback for future learning
+	L.SetField(mod, "record_feedback", L.NewFunction(func(L *lua.LState) int {
+		dataTable := L.CheckTable(1)
+
+		// Check if intelligence service is enabled
+		if e.intelligenceService == nil || !e.intelligenceService.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("intelligence services not enabled"))
+			return 2
+		}
+
+		// Get feedback collector
+		feedbackCollector := e.intelligenceService.GetFeedbackCollector()
+		if feedbackCollector == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("feedback collector not available"))
+			return 2
+		}
+
+		if !feedbackCollector.IsEnabled() {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("feedback collector not initialized"))
+			return 2
+		}
+
+		// Convert Lua table to feedback record
+		record := &intelligence.FeedbackRecord{}
+
+		// Extract fields from Lua table
+		if query := L.GetField(dataTable, "query"); query != lua.LNil {
+			record.Query = query.String()
+		}
+		if intent := L.GetField(dataTable, "intent"); intent != lua.LNil {
+			record.Intent = intent.String()
+		}
+		if model := L.GetField(dataTable, "selected_model"); model != lua.LNil {
+			record.SelectedModel = model.String()
+		}
+		if tier := L.GetField(dataTable, "routing_tier"); tier != lua.LNil {
+			record.RoutingTier = tier.String()
+		}
+		if confidence := L.GetField(dataTable, "confidence"); confidence != lua.LNil {
+			if num, ok := confidence.(lua.LNumber); ok {
+				record.Confidence = float64(num)
+			}
+		}
+		if skill := L.GetField(dataTable, "matched_skill"); skill != lua.LNil {
+			record.MatchedSkill = skill.String()
+		}
+		if cascade := L.GetField(dataTable, "cascade_occurred"); cascade != lua.LNil {
+			if b, ok := cascade.(lua.LBool); ok {
+				record.CascadeOccurred = bool(b)
+			}
+		}
+		if quality := L.GetField(dataTable, "response_quality"); quality != lua.LNil {
+			if num, ok := quality.(lua.LNumber); ok {
+				record.ResponseQuality = float64(num)
+			}
+		}
+		if latency := L.GetField(dataTable, "latency_ms"); latency != lua.LNil {
+			if num, ok := latency.(lua.LNumber); ok {
+				record.LatencyMs = int64(num)
+			}
+		}
+		if success := L.GetField(dataTable, "success"); success != lua.LNil {
+			if b, ok := success.(lua.LBool); ok {
+				record.Success = bool(b)
+			}
+		}
+		if errMsg := L.GetField(dataTable, "error_message"); errMsg != lua.LNil {
+			record.ErrorMessage = errMsg.String()
+		}
+
+		// Extract metadata if present
+		if metadataField := L.GetField(dataTable, "metadata"); metadataField != lua.LNil {
+			if metadataTable, ok := metadataField.(*lua.LTable); ok {
+				metadata := make(map[string]interface{})
+				metadataTable.ForEach(func(k, v lua.LValue) {
+					key := k.String()
+					switch val := v.(type) {
+					case lua.LString:
+						metadata[key] = string(val)
+					case lua.LNumber:
+						metadata[key] = float64(val)
+					case lua.LBool:
+						metadata[key] = bool(val)
+					default:
+						metadata[key] = v.String()
+					}
+				})
+				record.Metadata = metadata
+			}
+		}
+
+		// Record feedback
+		ctx := L.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		if err := feedbackCollector.Record(ctx, record); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("failed to record feedback: %v", err)))
+			return 2
+		}
+
+		L.Push(lua.LNil)
 		return 1
 	}))
 

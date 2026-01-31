@@ -1,8 +1,20 @@
-# Server host/interface to bind to. Default is empty ("") to bind all interfaces (IPv4 + IPv6).
+###############################################################################
+# switchAILocal - Configuration Golden Reference
+#
+# This file serves as a comprehensive example of all available settings.
+# Copy this to 'config.yaml' and customize it for your needs.
+###############################################################################
+
+# =============================================================================
+# 1. SERVER SETTINGS
+# =============================================================================
+
+# Server host/interface to bind to.
+# Default is empty ("") to bind all interfaces (IPv4 + IPv6).
 # Use "127.0.0.1" or "localhost" to restrict access to local machine only.
 host: ""
 
-# Server port
+# Server port (default: 18080)
 port: 18080
 
 # TLS settings for HTTPS. When enabled, the server listens with the provided certificate and key.
@@ -11,382 +23,314 @@ tls:
   cert: ""
   key: ""
 
-# Management API settings
+# Authentication directory (supports ~ for home directory)
+# This is where token files and session data are stored.
+auth-dir: "~/.switchailocal"
+
+# API keys for authenticating clients to THIS switchAILocal server.
+# Requests must include "Authorization: Bearer <key>"
+api-keys:
+  - "sk-test-123"
+
+# When true, enable authentication for the WebSocket API (/v1/ws).
+ws-auth: true
+
+# =============================================================================
+# 2. SECURITY & MANAGEMENT
+# =============================================================================
+
+# Management API settings (Dashboard and Control endpoints)
 remote-management:
   # Whether to allow remote (non-localhost) management access.
-  # When false, only localhost can access management endpoints (a key is still required).
+  # When false, only localhost can access management endpoints (key still required).
   allow-remote: false
 
   # Management key. If a plaintext value is provided here, it will be hashed on startup.
   # All management requests (even from localhost) require this key.
-  # Leave empty to disable the Management API entirely (404 for all /v0/management routes).
+  # Leave empty to disable the Management API entirely (404 for all management routes).
   secret-key: ""
 
   # Disable the bundled management control panel asset download and HTTP route when true.
   disable-control-panel: false
 
-  # GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
+  # GitHub repository for the management control panel assets.
   panel-github-repository: "https://github.com/traylinx/switchAILocal-Management-Center"
 
-# Authentication directory (supports ~ for home directory)
-auth-dir: "~/.switchailocal"
+# =============================================================================
+# 3. CORE PROXY BEHAVIOR
+# =============================================================================
 
-# API keys for authentication
-api-keys:
-  - "your-api-key-1"
-  - "your-api-key-2"
-
-# Enable debug logging
+# Enable debug-level logging and detailed error messages.
 debug: false
 
-# When true, write application logs to rotating files instead of stdout
+# When true, write application logs to rotating files instead of stdout.
 logging-to-file: false
 
-# Maximum total size (MB) of log files under the logs directory. When exceeded, the oldest log
-# files are deleted until within the limit. Set to 0 to disable.
+# Maximum total size (MB) of log files. Oldest logs are deleted when limit reached.
+# Set to 0 to disable limit.
 logs-max-total-size-mb: 0
 
-# When false, disable in-memory usage statistics aggregation
+# When false, disable in-memory usage statistics aggregation.
 usage-statistics-enabled: false
 
-# Proxy URL. Supports socks5/http/https protocols. Example: socks5://user:pass@192.168.1.1:1080/
+# Global Proxy URL. Supports socks5/http/https protocols.
+# Example: socks5://user:pass@192.168.1.1:1080/
 proxy-url: ""
 
-# When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
-force-model-prefix: false
-
-# Number of times to retry a request. Retries will occur if the HTTP response code is 403, 408, 500, 502, 503, or 504.
+# Number of times to retry a request on specific HTTP errors (403, 408, 500, 502, 503, 504).
 request-retry: 3
 
-# Maximum wait time in seconds for a cooled-down credential before triggering a retry.
-max-retry-interval: 30
+# When true, unprefixed model requests only use credentials without a prefix.
+# If false, unprefixed requests can match any available credential.
+force-model-prefix: false
+
+# Streaming behavior (SSE heartbeats and automatic bootstrap retries)
+streaming:
+  # Heartbeat interval in seconds. 0 to disable.
+  keepalive-seconds: 15
+  # Number of retries before the first byte is sent to handle auth rotation.
+  bootstrap-retries: 2
 
 # Quota exceeded behavior
 quota-exceeded:
-  switch-project: true # Whether to automatically switch to another project when a quota is exceeded
-  switch-preview-model: true # Whether to automatically switch to a preview model when a quota is exceeded
+  switch-project: true # Move to next project/credential if current quota hit.
+  switch-preview-model: true # Fallback to preview models if available.
+
+# =============================================================================
+# 4. ROUTING STRATEGY
+# =============================================================================
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), fill-first
+  # Supported values: "round-robin" (default), "fill-first".
+  strategy: "round-robin"
 
   # Priority list for "auto" model resolution strategy.
   # When set, the system checks these models in order and picks the first active one.
-  #
-  # Supports "provider:model" syntax to disambiguate identical model IDs across providers.
-  # If no provider prefix is specified, it matches ANY provider with that model ID.
-  #
-  # If none are active (or if this list is empty), it falls back to the default
-  # "newest model" timestamp-based selection.
+  # Supports "provider:model" syntax.
   # auto-model-priority:
-  #   - "ollama:gpt-oss:120b-cloud"  # Prefer Ollama provider for this model
-  #   - "switchai-chat"              # Alias defined in switchai-api-key
-  #   - "gemini-2.5-flash"           # Generic model ID (any provider)
+  #   - "ollama:gpt-oss:120b-cloud"
+  #   - "switchai-chat"
+  #   - "gemini-2.5-flash"
 
-# When true, enable authentication for the WebSocket API (/v1/ws).
-ws-auth: true
-# Streaming behavior (SSE keep-alives + safe bootstrap retries).
-# streaming:
-#   keepalive-seconds: 15   # Default: 0 (disabled). <= 0 disables keep-alives.
-#   bootstrap-retries: 1    # Default: 0 (disabled). Retries before first byte is sent.
-# Ollama local model server integration
-# Enables access to locally running Ollama models via the unified API.
-# Start Ollama with: ollama serve
-# Connect with: ./switchAILocal --ollama-login
-# ollama:
-#   enabled: true
-#   base-url: "http://localhost:11434"
-#   auto-discover: true  # Automatically detect available models
+# =============================================================================
+# 5. PROVIDER CONFIGURATIONS
+# =============================================================================
 
-# LM Studio local server integration
-# Enables access to locally running LM Studio compatible models.
-# Start LM Studio server (default port 1234)
-# lmstudio:
-#   enabled: true
-#   base-url: "http://localhost:1234/v1"
-#   auto-discover: true  # Automatically detect available models
+# -- TRAYLINX SwitchAI Cloud --
+# Unified access to 100+ cloud models. Get key at https://switchai.traylinx.com
+switchai-api-key:
+  - api-key: "sk-lf-..."
+    base-url: "https://switchai.traylinx.com/v1"
+    models:
+      - name: "openai/gpt-oss-120b"
+        alias: "switchai-fast"
+      - name: "deepseek-reasoner"
+        alias: "switchai-reasoner"
 
-# OpenCode local server integration
-# Enables access to locally running OpenCode server.
-# Start OpenCode with: opencode serve
-# opencode:
-#   enabled: true
-#   base-url: "http://localhost:4096"
-#   default-agent: "build"  # Agent to use if no specific model requested
-
-# Traylinx switchAI Cloud API keys
-# Get your API key at https://switchai.traylinx.com
-# Full model list: curl https://switchai.traylinx.com/models -H "Authorization: Bearer YOUR_KEY"
-# switchai-api-key:
-#   - api-key: "sk-lf-..."
-#     base-url: "https://switchai.traylinx.com/v1"
-#     models-url: "https://switchai.traylinx.com/models" # Dynamic model discovery endpoint
-#
-# Compatible models for /v1/chat/completions:
-#
-# TEXT GENERATION (use model: "switchai:MODEL_NAME")
-#   auto                     - IRA picks the best model (recommended)
-#   gemini-2.5-flash         - Fast multimodal (Gemini)
-#   gemini-2.5-flash-lite    - Ultra-fast (Gemini)
-#   gemini-3-pro-preview     - Most capable (Gemini)
-#   deepseek-chat            - Code generation (DeepSeek)
-#   deepseek-reasoner        - Complex reasoning (DeepSeek)
-#   llama-3.1-8b-instant     - Ultra-fast (Groq)
-#   llama-3.3-70b-versatile  - High quality (Groq)
-#   meta-llama/llama-4-scout-17b-16e-instruct   - Vision + fast (Groq)
-#   meta-llama/llama-4-maverick-17b-128e-instruct - Vision + reasoning (Groq)
-#   openai/gpt-oss-120b      - OpenAI-compatible large (Groq)
-#   openai/gpt-oss-20b       - OpenAI-compatible efficient (Groq)
-#   qwen/qwen3-32b           - Multilingual (Groq)
-#   moonshotai/kimi-k2-instruct-0905 - Multimodal (Groq)
-#   sonar                    - Web search (Perplexity)
-#   sonar-pro                - Deep research (Perplexity)
-#
-# AGENTS (use model: "switchai:MODEL_NAME")
-#   search-engine            - Web search with AI summarization
-#   scrap-engine             - Web page content extraction
-#   groq/compound            - Agentic with browser automation
-#   groq/compound-mini       - Fast agentic
-
-# Google Gemini API keys
+# -- GOOGLE Gemini API --
 gemini-api-key:
-  - api-key: "AIzaSy...01"
-    # models:
-    #   - name: "gemini-2.0-flash-exp" # Upstream model name
-    #     alias: "flash"               # Client-facing alias
-    #   - name: "gemini-1.5-pro"
-    #     alias: "pro"
-    prefix: "test" # optional: require calls like "test/gemini-3-pro-preview" to target this credential
-#     base-url: "https://generativelanguage.googleapis.com"
-#     models-url: "https://generativelanguage.googleapis.com/v1beta/models" # Optional: Dynamic model discovery
-#     headers:
-#       X-Custom-Header: "custom-value"
-#     proxy-url: "socks5://proxy.example.com:1080"
-#     excluded-models:
-#       - "gemini-2.5-pro"     # exclude specific models from this provider (exact match)
-#       - "gemini-2.5-*"       # wildcard matching prefix (e.g. gemini-2.5-flash, gemini-2.5-pro)
-#       - "*-preview"          # wildcard matching suffix (e.g. gemini-3-pro-preview)
-#       - "*flash*"            # wildcard matching substring (e.g. gemini-2.5-flash-lite)
-#   - api-key: "AIzaSy...02"
+  - api-key: "AIzaSy..."
+    prefix: "google" # Access via "google/gemini-pro"
+    base-url: "https://generativelanguage.googleapis.com"
 
-# Codex API keys (OpenAI)
+# -- ANTHROPIC Claude API --
+claude-api-key:
+  - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "sonnet"
+
+# -- OPENAI / CODEX API --
 codex-api-key:
-  - api-key: "sk-atSM..."
-    # models:
-    #   - name: "gpt-4o"            # Upstream model name
-    #     alias: "4o"               # Client-facing alias
-    #   - name: "gpt-4-turbo"
-    #     alias: "gpt4"
-    prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
-#     base-url: "https://www.example.com" # use the custom codex API endpoint
-#     models-url: "https://www.example.com/models" # Optional: Dynamic model discovery
-#     headers:
-#       X-Custom-Header: "custom-value"
-#     proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override
-#     excluded-models:
-#       - "gpt-5.1"         # exclude specific models (exact match)
-#       - "gpt-5-*"         # wildcard matching prefix (e.g. gpt-5-medium, gpt-5-codex)
-#       - "*-mini"          # wildcard matching suffix (e.g. gpt-5-codex-mini)
-#       - "*codex*"         # wildcard matching substring (e.g. gpt-5-codex-low)
+  - api-key: "sk-..."
+    base-url: "https://api.openai.com/v1"
 
-# Claude API keys
-# claude-api-key:
-#   - api-key: "sk-atSM..." # use the official claude API key, no need to set the base url
-#   - api-key: "sk-atSM..."
-#     prefix: "test" # optional: require calls like "test/claude-sonnet-latest" to target this credential
-#     base-url: "https://www.example.com" # use the custom claude API endpoint
-#     models-url: "https://api.anthropic.com/v1/models" # Optional: Dynamic model discovery
-#     headers:
-#       X-Custom-Header: "custom-value"
-#     proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override
-#     models:
-#       - name: "claude-3-5-sonnet-20241022" # upstream model name
-#         alias: "claude-sonnet-latest" # client alias mapped to the upstream model
-#     excluded-models:
-#       - "claude-opus-4-5-20251101" # exclude specific models (exact match)
-#       - "claude-3-*"               # wildcard matching prefix (e.g. claude-3-7-sonnet-20250219)
-#       - "*-thinking"               # wildcard matching suffix (e.g. claude-opus-4-5-thinking)
-#       - "*haiku*"                  # wildcard matching substring (e.g. claude-3-5-haiku-20241022)
+# -- OLLAMA (Local) --
+# Start with: ollama serve
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true # Fetch models from Ollama automatically
 
-# OpenAI compatibility providers (e.g., Groq, OpenRouter, Together AI)
-# openai-compatibility:
-#   - name: "groq"
-#     prefix: "groq"
-#     base-url: "https://api.groq.com/openai/v1"
-#     api-key-entries:
-#       - api-key: "gsk_..."
-#   - name: "openrouter"
-#     prefix: "test" # optional: require calls like "test/kimi-k2" to target this provider's credentials
-#     base-url: "https://openrouter.ai/api/v1"
-#     api-key-entries:
-#       - api-key: "sk-or-v1-..."
-#     models:
-#       - name: "moonshotai/kimi-k2:free"
-#         alias: "kimi-k2"
+# -- OPENCODE (Local) --
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"
+  default-agent: "build"
 
-# Vertex API keys (Vertex-compatible endpoints, use API key + base URL)
+# -- LM STUDIO (Local) --
+lmstudio:
+  enabled: false
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+
+# -- OPENAI COMPATIBILITY (Groq, OpenRouter, Together AI, etc.) --
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+
+# -- VERTEX COMPATIBILITY --
+# For third-party providers using Vertex-style protocols
 # vertex-api-key:
-#   - api-key: "vk-123..."                        # x-goog-api-key header
-#     prefix: "test"                              # optional: require calls like "test/vertex-pro" to target this credential
-#     base-url: "https://example.com/api"         # e.g. https://zenmux.ai/api
-#     models-url: "https://example.com/api/models"   # Optional: Dynamic model discovery
-#     proxy-url: "socks5://proxy.example.com:1080" # optional per-key proxy override
-#     headers:
-#       X-Custom-Header: "custom-value"
-#     models:                                     # optional: map aliases to upstream model names
-#       - name: "gemini-2.0-flash"                # upstream model name
-#         alias: "vertex-flash"                   # client-visible alias
-#       - name: "gemini-1.5-pro"
-#         alias: "vertex-pro"
+#   - api-key: "vk-..."
+#     base-url: "https://api.example.com"
 
-# Amp Integration
-# ampcode:
-#   # Configure upstream URL for Amp CLI OAuth and management features
-#   upstream-url: "https://ampcode.com"
-#   # Optional: Override API key for Amp upstream (otherwise uses env or file)
-#   upstream-api-key: ""
-#   # Restrict Amp management routes (/api/auth, /api/user, etc.) to localhost only (default: false)
-#   restrict-management-to-localhost: false
-#   # Force model mappings to run before checking local API keys (default: false)
-#   force-model-mappings: false
-#   # Amp Model Mappings
-#   # Route unavailable Amp models to alternative models available in your local proxy.
-#   # Useful when Amp CLI requests models you don't have access to (e.g., Claude Opus 4.5)
-#   # but you have a similar model available (e.g., Claude Sonnet 4).
-#   model-mappings:
-#     - from: "claude-opus-4.5"       # Model requested by Amp CLI
-#       to: "claude-sonnet-4"         # Route to this available model instead
-#     - from: "gpt-5"
-#       to: "gemini-2.5-pro"
-#     - from: "claude-3-opus-20240229"
-#       to: "claude-3-5-sonnet-20241022"
+# =============================================================================
+# 6. INTELLIGENT ROUTING (CORTEX PHASE 2)
+# =============================================================================
 
-# OAuth provider excluded models
+# Intelligence is the core of Cortex Router. It manages classification,
+# semantic matching, and dynamic model allocation.
+intelligence:
+  # Master switch for all intelligence features.
+  enabled: true
+
+  # Primary model used for request classification.
+  router-model: "ollama:gpt-oss:20b-cloud"
+  # Fallback model if the primary router model fails.
+  router-fallback: "openai:gpt-4o-mini"
+
+  # Static intent-to-model mapping matrix.
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    fast: "switchai-fast"
+    secure: "ollama:llama3.2"
+    vision: "ollama:qwen3-vl:235b-instruct-cloud"
+
+  # -- PHASE 2 FEATURES --
+
+  # Automated model discovery across all providers.
+  discovery:
+    enabled: true
+    refresh-interval: 3600 # seconds
+    cache-dir: "~/.switchailocal/cache/discovery"
+
+  # Local embedding engine for semantic features.
+  # REQUIRES: libonnxruntime and model download via scripts/download-embedding-model.sh
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+
+  # Semantic matching bypassing LLM classification for speed.
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+
+  # Skill-based prompt augmentation.
+  skills:
+    enabled: true
+    directory: "plugins/cortex-router/skills"
+
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80
+
+  # Semantic Cache for high-speed routing of repeated queries.
+  semantic-cache:
+    enabled: true
+    similarity-threshold: 0.95
+    max-size: 10000
+
+  # Confidence scoring for classifications.
+  confidence:
+    enabled: true
+
+  # Cross-verification of classifications.
+  verification:
+    enabled: true
+    confidence-threshold-low: 0.60
+    confidence-threshold-high: 0.90
+
+  # Automatic model cascading based on response quality.
+  cascade:
+    enabled: true
+    quality-threshold: 0.70
+
+  # Feedback collection and metrics.
+  feedback:
+    enabled: true
+    retention-days: 90
+
+# =============================================================================
+# 7. SUPERBRAIN (AUTONOMOUS SELF-HEALING)
+# =============================================================================
+
+# Transforms switchAILocal into an autonomous gateway with monitoring,
+# failure diagnosis, and automatic recovery.
+superbrain:
+  # Master switch
+  enabled: false
+
+  # Operational mode:
+  #   - "disabled": Off
+  #   - "observe": Monitor only
+  #   - "diagnose": Propose actions but don't execute
+  #   - "human-in-the-loop": Request approval
+  #   - "conservative": Auto-execute safe actions
+  #   - "autopilot": Full autonomous recovery
+  mode: "disabled"
+
+  component_flags:
+    overwatch_enabled: true # Real-time monitoring
+    doctor_enabled: true # AI failure diagnosis
+    injector_enabled: true # Autonomous stdin response
+    recovery_enabled: true # Process restart with corrective flags
+    fallback_enabled: true # Intelligent failover
+    sculptor_enabled: true # Context optimization
+
+  overwatch:
+    silence_threshold_ms: 30000
+    log_buffer_size: 50
+    heartbeat_interval_ms: 1000
+    max_restart_attempts: 2
+
+  doctor:
+    model: "gemini-flash"
+    timeout_ms: 5000
+
+  stdin_injection:
+    mode: "conservative"
+
+  context_sculptor:
+    enabled: true
+    token_estimator: "tiktoken" # tiktoken or simple
+    priority_files: ["README.md", "main.go"]
+
+  fallback:
+    enabled: true
+    providers: ["geminicli", "gemini", "ollama"]
+    min_success_rate: 0.5
+
+# =============================================================================
+# 8. ADVANCED PAYLOAD INJECTION
+# =============================================================================
+
+# Apply default or override parameters to model payloads globally.
+# payload:
+#   default: # Only set if missing
+#     - models: [{name: "gemini-*", protocol: "gemini"}]
+#       params: {"generationConfig.thinkingConfig.thinkingBudget": 32768}
+#   override: # Always overwrite
+#     - models: [{name: "gpt-*", protocol: "openai"}]
+#       params: {"user": "switchAILocal-User"}
+
+# =============================================================================
+# 9. PROVIDER-SPECIFIC EXCLUSIONS
+# =============================================================================
+
+# Global model exclusions per provider.
 # oauth-excluded-models:
 #   geminicli:
-#     - "gemini-2.5-pro"     # exclude specific models (exact match)
-#     - "gemini-2.5-*"       # wildcard matching prefix (e.g. gemini-2.5-flash, gemini-2.5-pro)
-#     - "*-preview"          # wildcard matching suffix (e.g. gemini-3-pro-preview)
-#     - "*flash*"            # wildcard matching substring (e.g. gemini-2.5-flash-lite)
-#   vertex:
-#     - "gemini-3-pro-preview"
-#   aistudio:
-#     - "gemini-3-pro-preview"
-#   antigravity:
-#     - "gemini-3-pro-preview"
-#   claude:
-#     - "claude-3-5-haiku-20241022"
-#   codex:
-#     - "gpt-5-codex-mini"
-#   qwen:
-#     - "vision-model"
-#   iflow:
-#     - "tstars2.0"
-
-# Optional payload configuration
-# payload:
-#   default: # Default rules only set parameters when they are missing in the payload.
-#     - models:
-#         - name: "gemini-2.5-pro" # Supports wildcards (e.g., "gemini-*")
-#           protocol: "gemini" # restricts the rule to a specific protocol, options: openai, gemini, claude, codex
-#       params: # JSON path (gjson/sjson syntax) -> value
-#         "generationConfig.thinkingConfig.thinkingBudget": 32768
-#   override: # Override rules always set parameters, overwriting any existing values.
-#     - models:
-#         - name: "gpt-*" # Supports wildcards (e.g., "gpt-*")
-#           protocol: "codex" # restricts the rule to a specific protocol, options: openai, gemini, claude, codex
-#       params: # JSON path (gjson/sjson syntax) -> value
-#         "reasoning.effort": "high"
-
-# Superbrain: Intelligent orchestration and self-healing capabilities
-# Transforms switchAILocal from a passive proxy into an autonomous, self-healing AI gateway
-# with real-time monitoring, failure diagnosis, and automatic recovery.
-# superbrain:
-#   # Enable/disable the entire Superbrain system
-#   enabled: false
-#
-#   # Operational mode controls autonomous behavior:
-#   #   - "disabled": Superbrain is completely disabled (same as enabled: false)
-#   #   - "observe": Monitor and log but take no autonomous actions
-#   #   - "diagnose": Diagnose failures and log proposed actions without executing them
-#   #   - "human-in-the-loop": Diagnose and queue actions for operator approval
-#   #   - "conservative": Enable autonomous healing for whitelisted safe actions only
-#   #   - "autopilot": Enable all autonomous healing capabilities
-#   mode: "disabled"
-#
-#   # Component Flags: Fine-grained control over individual Superbrain components
-#   # Allows gradual rollout and independent testing of each capability
-#   component_flags:
-#     overwatch_enabled: true          # Real-time execution monitoring
-#     doctor_enabled: true             # AI-powered failure diagnosis
-#     injector_enabled: true           # Autonomous stdin injection
-#     recovery_enabled: true           # Process restart with corrective flags
-#     fallback_enabled: true           # Intelligent failover routing
-#     sculptor_enabled: true           # Pre-flight content optimization
-#
-#   # Overwatch: Real-time execution monitoring
-#   overwatch:
-#     silence_threshold_ms: 30000      # Flag execution as hung after 30 seconds of no output
-#     log_buffer_size: 50              # Number of recent log lines to retain
-#     heartbeat_interval_ms: 1000      # Check process health every 1 second
-#     max_restart_attempts: 2          # Maximum restart attempts before escalating to fallback
-#
-#   # Doctor: AI-powered failure diagnosis
-#   doctor:
-#     model: "gemini-flash"            # Lightweight model for fast diagnosis
-#     timeout_ms: 5000                 # Maximum time to wait for diagnosis (5 seconds)
-#
-#   # Stdin Injection: Autonomous input for interactive prompts
-#   stdin_injection:
-#     mode: "conservative"             # disabled, conservative, autopilot
-#     custom_patterns: []              # Additional prompt patterns to recognize
-#     forbidden_patterns:              # Never auto-respond to these patterns
-#       - "delete"
-#       - "remove"
-#       - "sudo"
-#
-#   # Context Sculptor: Pre-flight content optimization
-#   context_sculptor:
-#     enabled: true
-#     token_estimator: "tiktoken"      # tiktoken (accurate) or simple (fast approximation)
-#     priority_files:                  # Always include these files when optimizing
-#       - "README.md"
-#       - "main.go"
-#       - "index.ts"
-#       - "package.json"
-#
-#   # Fallback: Intelligent failover routing
-#   fallback:
-#     enabled: true
-#     providers:                       # Fallback order preference
-#       - "geminicli"
-#       - "gemini"
-#       - "ollama"
-#     min_success_rate: 0.5            # Minimum historical success rate to consider provider
-#
-#   # Consensus: Multi-model response verification (disabled by default due to added cost)
-#   consensus:
-#     enabled: false
-#     verification_model: "gemini-flash"
-#     trigger_patterns:                # When to verify responses
-#       - "abrupt_ending"
-#       - "missing_code_blocks"
-#
-#   # Security: Audit logging and safety controls
-#   security:
-#     audit_log_enabled: true
-#     audit_log_path: "./logs/superbrain_audit.log"
-#     forbidden_operations:            # Operations requiring human approval
-#       - "file_delete"
-#       - "system_command"
-
-# Intelligence: Task-to-Model Mapping Matrix
-# This matrix defines which models are used for specific capabilities like image generation,
-# audio transcription, and speech when no specific model is requested.
-# NOTE: Starting from v1.5, NO default models are hardcoded. You MUST define these here.
-# intelligence:
-#   enabled: true
-#   matrix:
-#     image_gen: "gemini:imagen-3.0"   # Default model for /v1/images/generations
-#     transcription: "openai:whisper-1" # Default model for /v1/audio/transcriptions
-#     speech: "openai:tts-1"           # Default model for /v1/audio/speech
+#     - "*-preview"
+#   ollama:
+#     - "llama2"

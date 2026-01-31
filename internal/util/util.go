@@ -35,26 +35,32 @@ func SetLogLevel(cfg *config.Config) {
 	}
 }
 
-// ResolveAuthDir normalizes the auth directory path for consistent reuse throughout the app.
-// It expands a leading tilde (~) to the user's home directory and returns a cleaned path.
-func ResolveAuthDir(authDir string) (string, error) {
-	if authDir == "" {
+// ExpandPath normalizes a path by expanding a leading tilde (~) to the user's home directory.
+func ExpandPath(path string) (string, error) {
+	if path == "" {
 		return "", nil
 	}
-	if strings.HasPrefix(authDir, "~") {
+	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve auth dir: %w", err)
+			return "", fmt.Errorf("expand path: %w", err)
 		}
-		remainder := strings.TrimPrefix(authDir, "~")
+		remainder := strings.TrimPrefix(path, "~")
 		remainder = strings.TrimLeft(remainder, "/\\")
 		if remainder == "" {
 			return filepath.Clean(home), nil
 		}
+		// Convert backslashes to forward slashes for joining, then convert to OS-specific path
 		normalized := strings.ReplaceAll(remainder, "\\", "/")
 		return filepath.Clean(filepath.Join(home, filepath.FromSlash(normalized))), nil
 	}
-	return filepath.Clean(authDir), nil
+	return filepath.Clean(path), nil
+}
+
+// ResolveAuthDir normalizes the auth directory path for consistent reuse throughout the app.
+// It expands a leading tilde (~) to the user's home directory and returns a cleaned path.
+func ResolveAuthDir(authDir string) (string, error) {
+	return ExpandPath(authDir)
 }
 
 // CountAuthFiles returns the number of JSON auth files located under the provided directory.
