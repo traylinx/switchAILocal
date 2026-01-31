@@ -13,9 +13,9 @@ import (
 
 // CacheMetricsResponse represents the cache metrics API response.
 type CacheMetricsResponse struct {
-	Enabled    bool                   `json:"enabled"`
-	Metrics    map[string]interface{} `json:"metrics,omitempty"`
-	Error      string                 `json:"error,omitempty"`
+	Enabled bool                   `json:"enabled"`
+	Metrics map[string]interface{} `json:"metrics,omitempty"`
+	Error   string                 `json:"error,omitempty"`
 }
 
 // HandleCacheMetrics returns cache performance metrics.
@@ -35,7 +35,7 @@ func (h *Handler) HandleCacheMetrics(w http.ResponseWriter, r *http.Request) {
 		response.Error = "intelligence services not enabled"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -45,7 +45,7 @@ func (h *Handler) HandleCacheMetrics(w http.ResponseWriter, r *http.Request) {
 		response.Error = "semantic cache not available"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *Handler) HandleCacheMetrics(w http.ResponseWriter, r *http.Request) {
 		response.Error = "semantic cache not initialized"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *Handler) HandleCacheClear(w http.ResponseWriter, r *http.Request) {
 		response.Error = "intelligence services not enabled"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *Handler) HandleCacheClear(w http.ResponseWriter, r *http.Request) {
 		response.Error = "semantic cache not available"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *Handler) HandleCacheClear(w http.ResponseWriter, r *http.Request) {
 		response.Error = "semantic cache not initialized"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *Handler) HandleCacheClear(w http.ResponseWriter, r *http.Request) {
 	type cacheClearer interface {
 		Clear()
 	}
-	
+
 	if clearer, ok := cache.(cacheClearer); ok {
 		clearer.Clear()
 		response.Success = true

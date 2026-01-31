@@ -57,11 +57,10 @@ func (m *mockEmbeddingEngine) IsEnabled() bool {
 	return m.enabled
 }
 
-
 // createTestIntentsFile creates a temporary intents.yaml file for testing.
 func createTestIntentsFile(t *testing.T) string {
 	t.Helper()
-	
+
 	content := `intents:
   - name: coding
     description: "Writing, debugging, or explaining code"
@@ -84,7 +83,7 @@ func createTestIntentsFile(t *testing.T) string {
       - "What is the capital of France"
       - "How many days in a year"
 `
-	
+
 	tmpDir := t.TempDir()
 	intentsPath := filepath.Join(tmpDir, "intents.yaml")
 	if err := os.WriteFile(intentsPath, []byte(content), 0644); err != nil {
@@ -95,19 +94,19 @@ func createTestIntentsFile(t *testing.T) string {
 
 func TestNewTier(t *testing.T) {
 	engine := newMockEmbeddingEngine()
-	
+
 	// Test with default threshold
 	tier := NewTier(engine, 0)
 	if tier.threshold != 0.85 {
 		t.Errorf("Expected default threshold 0.85, got %f", tier.threshold)
 	}
-	
+
 	// Test with custom threshold
 	tier = NewTier(engine, 0.90)
 	if tier.threshold != 0.90 {
 		t.Errorf("Expected threshold 0.90, got %f", tier.threshold)
 	}
-	
+
 	// Test initial state
 	if tier.IsEnabled() {
 		t.Error("Expected tier to be disabled before initialization")
@@ -118,17 +117,17 @@ func TestTierInitialize(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	// Test successful initialization
 	err := tier.Initialize(intentsPath)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	if !tier.IsEnabled() {
 		t.Error("Expected tier to be enabled after initialization")
 	}
-	
+
 	if tier.GetIntentCount() != 4 {
 		t.Errorf("Expected 4 intents, got %d", tier.GetIntentCount())
 	}
@@ -139,7 +138,7 @@ func TestTierInitializeWithDisabledEngine(t *testing.T) {
 	engine.enabled = false
 	tier := NewTier(engine, 0.85)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	err := tier.Initialize(intentsPath)
 	if err == nil {
 		t.Error("Expected error when engine is disabled")
@@ -149,29 +148,28 @@ func TestTierInitializeWithDisabledEngine(t *testing.T) {
 func TestTierInitializeWithMissingFile(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
-	
+
 	err := tier.Initialize("/nonexistent/path/intents.yaml")
 	if err == nil {
 		t.Error("Expected error for missing file")
 	}
 }
 
-
 func TestMatchIntent(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.50) // Lower threshold for testing
 	intentsPath := createTestIntentsFile(t)
-	
+
 	if err := tier.Initialize(intentsPath); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	// Test matching
 	result, err := tier.MatchIntent("Write a Python function to sort a list")
 	if err != nil {
 		t.Fatalf("MatchIntent failed: %v", err)
 	}
-	
+
 	// With mock engine, we should get a result (confidence depends on mock implementation)
 	if result != nil {
 		if result.Intent == "" {
@@ -189,7 +187,7 @@ func TestMatchIntent(t *testing.T) {
 func TestMatchIntentNotInitialized(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
-	
+
 	// Try to match without initialization
 	_, err := tier.MatchIntent("test query")
 	if err == nil {
@@ -201,25 +199,25 @@ func TestMatchIntentLatency(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.50)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	if err := tier.Initialize(intentsPath); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	// Test that latency is reasonable (<20ms for mock engine)
 	start := time.Now()
 	result, err := tier.MatchIntent("What is the capital of France")
 	elapsed := time.Since(start)
-	
+
 	if err != nil {
 		t.Fatalf("MatchIntent failed: %v", err)
 	}
-	
+
 	// With mock engine, should be very fast
 	if elapsed > 20*time.Millisecond {
 		t.Errorf("Latency too high: %v (expected <20ms)", elapsed)
 	}
-	
+
 	if result != nil && result.LatencyMs > 20 {
 		t.Errorf("Reported latency too high: %dms", result.LatencyMs)
 	}
@@ -229,22 +227,22 @@ func TestGetIntents(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	if err := tier.Initialize(intentsPath); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	intents := tier.GetIntents()
 	if len(intents) != 4 {
 		t.Errorf("Expected 4 intents, got %d", len(intents))
 	}
-	
+
 	// Verify intent names
 	intentNames := make(map[string]bool)
 	for _, intent := range intents {
 		intentNames[intent.Name] = true
 	}
-	
+
 	expectedNames := []string{"coding", "reasoning", "creative", "fast"}
 	for _, name := range expectedNames {
 		if !intentNames[name] {
@@ -256,11 +254,11 @@ func TestGetIntents(t *testing.T) {
 func TestSetThreshold(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
-	
+
 	if tier.GetThreshold() != 0.85 {
 		t.Errorf("Expected threshold 0.85, got %f", tier.GetThreshold())
 	}
-	
+
 	tier.SetThreshold(0.90)
 	if tier.GetThreshold() != 0.90 {
 		t.Errorf("Expected threshold 0.90, got %f", tier.GetThreshold())
@@ -271,25 +269,25 @@ func TestGetMetrics(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.50)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	if err := tier.Initialize(intentsPath); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	// Make some matches
-	tier.MatchIntent("Write code")
-	tier.MatchIntent("Solve math")
-	
+	_, _ = tier.MatchIntent("Write code")
+	_, _ = tier.MatchIntent("Solve math")
+
 	metrics := tier.GetMetrics()
-	
+
 	if metrics["match_count"].(int64) != 2 {
 		t.Errorf("Expected match_count 2, got %v", metrics["match_count"])
 	}
-	
+
 	if metrics["intent_count"].(int) != 4 {
 		t.Errorf("Expected intent_count 4, got %v", metrics["intent_count"])
 	}
-	
+
 	if metrics["enabled"].(bool) != true {
 		t.Error("Expected enabled to be true")
 	}
@@ -299,23 +297,23 @@ func TestShutdown(t *testing.T) {
 	engine := newMockEmbeddingEngine()
 	tier := NewTier(engine, 0.85)
 	intentsPath := createTestIntentsFile(t)
-	
+
 	if err := tier.Initialize(intentsPath); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	
+
 	if !tier.IsEnabled() {
 		t.Error("Expected tier to be enabled")
 	}
-	
+
 	if err := tier.Shutdown(); err != nil {
 		t.Fatalf("Shutdown failed: %v", err)
 	}
-	
+
 	if tier.IsEnabled() {
 		t.Error("Expected tier to be disabled after shutdown")
 	}
-	
+
 	// Shutdown again should be no-op
 	if err := tier.Shutdown(); err != nil {
 		t.Fatalf("Second shutdown failed: %v", err)

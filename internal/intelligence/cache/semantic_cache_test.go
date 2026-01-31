@@ -227,7 +227,7 @@ func TestSemanticCache_Clear(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		query := string(rune('a' + i))
 		embedding, _ := engine.Embed(query)
-		cache.Store(query, embedding, "model", nil)
+		_ = cache.Store(query, embedding, "model", nil)
 	}
 
 	if cache.GetSize() != 5 {
@@ -255,16 +255,16 @@ func TestSemanticCache_HitRate(t *testing.T) {
 	// Store two distinct entries
 	query1 := "test query"
 	embedding1, _ := engine.Embed(query1)
-	cache.Store(query1, embedding1, "model1", nil)
+	_ = cache.Store(query1, embedding1, "model1", nil)
 
 	query2 := "apple"
 	embedding2, _ := engine.Embed(query2)
-	cache.Store(query2, embedding2, "model2", nil)
+	_ = cache.Store(query2, embedding2, "model2", nil)
 
 	// 2 hits (exact matches), 1 miss (new query)
-	cache.Lookup(query1)
-	cache.Lookup(query2)
-	cache.Lookup("zebra") // Different from both
+	_, _ = cache.Lookup(query1)
+	_, _ = cache.Lookup(query2)
+	_, _ = cache.Lookup("zebra") // Different from both
 
 	hitRate := cache.GetHitRate()
 	expected := 2.0 / 3.0
@@ -280,7 +280,7 @@ func TestSemanticCache_Latency(t *testing.T) {
 	// Store an entry
 	query := "test query"
 	embedding, _ := engine.Embed(query)
-	cache.Store(query, embedding, "model", nil)
+	_ = cache.Store(query, embedding, "model", nil)
 
 	// Lookup (should be fast)
 	start := time.Now()
@@ -337,9 +337,9 @@ func TestSemanticCache_GetMetricsAsMap(t *testing.T) {
 	// Store and lookup to generate metrics
 	query := "test"
 	embedding, _ := engine.Embed(query)
-	cache.Store(query, embedding, "model", nil)
-	cache.Lookup(query)   // Hit (exact match)
-	cache.Lookup("zebra") // Miss (different first character)
+	_ = cache.Store(query, embedding, "model", nil)
+	_, _ = cache.Lookup(query)   // Hit (exact match)
+	_, _ = cache.Lookup("zebra") // Miss (different first character)
 
 	metricsMap := cache.GetMetricsAsMap()
 

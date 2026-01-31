@@ -37,7 +37,7 @@ func BenchmarkEmbed(b *testing.B) {
 	if err := engine.Initialize(sharedLibPath); err != nil {
 		b.Fatalf("Failed to initialize engine: %v", err)
 	}
-	defer engine.Shutdown()
+	defer func() { _ = engine.Shutdown() }()
 
 	testText := "Write a Python function to calculate the factorial of a number"
 
@@ -77,7 +77,7 @@ func TestEmbedLatency(t *testing.T) {
 	if err := engine.Initialize(sharedLibPath); err != nil {
 		t.Fatalf("Failed to initialize engine: %v", err)
 	}
-	defer engine.Shutdown()
+	defer func() { _ = engine.Shutdown() }()
 
 	testTexts := []string{
 		"Write a Python function to calculate the factorial of a number",
@@ -89,7 +89,7 @@ func TestEmbedLatency(t *testing.T) {
 
 	// Warm up
 	for _, text := range testTexts {
-		engine.Embed(text)
+		_, _ = engine.Embed(text)
 	}
 
 	// Measure latency
@@ -101,11 +101,11 @@ func TestEmbedLatency(t *testing.T) {
 			start := time.Now()
 			_, err := engine.Embed(text)
 			elapsed := time.Since(start)
-			
+
 			if err != nil {
 				t.Fatalf("Embed failed: %v", err)
 			}
-			
+
 			totalLatency += elapsed
 		}
 	}
@@ -146,7 +146,7 @@ func BenchmarkBatchEmbed(b *testing.B) {
 	if err := engine.Initialize(sharedLibPath); err != nil {
 		b.Fatalf("Failed to initialize engine: %v", err)
 	}
-	defer engine.Shutdown()
+	defer func() { _ = engine.Shutdown() }()
 
 	testTexts := []string{
 		"Write a Python function to calculate the factorial of a number",

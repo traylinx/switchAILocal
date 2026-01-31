@@ -81,7 +81,7 @@ func TestCollectorInitialize(t *testing.T) {
 	}
 
 	// Cleanup
-	collector.Shutdown(ctx)
+	_ = collector.Shutdown(ctx)
 }
 
 // TestCollectorRecord tests recording feedback.
@@ -99,7 +99,7 @@ func TestCollectorRecord(t *testing.T) {
 	if err := collector.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
-	defer collector.Shutdown(ctx)
+	defer func() { _ = collector.Shutdown(ctx) }()
 
 	// Test recording a feedback record
 	record := &FeedbackRecord{
@@ -165,7 +165,7 @@ func TestCollectorGetStats(t *testing.T) {
 	if err := collector.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
-	defer collector.Shutdown(ctx)
+	defer func() { _ = collector.Shutdown(ctx) }()
 
 	// Record multiple feedback entries
 	records := []*FeedbackRecord{
@@ -275,7 +275,7 @@ func TestCollectorRetention(t *testing.T) {
 	if err := collector.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
-	defer collector.Shutdown(ctx)
+	defer func() { _ = collector.Shutdown(ctx) }()
 
 	// Record a feedback entry
 	record := &FeedbackRecord{
@@ -404,7 +404,7 @@ func TestCollectorTimestamp(t *testing.T) {
 	if err := collector.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
-	defer collector.Shutdown(ctx)
+	defer func() { _ = collector.Shutdown(ctx) }()
 
 	// Record without timestamp
 	record := &FeedbackRecord{

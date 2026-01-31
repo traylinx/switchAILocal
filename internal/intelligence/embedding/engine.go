@@ -118,7 +118,7 @@ func (e *Engine) Initialize(sharedLibPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create session options: %w", err)
 	}
-	defer options.Destroy()
+	defer func() { _ = options.Destroy() }()
 
 	// Load the model
 	session, err := ort.NewDynamicAdvancedSession(
@@ -135,7 +135,7 @@ func (e *Engine) Initialize(sharedLibPath string) error {
 	// Initialize tokenizer
 	tokenizer, err := NewSimpleTokenizer(e.vocabPath)
 	if err != nil {
-		e.session.Destroy()
+		_ = e.session.Destroy()
 		return fmt.Errorf("failed to initialize tokenizer: %w", err)
 	}
 	e.tokenizer = tokenizer
@@ -250,7 +250,7 @@ func (e *Engine) runInference(tokens *TokenizedInput) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create input_ids tensor: %w", err)
 	}
-	defer inputIDsTensor.Destroy()
+	defer func() { _ = inputIDsTensor.Destroy() }()
 
 	attentionMaskTensor, err := ort.NewTensor(
 		ort.NewShape(1, seqLen),
@@ -259,7 +259,7 @@ func (e *Engine) runInference(tokens *TokenizedInput) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create attention_mask tensor: %w", err)
 	}
-	defer attentionMaskTensor.Destroy()
+	defer func() { _ = attentionMaskTensor.Destroy() }()
 
 	tokenTypeIDsTensor, err := ort.NewTensor(
 		ort.NewShape(1, seqLen),
@@ -268,7 +268,7 @@ func (e *Engine) runInference(tokens *TokenizedInput) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token_type_ids tensor: %w", err)
 	}
-	defer tokenTypeIDsTensor.Destroy()
+	defer func() { _ = tokenTypeIDsTensor.Destroy() }()
 
 	// Create output tensor
 	outputTensor, err := ort.NewEmptyTensor[float32](
@@ -277,7 +277,7 @@ func (e *Engine) runInference(tokens *TokenizedInput) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output tensor: %w", err)
 	}
-	defer outputTensor.Destroy()
+	defer func() { _ = outputTensor.Destroy() }()
 
 	// Run inference
 	err = e.session.Run(
@@ -386,7 +386,7 @@ func (e *Engine) Shutdown() error {
 	}
 
 	if e.session != nil {
-		e.session.Destroy()
+		_ = e.session.Destroy()
 		e.session = nil
 	}
 

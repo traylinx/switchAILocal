@@ -303,7 +303,7 @@ func TestIntegration(t *testing.T) {
 
 	err = engine.Initialize(sharedLibPath)
 	require.NoError(t, err)
-	defer engine.Shutdown()
+	defer func() { _ = engine.Shutdown() }()
 
 	// Test single embedding
 	t.Run("single embedding", func(t *testing.T) {

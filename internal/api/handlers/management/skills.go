@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/intelligence"
-	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
 )
 
 // SkillsResponse represents the response for the skills endpoint.
@@ -90,7 +89,7 @@ func (h *SkillsHandler) GetSkills(c *gin.Context) {
 
 	// Get all skills
 	allSkills := registry.GetAllSkills()
-	
+
 	// Build metadata
 	skillMetadata := make([]SkillMetadata, len(allSkills))
 	for i, skill := range allSkills {
@@ -112,13 +111,4 @@ func (h *SkillsHandler) GetSkills(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
-}
-
-// convertSkillsToInterface converts a slice of skills to interface slice.
-func convertSkillsToInterface(skills []*skills.Skill) []interface{} {
-	result := make([]interface{}, len(skills))
-	for i, skill := range skills {
-		result[i] = skill
-	}
-	return result
 }
