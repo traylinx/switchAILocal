@@ -6,6 +6,7 @@ package executor
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -103,8 +104,8 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			if tt.wantErrorContains != "" {
 				if err == nil {
 					t.Errorf("expected error containing %q, got nil", tt.wantErrorContains)
-				} else if !reflect.DeepEqual(err.Error(), tt.wantErrorContains) {
-					// Using simple string check if strict match fails, or just print
+				} else if !strings.Contains(err.Error(), tt.wantErrorContains) {
+					t.Errorf("expected error containing %q, got %q", tt.wantErrorContains, err.Error())
 				}
 				return
 			}
