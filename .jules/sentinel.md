@@ -133,6 +133,11 @@ Format:
 **Learning:** General-purpose request logging often overlooks the sensitivity of specific JSON fields in the body, focusing only on headers. Regex-based masking must handle escaped quotes (`\"`) in JSON values to prevent partial leakage and invalid JSON structure.
 **Prevention:** Implement strict body sanitization (`MaskSensitiveJSONBody`) before logging any request. Use specialized redaction (`******`) for high-value secrets like passwords, and partial masking (`sk-...1234`) for API keys.
 
+## 2026-06-03 - IP Spoofing in Management Endpoints
+**Vulnerability:** Management endpoints (`ResetSecret`, `SkipSecret`, Middleware) relied on `c.ClientIP()` to authorize localhost requests. Since `TrustedProxies` was not configured (defaulting to nil), but `gin.New()` behavior combined with `ClientIP` logic allowed spoofing via `X-Forwarded-For` headers in some configurations or trusted proxies implicitly, attackers could bypass localhost checks by sending fake proxy headers or simply accessing via a local proxy that forwards the request without sanitization.
+**Learning:** `ClientIP()` in Gin is ambiguous and context-dependent. For critical security checks like "Localhost Only", relying on framework convenience methods that try to be "smart" about proxies is dangerous. Strict validation of `RemoteAddr` and explicit rejection of proxy headers is required for "Direct Connection" security models.
+**Prevention:** Implemented `isLocalhostDirect` which strictly validates `RemoteAddr` is loopback AND ensures `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` headers are absent.
+
 ---
 
 ## Sentinel's Daily Process
