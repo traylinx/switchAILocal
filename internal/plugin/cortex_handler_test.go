@@ -146,6 +146,17 @@ func TestCortexHandler_ConfidenceLogic(t *testing.T) {
 		return 1
 	}))
 
+	// Mock switchai.cache_lookup (return nil/miss)
+	L.SetField(switchai, "cache_lookup", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LNil)
+		return 1
+	}))
+
+	// Mock switchai.cache_store
+	L.SetField(switchai, "cache_store", L.NewFunction(func(L *lua.LState) int {
+		return 0
+	}))
+
 	// Mock switchai.json_inject
 	L.SetField(switchai, "json_inject", L.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(L.CheckString(1)))
