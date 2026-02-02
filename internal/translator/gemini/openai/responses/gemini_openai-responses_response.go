@@ -62,7 +62,7 @@ func (st *geminiToResponsesState) emit(event string, v any) string {
 	st.EventBuf.WriteString(event)
 	st.EventBuf.WriteString("\ndata: ")
 
-	st.EventEnc.Encode(v)
+	_ = st.EventEnc.Encode(v)
 
 	if l := st.EventBuf.Len(); l > 0 {
 		b := st.EventBuf.Bytes()
