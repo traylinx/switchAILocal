@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -177,11 +178,15 @@ func TestCortexHandler_ConfidenceLogic(t *testing.T) {
 		return 2
 	}))
 
-
 	// 2. Load handler.lua
 	// We need to resolve the path. Assuming test is running from internal/plugin/
 	// and handler is in plugins/cortex-router/handler.lua
 	handlerPath, _ := filepath.Abs("../../plugins/cortex-router/handler.lua")
+
+	// Skip if the optional plugin is not present
+	if _, err := os.Stat(handlerPath); os.IsNotExist(err) {
+		t.Skipf("Skipping test: cortex-router plugin not found at %s", handlerPath)
+	}
 
 	// Preload 'schema' module since handler requires it
 	L.PreloadModule("schema", func(L *lua.LState) int {
