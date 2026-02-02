@@ -138,6 +138,11 @@ Format:
 **Learning:** `ClientIP()` in Gin is ambiguous and context-dependent. For critical security checks like "Localhost Only", relying on framework convenience methods that try to be "smart" about proxies is dangerous. Strict validation of `RemoteAddr` and explicit rejection of proxy headers is required for "Direct Connection" security models.
 **Prevention:** Implemented `isLocalhostDirect` which strictly validates `RemoteAddr` is loopback AND ensures `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` headers are absent.
 
+## 2026-06-04 - Windows Path Traversal in Auth File Download
+**Vulnerability:** The `DownloadAuthFile` endpoint used `strings.Contains(name, os.PathSeparator)` to prevent path traversal. On Windows, `os.PathSeparator` is `\`, but Go's file APIs treat `/` as a valid separator, allowing traversal attacks using forward slashes (e.g., `../secret.json`).
+**Learning:** `os.PathSeparator` check is insufficient for cross-platform security because some platforms support multiple separators. Code running on Linux might be safe, but the same code deployed on Windows becomes vulnerable.
+**Prevention:** Use `filepath.Base(name)` to strip directory components entirely, and/or check for ALL known separators (`/` and `\`) regardless of the OS.
+
 ---
 
 ## Sentinel's Daily Process
