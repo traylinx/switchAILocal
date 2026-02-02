@@ -8,6 +8,7 @@
 package logging
 
 import (
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
@@ -1001,11 +1002,24 @@ func (w *FileStreamingLogWriter) Close() error {
 func (w *FileStreamingLogWriter) asyncWriter() {
 	defer close(w.closeChan)
 
+	var bufferedWriter *bufio.Writer
+	if w.responseBodyFile != nil {
+		bufferedWriter = bufio.NewWriter(w.responseBodyFile)
+	}
+
 	for chunk := range w.chunkChan {
 		if w.responseBodyFile == nil {
 			continue
 		}
-		if _, errWrite := w.responseBodyFile.Write(chunk); errWrite != nil {
+
+		var errWrite error
+		if bufferedWriter != nil {
+			_, errWrite = bufferedWriter.Write(chunk)
+		} else {
+			_, errWrite = w.responseBodyFile.Write(chunk)
+		}
+
+		if errWrite != nil {
 			select {
 			case w.errorChan <- errWrite:
 			default:
@@ -1017,12 +1031,23 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 				}
 			}
 			w.responseBodyFile = nil
+			bufferedWriter = nil
 		}
 	}
 
 	if w.responseBodyFile == nil {
 		return
 	}
+
+	if bufferedWriter != nil {
+		if errFlush := bufferedWriter.Flush(); errFlush != nil {
+			select {
+			case w.errorChan <- errFlush:
+			default:
+			}
+		}
+	}
+
 	if errClose := w.responseBodyFile.Close(); errClose != nil {
 		select {
 		case w.errorChan <- errClose:
