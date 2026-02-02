@@ -152,6 +152,13 @@ func TestCortexHandler_ConfidenceLogic(t *testing.T) {
 		return 1
 	}))
 
+	// Mock switchai.cache_lookup
+	L.SetField(switchai, "cache_lookup", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LNil)
+		L.Push(lua.LNil)
+		return 2
+	}))
+
 	// 2. Load handler.lua
 	// We need to resolve the path. Assuming test is running from internal/plugin/
 	// and handler is in plugins/cortex-router/handler.lua
