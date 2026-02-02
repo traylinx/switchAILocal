@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useConfig } from '../../hooks/useConfig';
+import { useStateBoxStatus } from '../../hooks/useStateBoxStatus';
 import { Card } from '../common/Card';
 import { Toggle } from '../common/Toggle';
 import { Button } from '../common/Button';
@@ -8,8 +9,11 @@ import { Server, Info, Terminal } from 'lucide-react';
 
 export function SettingsView() {
   const { config, updateConfig, isLoading } = useConfig();
+  const { status: stateBoxStatus } = useStateBoxStatus();
   const [proxyUrl, setProxyUrl] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  const isReadOnly = stateBoxStatus?.read_only || false;
 
   useEffect(() => {
     if (config?.['proxy-url']) {
@@ -58,7 +62,7 @@ export function SettingsView() {
               <p style={{ fontWeight: 'var(--font-medium)' }}>Debug Mode</p>
               <p style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>Enable verbose logging in the CLI console.</p>
             </div>
-            <Toggle active={!!config?.debug} onChange={handleToggleDebug} />
+            <Toggle active={!!config?.debug} onChange={handleToggleDebug} disabled={isReadOnly} />
           </div>
         </Card>
 
@@ -80,9 +84,9 @@ export function SettingsView() {
                 placeholder="https://example.com"
                 value={proxyUrl}
                 onChange={(e) => setProxyUrl(e.target.value)}
-                disabled={isSaving}
+                disabled={isSaving || isReadOnly}
               />
-              <Button variant="primary" onClick={handleSaveProxy} disabled={isSaving || proxyUrl === config?.['proxy-url']}>
+              <Button variant="primary" onClick={handleSaveProxy} disabled={isSaving || isReadOnly || proxyUrl === config?.['proxy-url']}>
                 {isSaving ? <Spinner size="sm" /> : 'Update'}
               </Button>
             </div>

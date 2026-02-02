@@ -19,6 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/discovery"
 	"github.com/traylinx/switchAILocal/internal/intelligence/capability"
+	"github.com/traylinx/switchAILocal/internal/util"
 )
 
 // DiscoveredModel represents a model discovered from a provider.
@@ -60,29 +61,42 @@ type Service struct {
 	providers  []*ProviderStatus
 	mu         sync.RWMutex
 	cacheDir   string
+	stateBox   *util.StateBox
 }
 
 // NewService creates a new DiscoveryService instance.
 //
 // Parameters:
-//   - cacheDir: Directory where discovery cache and registry will be stored
+//   - cacheDir: Directory where discovery cache and registry will be stored (deprecated, use SetStateBox)
+//   - stateBox: StateBox instance for path resolution and read-only mode enforcement
 //
 // Returns:
 //   - *Service: A new discovery service instance
 //   - error: Any error encountered during initialization
-func NewService(cacheDir string) (*Service, error) {
-	// Expand home directory if needed
-	if len(cacheDir) > 0 && cacheDir[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
+func NewService(cacheDir string, stateBox *util.StateBox) (*Service, error) {
+	// If StateBox is provided, use it for path resolution
+	if stateBox != nil {
+		cacheDir = stateBox.DiscoveryDir()
+		
+		// Ensure the discovery directory exists
+		if err := stateBox.EnsureDir(cacheDir); err != nil {
+			return nil, fmt.Errorf("failed to create discovery directory: %w", err)
 		}
-		cacheDir = filepath.Join(home, cacheDir[1:])
-	}
+	} else {
+		// Fallback to legacy behavior if StateBox is not provided
+		// Expand home directory if needed
+		if len(cacheDir) > 0 && cacheDir[0] == '~' {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get home directory: %w", err)
+			}
+			cacheDir = filepath.Join(home, cacheDir[1:])
+		}
 
-	// Create cache directory if it doesn't exist
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+		// Create cache directory if it doesn't exist
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create cache directory: %w", err)
+		}
 	}
 
 	// Create the underlying discoverer
@@ -97,6 +111,7 @@ func NewService(cacheDir string) (*Service, error) {
 		models:     make([]*DiscoveredModel, 0),
 		providers:  make([]*ProviderStatus, 0),
 		cacheDir:   cacheDir,
+		stateBox:   stateBox,
 	}, nil
 }
 
@@ -249,6 +264,12 @@ func (s *Service) GetProviderStatus() []*ProviderStatus {
 // Returns:
 //   - error: Any error encountered during writing
 func (s *Service) WriteRegistry(path string) error {
+	// Check read-only mode first
+	if s.stateBox != nil && s.stateBox.IsReadOnly() {
+		log.Warn("Skipping registry write: read-only mode enabled")
+		return util.ErrReadOnlyMode
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -265,19 +286,50 @@ func (s *Service) WriteRegistry(path string) error {
 		TotalModels: len(s.models),
 	}
 
-	// Marshal to JSON with indentation for readability
-	data, err := json.MarshalIndent(registry, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal registry: %w", err)
-	}
+	// Use SecureWriteJSON if StateBox is available, otherwise fall back to legacy write
+	if s.stateBox != nil {
+		opts := &util.SecureWriteOptions{
+			CreateBackup: true,
+			Permissions:  0600,
+		}
+		if err := util.SecureWriteJSON(s.stateBox, path, registry, opts); err != nil {
+			return fmt.Errorf("failed to write registry file: %w", err)
+		}
+	} else {
+		// Legacy write for backward compatibility
+		data, err := json.MarshalIndent(registry, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal registry: %w", err)
+		}
 
-	// Write to file
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write registry file: %w", err)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return fmt.Errorf("failed to write registry file: %w", err)
+		}
 	}
 
 	log.Infof("Wrote discovery registry to %s (%d models)", path, len(s.models))
 	return nil
+}
+
+// SetStateBox configures the StateBox for the discovery service.
+// This allows the service to use StateBox for path resolution and read-only mode enforcement.
+//
+// Parameters:
+//   - sb: StateBox instance to use
+func (s *Service) SetStateBox(sb *util.StateBox) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	s.stateBox = sb
+	if sb != nil {
+		// Update cacheDir to use StateBox discovery directory
+		s.cacheDir = sb.DiscoveryDir()
+		
+		// Ensure the discovery directory exists
+		if err := sb.EnsureDir(s.cacheDir); err != nil {
+			log.Warnf("Failed to create discovery directory: %v", err)
+		}
+	}
 }
 
 // Shutdown gracefully stops the discovery service.

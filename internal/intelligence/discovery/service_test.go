@@ -16,7 +16,7 @@ import (
 func TestNewService(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestNewService(t *testing.T) {
 
 // TestNewServiceWithHomeDir tests service creation with ~ in path
 func TestNewServiceWithHomeDir(t *testing.T) {
-	svc, err := NewService("~/.test-cache")
+	svc, err := NewService("~/.test-cache", nil)
 	if err != nil {
 		t.Fatalf("Failed to create service with home dir: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestNewServiceWithHomeDir(t *testing.T) {
 func TestDiscoverAllTimeout(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestDiscoverAllTimeout(t *testing.T) {
 func TestDiscoverAllGracefulFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestDiscoverAllGracefulFailure(t *testing.T) {
 func TestGetAvailableModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestGetAvailableModels(t *testing.T) {
 func TestGetAvailableModelsAsMap(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestGetAvailableModelsAsMap(t *testing.T) {
 func TestWriteRegistry(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestWriteRegistry(t *testing.T) {
 func TestWriteRegistryCustomPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestWriteRegistryCustomPath(t *testing.T) {
 func TestShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestShutdown(t *testing.T) {
 func TestConcurrentAccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}

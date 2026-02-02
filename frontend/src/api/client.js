@@ -97,6 +97,10 @@ class APIClient {
       body: JSON.stringify(config),
     });
   }
+
+  getStateBoxStatus() {
+    return this.request('/state-box/status');
+  }
 }
 
 export const apiClient = new APIClient();

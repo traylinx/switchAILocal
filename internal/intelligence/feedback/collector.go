@@ -18,6 +18,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	log "github.com/sirupsen/logrus"
+
+	"github.com/traylinx/switchAILocal/internal/util"
 )
 
 // FeedbackRecord represents a single routing feedback entry.
@@ -44,18 +46,22 @@ type Collector struct {
 	dbPath        string
 	retentionDays int
 	enabled       bool
+	stateBox      *util.StateBox
 	mu            sync.RWMutex
 }
 
 // NewCollector creates a new feedback collector instance.
 //
 // Parameters:
-//   - dbPath: Path to the SQLite database file
+//   - dbPath: Path to the SQLite database file (can be relative or absolute)
 //   - retentionDays: Number of days to retain feedback records
 //
 // Returns:
 //   - *Collector: A new collector instance
 //   - error: Any error encountered during creation
+//
+// Note: If a StateBox is set via SetStateBox(), the dbPath will be resolved
+// relative to the StateBox intelligence directory.
 func NewCollector(dbPath string, retentionDays int) (*Collector, error) {
 	if dbPath == "" {
 		return nil, fmt.Errorf("database path cannot be empty")
@@ -72,7 +78,22 @@ func NewCollector(dbPath string, retentionDays int) (*Collector, error) {
 	}, nil
 }
 
+// SetStateBox configures the State Box for the feedback collector.
+// This should be called before Initialize() to ensure the database path
+// is resolved correctly within the State Box directory structure.
+//
+// Parameters:
+//   - sb: The StateBox instance to use for path resolution
+func (c *Collector) SetStateBox(sb *util.StateBox) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stateBox = sb
+}
+
 // Initialize sets up the database and creates necessary tables.
+// If a StateBox is configured, the database path is resolved relative to
+// the StateBox intelligence directory. In read-only mode, the database
+// is opened with SQLITE_OPEN_READONLY flag.
 //
 // Parameters:
 //   - ctx: Context for initialization operations
@@ -83,61 +104,105 @@ func (c *Collector) Initialize(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Ensure directory exists
+	// Resolve database path using StateBox if available
+	resolvedPath := c.dbPath
+	if c.stateBox != nil {
+		// If dbPath is just a filename, place it in the intelligence directory
+		if filepath.Base(c.dbPath) == c.dbPath {
+			resolvedPath = filepath.Join(c.stateBox.IntelligenceDir(), c.dbPath)
+		} else {
+			// Otherwise, resolve relative to StateBox root
+			resolvedPath = c.stateBox.ResolvePath(c.dbPath)
+		}
+	}
+
+	// Update the dbPath to the resolved path
+	c.dbPath = resolvedPath
+
+	// Ensure directory exists (skip in read-only mode)
 	dir := filepath.Dir(c.dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create database directory: %w", err)
+	if c.stateBox != nil && c.stateBox.IsReadOnly() {
+		// In read-only mode, verify directory exists but don't create it
+		if _, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("database directory does not exist in read-only mode: %w", err)
+		}
+	} else {
+		// Create directory with secure permissions (0700)
+		if c.stateBox != nil {
+			if err := c.stateBox.EnsureDir(dir); err != nil {
+				return fmt.Errorf("failed to create database directory: %w", err)
+			}
+		} else {
+			// Fallback to standard mkdir if no StateBox
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create database directory: %w", err)
+			}
+		}
 	}
 
-	// Open database
-	db, err := sql.Open("sqlite3", c.dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
+	// Open database with appropriate mode
+	var db *sql.DB
+	var err error
 
-	// Set connection pool settings
-	db.SetMaxOpenConns(1) // SQLite works best with single connection
-	db.SetMaxIdleConns(1)
+	if c.stateBox != nil && c.stateBox.IsReadOnly() {
+		// Open in read-only mode
+		dsn := fmt.Sprintf("file:%s?mode=ro", c.dbPath)
+		db, err = sql.Open("sqlite3", dsn)
+		if err != nil {
+			return fmt.Errorf("failed to open database in read-only mode: %w", err)
+		}
+		log.Infof("Feedback collector initialized in read-only mode (db: %s)", c.dbPath)
+	} else {
+		// Open in read-write mode
+		db, err = sql.Open("sqlite3", c.dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
 
-	// Create tables
-	schema := `
-	CREATE TABLE IF NOT EXISTS feedback (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp DATETIME NOT NULL,
-		query TEXT NOT NULL,
-		intent TEXT NOT NULL,
-		selected_model TEXT NOT NULL,
-		routing_tier TEXT NOT NULL,
-		confidence REAL,
-		matched_skill TEXT,
-		cascade_occurred INTEGER NOT NULL DEFAULT 0,
-		response_quality REAL,
-		latency_ms INTEGER NOT NULL,
-		success INTEGER NOT NULL,
-		error_message TEXT,
-		metadata TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
+		// Set connection pool settings
+		db.SetMaxOpenConns(1) // SQLite works best with single connection
+		db.SetMaxIdleConns(1)
 
-	CREATE INDEX IF NOT EXISTS idx_feedback_timestamp ON feedback(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_feedback_intent ON feedback(intent);
-	CREATE INDEX IF NOT EXISTS idx_feedback_model ON feedback(selected_model);
-	CREATE INDEX IF NOT EXISTS idx_feedback_tier ON feedback(routing_tier);
-	CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at);
-	`
+		// Create tables
+		schema := `
+		CREATE TABLE IF NOT EXISTS feedback (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL,
+			query TEXT NOT NULL,
+			intent TEXT NOT NULL,
+			selected_model TEXT NOT NULL,
+			routing_tier TEXT NOT NULL,
+			confidence REAL,
+			matched_skill TEXT,
+			cascade_occurred INTEGER NOT NULL DEFAULT 0,
+			response_quality REAL,
+			latency_ms INTEGER NOT NULL,
+			success INTEGER NOT NULL,
+			error_message TEXT,
+			metadata TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 
-	if _, err := db.ExecContext(ctx, schema); err != nil {
-		db.Close()
-		return fmt.Errorf("failed to create schema: %w", err)
+		CREATE INDEX IF NOT EXISTS idx_feedback_timestamp ON feedback(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_feedback_intent ON feedback(intent);
+		CREATE INDEX IF NOT EXISTS idx_feedback_model ON feedback(selected_model);
+		CREATE INDEX IF NOT EXISTS idx_feedback_tier ON feedback(routing_tier);
+		CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at);
+		`
+
+		if _, err := db.ExecContext(ctx, schema); err != nil {
+			db.Close()
+			return fmt.Errorf("failed to create schema: %w", err)
+		}
+
+		log.Infof("Feedback collector initialized (db: %s, retention: %d days)", c.dbPath, c.retentionDays)
+
+		// Run initial cleanup (only in read-write mode)
+		go c.cleanupOldRecords(context.Background())
 	}
 
 	c.db = db
 	c.enabled = true
-
-	log.Infof("Feedback collector initialized (db: %s, retention: %d days)", c.dbPath, c.retentionDays)
-
-	// Run initial cleanup
-	go c.cleanupOldRecords(context.Background())
 
 	return nil
 }
@@ -153,19 +218,25 @@ func (c *Collector) IsEnabled() bool {
 }
 
 // Record stores a feedback record in the database.
+// In read-only mode, this method returns an error without attempting to insert.
 //
 // Parameters:
 //   - ctx: Context for the operation
 //   - record: The feedback record to store
 //
 // Returns:
-//   - error: Any error encountered during storage
+//   - error: Any error encountered during storage, including ErrReadOnlyMode
 func (c *Collector) Record(ctx context.Context, record *FeedbackRecord) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if !c.enabled {
 		return fmt.Errorf("feedback collector not enabled")
+	}
+
+	// Check read-only mode
+	if c.stateBox != nil && c.stateBox.IsReadOnly() {
+		return util.ErrReadOnlyMode
 	}
 
 	if record == nil {

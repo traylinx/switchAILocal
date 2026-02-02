@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/traylinx/switchAILocal/internal/util"
 )
 
 // TestNewCollector tests collector creation.
@@ -436,4 +438,190 @@ func TestCollectorTimestamp(t *testing.T) {
 	if retrieved.Timestamp.Before(before) || retrieved.Timestamp.After(after) {
 		t.Errorf("Timestamp %v not within expected range [%v, %v]", retrieved.Timestamp, before, after)
 	}
+}
+
+// TestCollectorWithStateBox tests collector with StateBox integration.
+func TestCollectorWithStateBox(t *testing.T) {
+	// Create temporary directory for StateBox
+	tmpDir := t.TempDir()
+	
+	// Set up environment for StateBox
+	os.Setenv("SWITCHAI_STATE_DIR", tmpDir)
+	defer os.Unsetenv("SWITCHAI_STATE_DIR")
+	
+	// Create StateBox
+	sb, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("Failed to create StateBox: %v", err)
+	}
+	
+	// Create collector with just a filename
+	collector, err := NewCollector("feedback.db", 90)
+	if err != nil {
+		t.Fatalf("NewCollector() failed: %v", err)
+	}
+	
+	// Set StateBox
+	collector.SetStateBox(sb)
+	
+	ctx := context.Background()
+	if err := collector.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+	defer func() { _ = collector.Shutdown(ctx) }()
+	
+	// Verify database is in the intelligence directory
+	expectedPath := filepath.Join(tmpDir, "intelligence", "feedback.db")
+	if collector.dbPath != expectedPath {
+		t.Errorf("Expected dbPath %s, got %s", expectedPath, collector.dbPath)
+	}
+	
+	// Verify database file was created
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Error("Database file was not created in StateBox intelligence directory")
+	}
+	
+	// Verify directory has correct permissions (0700)
+	info, err := os.Stat(filepath.Dir(expectedPath))
+	if err != nil {
+		t.Fatalf("Failed to stat intelligence directory: %v", err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("Expected directory permissions 0700, got %o", info.Mode().Perm())
+	}
+	
+	// Test recording works
+	record := &FeedbackRecord{
+		Query:         "Test query",
+		Intent:        "chat",
+		SelectedModel: "gpt-4",
+		RoutingTier:   "semantic",
+		LatencyMs:     100,
+		Success:       true,
+	}
+	
+	if err := collector.Record(ctx, record); err != nil {
+		t.Fatalf("Record() failed: %v", err)
+	}
+	
+	// Verify record was stored
+	records, err := collector.GetRecent(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetRecent() failed: %v", err)
+	}
+	
+	if len(records) != 1 {
+		t.Fatalf("Expected 1 record, got %d", len(records))
+	}
+}
+
+// TestCollectorReadOnlyMode tests collector in read-only mode.
+func TestCollectorReadOnlyMode(t *testing.T) {
+	// Create temporary directory for StateBox
+	tmpDir := t.TempDir()
+	
+	// Set up environment for StateBox (read-write first)
+	os.Setenv("SWITCHAI_STATE_DIR", tmpDir)
+	defer os.Unsetenv("SWITCHAI_STATE_DIR")
+	
+	// Create StateBox in read-write mode
+	sb, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("Failed to create StateBox: %v", err)
+	}
+	
+	// Create collector and initialize in read-write mode
+	collector, err := NewCollector("feedback.db", 90)
+	if err != nil {
+		t.Fatalf("NewCollector() failed: %v", err)
+	}
+	
+	collector.SetStateBox(sb)
+	
+	ctx := context.Background()
+	if err := collector.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+	
+	// Record some data
+	record := &FeedbackRecord{
+		Query:         "Test query",
+		Intent:        "chat",
+		SelectedModel: "gpt-4",
+		RoutingTier:   "semantic",
+		LatencyMs:     100,
+		Success:       true,
+	}
+	
+	if err := collector.Record(ctx, record); err != nil {
+		t.Fatalf("Record() failed: %v", err)
+	}
+	
+	// Shutdown
+	if err := collector.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() failed: %v", err)
+	}
+	
+	// Now switch to read-only mode
+	os.Setenv("SWITCHAI_READONLY", "1")
+	defer os.Unsetenv("SWITCHAI_READONLY")
+	
+	// Create new StateBox in read-only mode
+	sbReadOnly, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("Failed to create read-only StateBox: %v", err)
+	}
+	
+	if !sbReadOnly.IsReadOnly() {
+		t.Fatal("StateBox should be in read-only mode")
+	}
+	
+	// Create new collector
+	collectorRO, err := NewCollector("feedback.db", 90)
+	if err != nil {
+		t.Fatalf("NewCollector() failed: %v", err)
+	}
+	
+	collectorRO.SetStateBox(sbReadOnly)
+	
+	// Initialize in read-only mode
+	if err := collectorRO.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize() in read-only mode failed: %v", err)
+	}
+	defer func() { _ = collectorRO.Shutdown(ctx) }()
+	
+	// Verify we can read existing data
+	records, err := collectorRO.GetRecent(ctx, 10)
+	if err != nil {
+		t.Fatalf("GetRecent() failed in read-only mode: %v", err)
+	}
+	
+	if len(records) != 1 {
+		t.Fatalf("Expected 1 record, got %d", len(records))
+	}
+	
+	// Verify we cannot write in read-only mode
+	newRecord := &FeedbackRecord{
+		Query:         "Another query",
+		Intent:        "chat",
+		SelectedModel: "gpt-4",
+		RoutingTier:   "semantic",
+		LatencyMs:     100,
+		Success:       true,
+	}
+	
+	err = collectorRO.Record(ctx, newRecord)
+	if err == nil {
+		t.Fatal("Record() should fail in read-only mode")
+	}
+	
+	// Verify the error is ErrReadOnlyMode
+	if err.Error() != "Read-only environment: write operations disabled" {
+		t.Errorf("Expected ErrReadOnlyMode, got: %v", err)
+	}
+}
+
+// Helper function to create StateBox (imported from util package for testing)
+func NewStateBox() (*util.StateBox, error) {
+	return util.NewStateBox()
 }

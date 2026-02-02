@@ -388,7 +388,13 @@ intelligence:
 
 ### For Users
 
+| Guide | Description |
+| --- | --- |
+| [State Box](docs/user/state-box.md) | Secure state management & configuration |
 | [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
+| [Configuration](docs/user/configuration.md) | All configuration options |
+| [Providers](docs/user/providers.md) | Setting up AI providers |
+| [API Reference](docs/user/api-reference.md) | REST API documentation |
 
 ### Build from Source
 

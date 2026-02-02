@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import useSWR from 'swr';
 import { apiClient } from '../../api/client';
+import { useStateBoxStatus } from '../../hooks/useStateBoxStatus';
 import { Button } from '../common/Button';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
@@ -12,6 +13,9 @@ export function RoutingView() {
     '/ampcode/model-mappings',
     () => apiClient.getModelMappings()
   );
+  
+  const { status: stateBoxStatus } = useStateBoxStatus();
+  const isReadOnly = stateBoxStatus?.read_only || false;
   
   const [showModal, setShowModal] = useState(false);
   const [newFrom, setNewFrom] = useState('');
@@ -52,7 +56,7 @@ export function RoutingView() {
       mutate();
       setNewFrom('');
       setNewTo('');
-      setShowAddModal(false);
+      setShowModal(false);
     } catch (error) {
       alert('Failed to update mappings: ' + error.message);
     } finally {
@@ -86,7 +90,7 @@ export function RoutingView() {
           <h1 style={{ fontSize: 'var(--text-3xl)', fontWeight: 'var(--font-bold)', marginBottom: 'var(--space-2)' }}>Model Routing</h1>
           <p style={{ color: 'var(--color-text-secondary)' }}>Map model names to available models across providers.</p>
         </div>
-        <Button variant="primary" onClick={() => setShowModal(true)}>
+        <Button variant="primary" onClick={() => setShowModal(true)} disabled={isReadOnly}>
           <Plus size={18} /> Add Mapping
         </Button>
       </header>
@@ -115,14 +119,16 @@ export function RoutingView() {
                   <td style={{ padding: 'var(--space-4) var(--space-6)', textAlign: 'right' }}>
                     <button 
                       onClick={() => handleDelete(i)}
+                      disabled={isReadOnly}
                       style={{ 
                         background: 'none', 
                         border: 'none', 
                         color: 'var(--color-text-tertiary)', 
-                        cursor: 'pointer',
-                        padding: 'var(--space-1)'
+                        cursor: isReadOnly ? 'not-allowed' : 'pointer',
+                        padding: 'var(--space-1)',
+                        opacity: isReadOnly ? 0.5 : 1
                       }}
-                      onMouseOver={e => e.currentTarget.style.color = 'var(--color-error)'}
+                      onMouseOver={e => !isReadOnly && (e.currentTarget.style.color = 'var(--color-error)')}
                       onMouseOut={e => e.currentTarget.style.color = 'var(--color-text-tertiary)'}
                     >
                       <Trash2 size={16} />
@@ -142,7 +148,7 @@ export function RoutingView() {
         footer={
           <>
             <Button onClick={() => setShowModal(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleSave} disabled={isSaving || !newFrom || !newTo}>
+            <Button variant="primary" onClick={handleSave} disabled={isSaving || isReadOnly || !newFrom || !newTo}>
               {isSaving ? <Spinner size="sm" /> : 'Create Mapping'}
             </Button>
           </>
@@ -159,7 +165,7 @@ export function RoutingView() {
               placeholder="e.g. gpt-4"
               value={newFrom}
               onChange={(e) => setNewFrom(e.target.value)}
-              disabled={isSaving}
+              disabled={isSaving || isReadOnly}
             />
           </div>
           <div>
@@ -172,7 +178,7 @@ export function RoutingView() {
               placeholder="e.g. claude-3-opus-20240229"
               value={newTo}
               onChange={(e) => setNewTo(e.target.value)}
-              disabled={isSaving}
+              disabled={isSaving || isReadOnly}
             />
           </div>
         </div>

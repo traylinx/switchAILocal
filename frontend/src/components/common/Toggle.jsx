@@ -1,19 +1,27 @@
 import React from 'react';
 
-export function Toggle({ active, onChange }) {
+export function Toggle({ active, onChange, disabled = false }) {
+  const handleClick = () => {
+    if (!disabled) {
+      onChange(!active);
+    }
+  };
+
   return (
     <div 
-      className={`toggle ${active ? 'active' : ''}`} 
-      onClick={() => onChange(!active)}
+      className={`toggle ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}`} 
+      onClick={handleClick}
       role="switch"
       aria-checked={active}
-      tabIndex={0}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : 0}
       onKeyDown={(e) => {
-        if (e.key === ' ' || e.key === 'Enter') {
+        if (!disabled && (e.key === ' ' || e.key === 'Enter')) {
           e.preventDefault();
           onChange(!active);
         }
       }}
+      style={{ cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1 }}
     >
       <div className="toggle-thumb" />
     </div>

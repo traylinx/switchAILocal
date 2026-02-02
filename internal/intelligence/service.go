@@ -10,7 +10,9 @@ package intelligence
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -40,6 +42,9 @@ type Service struct {
 
 	// mu protects concurrent access to service state
 	mu sync.RWMutex
+
+	// stateBox manages the canonical state directory for all mutable data
+	stateBox *util.StateBox
 
 	// Services
 	discovery *discovery.Service
@@ -97,15 +102,61 @@ func (s *Service) Initialize(ctx context.Context) error {
 
 	log.Info("Initializing intelligence services...")
 
+	// Step 1: Create StateBox for centralized state management
+	stateBox, err := util.NewStateBox()
+	if err != nil {
+		log.Warnf("Failed to create StateBox: %v (falling back to legacy paths)", err)
+	} else {
+		s.stateBox = stateBox
+		log.Infof("StateBox initialized at %s (read-only: %v)", stateBox.RootPath(), stateBox.IsReadOnly())
+
+		// Step 2: Ensure State Box directories exist
+		if !stateBox.IsReadOnly() {
+			if err := stateBox.EnsureDir(stateBox.DiscoveryDir()); err != nil {
+				log.Warnf("Failed to create discovery directory: %v", err)
+			}
+			if err := stateBox.EnsureDir(stateBox.IntelligenceDir()); err != nil {
+				log.Warnf("Failed to create intelligence directory: %v", err)
+			}
+			if err := stateBox.EnsureDir(stateBox.CredentialsDir()); err != nil {
+				log.Warnf("Failed to create credentials directory: %v", err)
+			}
+		}
+
+		// Step 3: Handle orphan .tmp files (ignore them during initialization)
+		// Per requirement 3.6: orphan .tmp files are ignored, not deleted
+		s.logOrphanTempFiles(stateBox)
+
+		// Step 4: Restore from .bak files if primary files are corrupted
+		// Per requirement 3.7: restore from .bak if target file is corrupted or empty
+		s.restoreFromBackups(stateBox)
+
+		// Step 5: Harden permissions on State Box contents
+		// Per requirement 4.1: audit and correct permissions during initialization
+		if err := util.HardenPermissions(stateBox); err != nil {
+			log.Warnf("Failed to harden permissions: %v", err)
+		}
+	}
+
 	// Phase 2 (µP2): Discovery Service
 	if s.config.Discovery.Enabled {
 		log.Info("Initializing discovery service...")
-		expandedCacheDir, err := util.ExpandPath(s.config.Discovery.CacheDir)
-		if err != nil {
-			log.Warnf("Failed to expand discovery cache dir: %v", err)
-			expandedCacheDir = s.config.Discovery.CacheDir
+		var discoverySvc *discovery.Service
+		var err error
+
+		if s.stateBox != nil {
+			// Use StateBox for path resolution
+			discoverySvc, err = discovery.NewService("", s.stateBox)
+		} else {
+			// Fallback to legacy behavior
+			expandedCacheDir, expandErr := util.ExpandPath(s.config.Discovery.CacheDir)
+			if expandErr != nil {
+				log.Warnf("Failed to expand discovery cache dir: %v", expandErr)
+				expandedCacheDir = s.config.Discovery.CacheDir
+			}
+			discoverySvc, err = discovery.NewService(expandedCacheDir, nil)
 		}
-		discoverySvc, err := discovery.NewService(expandedCacheDir)
+
 		if err != nil {
 			log.Warnf("Failed to create discovery service: %v", err)
 		} else {
@@ -285,16 +336,29 @@ func (s *Service) Initialize(ctx context.Context) error {
 	// Phase 13 (µP13): Feedback Collector
 	if s.config.Feedback.Enabled {
 		log.Info("Initializing feedback collector...")
-		expandedCacheDir, err := util.ExpandPath(s.config.Discovery.CacheDir)
-		if err != nil {
-			log.Warnf("Failed to expand discovery cache dir for feedback: %v", err)
-			expandedCacheDir = s.config.Discovery.CacheDir
+		var dbPath string
+
+		if s.stateBox != nil {
+			// Use StateBox for path resolution
+			dbPath = filepath.Join(s.stateBox.IntelligenceDir(), "feedback.db")
+		} else {
+			// Fallback to legacy behavior
+			expandedCacheDir, err := util.ExpandPath(s.config.Discovery.CacheDir)
+			if err != nil {
+				log.Warnf("Failed to expand discovery cache dir for feedback: %v", err)
+				expandedCacheDir = s.config.Discovery.CacheDir
+			}
+			dbPath = filepath.Join(expandedCacheDir, "feedback.db")
 		}
-		dbPath := filepath.Join(expandedCacheDir, "feedback.db")
+
 		collector, err := feedback.NewCollector(dbPath, s.config.Feedback.RetentionDays)
 		if err != nil {
 			log.Warnf("Failed to create feedback collector: %v", err)
 		} else {
+			// Set StateBox before initialization
+			if s.stateBox != nil {
+				collector.SetStateBox(s.stateBox)
+			}
 			if err := collector.Initialize(ctx); err != nil {
 				log.Warnf("Failed to initialize feedback collector: %v", err)
 			} else {
@@ -548,6 +612,158 @@ func (s *Service) GetFeedbackCollector() FeedbackCollectorInterface {
 // feedbackCollectorWrapper wraps the feedback.Collector to implement FeedbackCollectorInterface.
 type feedbackCollectorWrapper struct {
 	collector *feedback.Collector
+}
+
+// logOrphanTempFiles logs any orphan .tmp files found in the State Box.
+// Per requirement 3.6, orphan .tmp files are ignored during initialization (not deleted).
+func (s *Service) logOrphanTempFiles(sb *util.StateBox) {
+	if sb == nil {
+		return
+	}
+
+	rootPath := sb.RootPath()
+	if _, err := os.Stat(rootPath); os.IsNotExist(err) {
+		return
+	}
+
+	var orphanCount int
+	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Continue walking on errors
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Check for .tmp.{uuid} pattern
+		if strings.Contains(filepath.Base(path), ".tmp.") {
+			orphanCount++
+			log.Debugf("Found orphan temp file (ignoring): %s", path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Warnf("Error scanning for orphan temp files: %v", err)
+	}
+
+	if orphanCount > 0 {
+		log.Infof("Found %d orphan temp file(s) in State Box (ignored per policy)", orphanCount)
+	}
+}
+
+// restoreFromBackups checks for corrupted or empty primary files and restores from .bak if available.
+// Per requirement 3.7, if the target file is corrupted or empty on startup, restore from .bak.
+func (s *Service) restoreFromBackups(sb *util.StateBox) {
+	if sb == nil || sb.IsReadOnly() {
+		return
+	}
+
+	// List of critical files to check for restoration
+	criticalFiles := []string{
+		filepath.Join(sb.DiscoveryDir(), "available_models.json"),
+		filepath.Join(sb.DiscoveryDir(), "registry.json"),
+	}
+
+	for _, filePath := range criticalFiles {
+		s.restoreFileFromBackup(filePath)
+	}
+}
+
+// restoreFileFromBackup restores a single file from its .bak backup if the primary is corrupted or empty.
+func (s *Service) restoreFileFromBackup(filePath string) {
+	backupPath := filePath + ".bak"
+
+	// Check if backup exists
+	backupInfo, err := os.Stat(backupPath)
+	if os.IsNotExist(err) {
+		return // No backup available
+	}
+	if err != nil {
+		log.Warnf("Failed to stat backup file %s: %v", backupPath, err)
+		return
+	}
+
+	// Check if primary file needs restoration
+	primaryInfo, err := os.Stat(filePath)
+	needsRestore := false
+
+	if os.IsNotExist(err) {
+		// Primary doesn't exist, restore from backup
+		needsRestore = true
+		log.Infof("Primary file missing, will restore from backup: %s", filePath)
+	} else if err != nil {
+		log.Warnf("Failed to stat primary file %s: %v", filePath, err)
+		return
+	} else if primaryInfo.Size() == 0 {
+		// Primary is empty, restore from backup
+		needsRestore = true
+		log.Infof("Primary file is empty, will restore from backup: %s", filePath)
+	} else if s.isFileCorrupted(filePath) {
+		// Primary is corrupted, restore from backup
+		needsRestore = true
+		log.Infof("Primary file appears corrupted, will restore from backup: %s", filePath)
+	}
+
+	if !needsRestore {
+		return
+	}
+
+	// Verify backup is valid before restoring
+	if backupInfo.Size() == 0 {
+		log.Warnf("Backup file is also empty, cannot restore: %s", backupPath)
+		return
+	}
+
+	// Read backup content
+	backupData, err := os.ReadFile(backupPath)
+	if err != nil {
+		log.Warnf("Failed to read backup file %s: %v", backupPath, err)
+		return
+	}
+
+	// Write to primary file
+	if err := os.WriteFile(filePath, backupData, 0600); err != nil {
+		log.Warnf("Failed to restore file from backup %s: %v", filePath, err)
+		return
+	}
+
+	log.Infof("Successfully restored %s from backup", filePath)
+}
+
+// isFileCorrupted performs a basic corruption check on JSON files.
+// Returns true if the file appears to be corrupted (invalid JSON for .json files).
+func (s *Service) isFileCorrupted(filePath string) bool {
+	// Only check JSON files for corruption
+	if !strings.HasSuffix(strings.ToLower(filePath), ".json") {
+		return false
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return true // Can't read = corrupted
+	}
+
+	// Basic JSON validation: check for valid JSON structure
+	data = []byte(strings.TrimSpace(string(data)))
+	if len(data) == 0 {
+		return true // Empty = corrupted
+	}
+
+	// Check if it starts and ends with valid JSON delimiters
+	if (data[0] == '{' && data[len(data)-1] == '}') ||
+		(data[0] == '[' && data[len(data)-1] == ']') {
+		return false // Looks like valid JSON structure
+	}
+
+	return true // Doesn't look like valid JSON
+}
+
+// GetStateBox returns the StateBox instance used by the intelligence service.
+// Returns nil if StateBox was not initialized.
+func (s *Service) GetStateBox() *util.StateBox {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stateBox
 }
 
 func (w *feedbackCollectorWrapper) IsEnabled() bool {

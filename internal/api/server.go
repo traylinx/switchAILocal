@@ -64,6 +64,7 @@ type serverOptionConfig struct {
 	keepAliveTimeout     time.Duration
 	keepAliveOnTimeout   func()
 	intelligenceService  IntelligenceService
+	stateBox             *util.StateBox
 }
 
 // ServerOption customises HTTP server construction.
@@ -128,6 +129,13 @@ func WithRequestLoggerFactory(factory func(*config.Config, string) logging.Reque
 func WithIntelligenceService(svc IntelligenceService) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.intelligenceService = svc
+	}
+}
+
+// WithStateBox sets the StateBox for the server.
+func WithStateBox(sb *util.StateBox) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.stateBox = sb
 	}
 }
 
@@ -196,6 +204,9 @@ type Server struct {
 
 	// intelligenceService manages Phase 2 intelligent routing features.
 	intelligenceService IntelligenceService
+
+	// stateBox manages the canonical state directory for mutable data.
+	stateBox *util.StateBox
 }
 
 // IntelligenceService defines the interface for accessing intelligence features.
@@ -277,6 +288,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
 		intelligenceService: optionState.intelligenceService,
+		stateBox:            optionState.stateBox,
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	if !cfg.WebsocketAuth {
@@ -664,6 +676,11 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/auth-files", s.mgmt.UploadAuthFile)
 		mgmt.DELETE("/auth-files", s.mgmt.DeleteAuthFile)
 		mgmt.POST("/vertex/import", s.mgmt.ImportVertexCredential)
+
+		// State Box status endpoint
+		if s.stateBox != nil {
+			mgmt.GET("/state-box/status", StateBoxStatusHandler(s.stateBox))
+		}
 
 		mgmt.GET("/anthropic-auth-url", s.mgmt.RequestAnthropicToken)
 		mgmt.GET("/codex-auth-url", s.mgmt.RequestCodexToken)

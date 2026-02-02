@@ -16,7 +16,7 @@ import (
 func TestCheckpoint_DiscoveryRunsOnStartup(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestCheckpoint_DiscoveryRunsOnStartup(t *testing.T) {
 func TestCheckpoint_JSONFileCreated(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCheckpoint_JSONFileCreated(t *testing.T) {
 func TestCheckpoint_LuaAPIReturnsModelsOrError(t *testing.T) {
 	tmpDir := t.TempDir()
 	
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create service: %v", err)
 	}

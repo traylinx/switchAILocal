@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useConfigStore } from '../../stores/configStore';
+import { useStateBoxStatus } from '../../hooks/useStateBoxStatus';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { KeyValueInput } from '../common/KeyValueInput';
@@ -19,6 +20,9 @@ export function ProviderConfigModal() {
     saveProviderConfig,
     testConnection
   } = useConfigStore();
+
+  const { status: stateBoxStatus } = useStateBoxStatus();
+  const isReadOnly = stateBoxStatus?.read_only || false;
 
   const [activeTab, setActiveTab] = useState('basic');
   const [testResult, setTestResult] = useState(null);
@@ -120,7 +124,7 @@ export function ProviderConfigModal() {
       <Button variant="secondary" onClick={closeConfigModal} disabled={isSaving}>
         Cancel
       </Button>
-      <Button variant="primary" onClick={handleSave} disabled={isSaving || isTesting}>
+      <Button variant="primary" onClick={handleSave} disabled={isSaving || isTesting || isReadOnly}>
         {isSaving ? <Loader2 size={16} className="spin" /> : 'Save Changes'}
       </Button>
     </>

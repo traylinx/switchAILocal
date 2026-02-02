@@ -17,7 +17,7 @@ func TestCapabilityIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	
 	// Create discovery service
-	svc, err := NewService(tmpDir)
+	svc, err := NewService(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("Failed to create discovery service: %v", err)
 	}
