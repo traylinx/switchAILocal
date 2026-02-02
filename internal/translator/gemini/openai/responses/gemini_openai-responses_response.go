@@ -49,14 +49,21 @@ var responseIDCounter uint64
 var funcCallIDCounter uint64
 
 func emitMarshaledEvent(event string, v any) string {
-	b, _ := json.Marshal(v)
 	var sb strings.Builder
-	sb.Grow(len(event) + len(b) + 14) // "event: " + event + "\ndata: " + payload
+	sb.Grow(len(event) + 256) // Heuristic: event name + ~256 bytes for payload
 	sb.WriteString("event: ")
 	sb.WriteString(event)
 	sb.WriteString("\ndata: ")
-	sb.Write(b)
-	return sb.String()
+
+	enc := json.NewEncoder(&sb)
+	_ = enc.Encode(v)
+
+	s := sb.String()
+	// Encode adds a newline at the end; trim it to match previous behavior
+	if len(s) > 0 && s[len(s)-1] == '\n' {
+		return s[:len(s)-1]
+	}
+	return s
 }
 
 // ConvertGeminiResponseToOpenAIResponses converts Gemini SSE chunks into OpenAI Responses SSE events.
@@ -79,7 +86,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		return []string{}
 	}
 
-	var out []string
+	out := make([]string, 0, 4)
 	nextSeq := func() int { st.Seq++; return st.Seq }
 
 	// Helper to finalize reasoning summary events in correct order.
