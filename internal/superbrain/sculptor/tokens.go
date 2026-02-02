@@ -2,33 +2,61 @@
 // It estimates token counts, detects file references, and optimizes content to fit within model context limits.
 package sculptor
 
+import (
+	"github.com/tiktoken-go/tokenizer"
+)
+
 // TokenEstimator provides methods for estimating token counts in text content.
 // It supports multiple estimation strategies with different accuracy/performance tradeoffs.
 type TokenEstimator struct {
 	// method is the estimation method to use ("simple" or "tiktoken")
 	method string
+	// codec is the tokenizer codec used for accurate counting
+	codec tokenizer.Codec
 }
 
 // NewTokenEstimator creates a new TokenEstimator with the specified method.
 // Valid methods are "simple" (fast approximation) and "tiktoken" (accurate but slower).
 // If an invalid method is provided, defaults to "simple".
 func NewTokenEstimator(method string) *TokenEstimator {
-	if method != "simple" && method != "tiktoken" {
+	var codec tokenizer.Codec
+	var err error
+
+	if method == "tiktoken" {
+		// Use cl100k_base as the default tokenizer for general purpose counting
+		codec, err = tokenizer.Get(tokenizer.Cl100kBase)
+		if err != nil {
+			// Fallback to simple if tokenizer fails to load
+			method = "simple"
+		}
+	} else if method != "simple" {
 		method = "simple"
 	}
-	return &TokenEstimator{method: method}
+	return &TokenEstimator{method: method, codec: codec}
 }
 
 // EstimateTokens estimates the number of tokens in the given content.
 // For "simple" method: uses words * 1.3 approximation.
-// For "tiktoken" method: currently falls back to simple (tiktoken integration TODO).
+// For "tiktoken" method: uses the actual tokenizer.
 func (te *TokenEstimator) EstimateTokens(content string) int {
-	if te.method == "tiktoken" {
-		// TODO: Integrate tiktoken library for accurate counting
-		// For now, fall back to simple estimation
-		return te.simpleEstimate(content)
+	if te.method == "tiktoken" && te.codec != nil {
+		return te.tiktokenEstimate(content)
 	}
 	return te.simpleEstimate(content)
+}
+
+// tiktokenEstimate uses the tiktoken library for accurate token counting.
+func (te *TokenEstimator) tiktokenEstimate(content string) int {
+	if len(content) == 0 {
+		return 0
+	}
+
+	ids, _, err := te.codec.Encode(content)
+	if err != nil {
+		// Fallback to simple estimate in case of encoding error
+		return te.simpleEstimate(content)
+	}
+	return len(ids)
 }
 
 // simpleEstimate uses a word count * 1.3 approximation for token estimation.
@@ -72,38 +100,37 @@ func (te *TokenEstimator) Method() string {
 	return te.method
 }
 
-
 // ModelContextLimits maps model names/patterns to their context window sizes in tokens.
 // This lookup table is used for pre-flight analysis to determine if content will fit.
 var ModelContextLimits = map[string]int{
 	// Claude models
-	"claude-3-opus":          200000,
-	"claude-3-sonnet":        200000,
-	"claude-3-haiku":         200000,
-	"claude-3.5-sonnet":      200000,
-	"claude-3.5-haiku":       200000,
-	"claude-sonnet-4":        200000,
-	"claude-opus-4":          200000,
-	"claude-opus-4.5":        200000,
+	"claude-3-opus":     200000,
+	"claude-3-sonnet":   200000,
+	"claude-3-haiku":    200000,
+	"claude-3.5-sonnet": 200000,
+	"claude-3.5-haiku":  200000,
+	"claude-sonnet-4":   200000,
+	"claude-opus-4":     200000,
+	"claude-opus-4.5":   200000,
 
 	// Gemini models
-	"gemini-pro":             32000,
-	"gemini-1.5-pro":         1000000,
-	"gemini-1.5-flash":       1000000,
-	"gemini-2.0-flash":       1000000,
-	"gemini-2.0-pro":         1000000,
-	"gemini-flash":           1000000,
+	"gemini-pro":       32000,
+	"gemini-1.5-pro":   1000000,
+	"gemini-1.5-flash": 1000000,
+	"gemini-2.0-flash": 1000000,
+	"gemini-2.0-pro":   1000000,
+	"gemini-flash":     1000000,
 
 	// GPT models
-	"gpt-4":                  8192,
-	"gpt-4-32k":              32768,
-	"gpt-4-turbo":            128000,
-	"gpt-4o":                 128000,
-	"gpt-4o-mini":            128000,
-	"gpt-5":                  200000,
+	"gpt-4":       8192,
+	"gpt-4-32k":   32768,
+	"gpt-4-turbo": 128000,
+	"gpt-4o":      128000,
+	"gpt-4o-mini": 128000,
+	"gpt-5":       200000,
 
 	// Default fallback
-	"default":                8192,
+	"default": 8192,
 }
 
 // GetModelContextLimit returns the context limit for the specified model.
