@@ -12,6 +12,7 @@ func TestCortexHandler_ConfidenceLogic(t *testing.T) {
 	// Setup Lua state
 	L := lua.NewState()
 	defer L.Close()
+	L.OpenLibs() // Load standard libraries (os, string, etc.)
 
 	// 1. Mock 'switchai' global table
 	switchai := L.NewTable()
@@ -157,6 +158,32 @@ func TestCortexHandler_ConfidenceLogic(t *testing.T) {
 	L.SetField(switchai, "json_inject", L.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(L.CheckString(1)))
 		return 1
+	}))
+
+	// Mock switchai.cache_lookup (Phase 2)
+	L.SetField(switchai, "cache_lookup", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LNil) // No cache hit
+		L.Push(lua.LNil) // No error
+		return 2
+	}))
+
+	// Mock switchai.cache_store (Phase 2)
+	L.SetField(switchai, "cache_store", L.NewFunction(func(L *lua.LState) int {
+		return 0
+	}))
+
+	// Mock switchai.record_feedback (Phase 2)
+	L.SetField(switchai, "record_feedback", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LNil)
+		L.Push(lua.LNil)
+		return 2
+	}))
+
+	// Mock switchai.evaluate_response (Phase 2)
+	L.SetField(switchai, "evaluate_response", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LNil)
+		L.Push(lua.LNil)
+		return 2
 	}))
 
 	// 2. Load handler.lua

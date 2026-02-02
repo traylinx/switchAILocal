@@ -9,6 +9,7 @@ package management
 import (
 	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,7 +115,7 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		c.Header("X-CPA-BUILD-DATE", buildinfo.BuildDate)
 
 		clientIP := c.ClientIP()
-		localClient := clientIP == "127.0.0.1" || clientIP == "::1"
+		localClient := isLocalhostDirect(c)
 		cfg := h.cfg
 		var (
 			allowRemote bool
@@ -356,8 +357,7 @@ func (h *Handler) SkipSecret(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	clientIP := c.ClientIP()
-	if clientIP != "127.0.0.1" && clientIP != "::1" {
+	if !isLocalhostDirect(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "skip setup only allowed from localhost"})
 		return
 	}
@@ -378,8 +378,7 @@ func (h *Handler) ResetSecret(c *gin.Context) {
 	defer h.mu.Unlock()
 
 	// Only allow reset from localhost for safety
-	clientIP := c.ClientIP()
-	if clientIP != "127.0.0.1" && clientIP != "::1" {
+	if !isLocalhostDirect(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "reset only allowed from localhost"})
 		return
 	}
@@ -397,4 +396,29 @@ func (h *Handler) ResetSecret(c *gin.Context) {
 func hashSecret(secret string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
 	return string(bytes), err
+}
+
+// isLocalhostDirect checks if the request is coming directly from localhost
+// without any proxy headers, ensuring a secure local connection.
+func isLocalhostDirect(c *gin.Context) bool {
+	// 1. Check strict RemoteAddr
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		// If RemoteAddr is invalid (e.g. pipe), assume unsafe for localhost checks
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+
+	// 2. Ensure no proxy headers are present to prevent spoofing or proxy bypass
+	// If the user is running behind a proxy, they should not use "Direct Localhost" endpoints.
+	if c.GetHeader("X-Forwarded-For") != "" ||
+		c.GetHeader("X-Real-IP") != "" ||
+		c.GetHeader("Forwarded") != "" {
+		return false
+	}
+
+	return true
 }
