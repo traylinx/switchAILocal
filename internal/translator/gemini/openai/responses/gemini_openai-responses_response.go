@@ -40,6 +40,10 @@ type geminiToResponsesState struct {
 	FuncArgsBuf map[int]*strings.Builder
 	FuncNames   map[int]string
 	FuncCallIDs map[int]string
+
+	// streaming event buffer reuse
+	EventBuf *bytes.Buffer
+	EventEnc *json.Encoder
 }
 
 // responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
@@ -48,22 +52,26 @@ var responseIDCounter uint64
 // funcCallIDCounter provides a process-wide unique counter for function call identifiers.
 var funcCallIDCounter uint64
 
-func emitMarshaledEvent(event string, v any) string {
-	var sb strings.Builder
-	sb.Grow(len(event) + 256) // Heuristic: event name + ~256 bytes for payload
-	sb.WriteString("event: ")
-	sb.WriteString(event)
-	sb.WriteString("\ndata: ")
-
-	enc := json.NewEncoder(&sb)
-	_ = enc.Encode(v)
-
-	s := sb.String()
-	// Encode adds a newline at the end; trim it to match previous behavior
-	if len(s) > 0 && s[len(s)-1] == '\n' {
-		return s[:len(s)-1]
+func (st *geminiToResponsesState) emit(event string, v any) string {
+	if st.EventBuf == nil {
+		st.EventBuf = new(bytes.Buffer)
+		st.EventEnc = json.NewEncoder(st.EventBuf)
 	}
-	return s
+	st.EventBuf.Reset()
+	st.EventBuf.WriteString("event: ")
+	st.EventBuf.WriteString(event)
+	st.EventBuf.WriteString("\ndata: ")
+
+	st.EventEnc.Encode(v)
+
+	if l := st.EventBuf.Len(); l > 0 {
+		b := st.EventBuf.Bytes()
+		if b[l-1] == '\n' {
+			st.EventBuf.Truncate(l - 1)
+		}
+	}
+
+	return st.EventBuf.String()
 }
 
 // ConvertGeminiResponseToOpenAIResponses converts Gemini SSE chunks into OpenAI Responses SSE events.
@@ -105,7 +113,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			SummaryIndex:   0,
 			Text:           full,
 		}
-		out = append(out, emitMarshaledEvent(textDone.Type, textDone))
+		out = append(out, st.emit(textDone.Type, textDone))
 
 		// response.reasoning_summary_part.done
 		partDone := ResponseReasoningSummaryPartDone{
@@ -119,7 +127,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				Text: full,
 			},
 		}
-		out = append(out, emitMarshaledEvent(partDone.Type, partDone))
+		out = append(out, st.emit(partDone.Type, partDone))
 
 		// response.output_item.done
 		itemDone := ResponseOutputItemDone{
@@ -135,7 +143,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}},
 			},
 		}
-		out = append(out, emitMarshaledEvent(itemDone.Type, itemDone))
+		out = append(out, st.emit(itemDone.Type, itemDone))
 
 		st.ReasoningClosed = true
 	}
@@ -166,7 +174,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				Output:     &[]any{},
 			},
 		}
-		out = append(out, emitMarshaledEvent(created.Type, created))
+		out = append(out, st.emit(created.Type, created))
 
 		inprog := ResponseInProgress{
 			Type:           "response.in_progress",
@@ -178,7 +186,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				Status:    "in_progress",
 			},
 		}
-		out = append(out, emitMarshaledEvent(inprog.Type, inprog))
+		out = append(out, st.emit(inprog.Type, inprog))
 
 		st.Started = true
 		st.NextIndex = 0
@@ -209,7 +217,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 							Summary: []SummaryPart{},
 						},
 					}
-					out = append(out, emitMarshaledEvent(item.Type, item))
+					out = append(out, st.emit(item.Type, item))
 
 					partAdded := ReasoningSummaryPartAdded{
 						Type:           "response.reasoning_summary_part.added",
@@ -222,7 +230,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 							Text: "",
 						},
 					}
-					out = append(out, emitMarshaledEvent(partAdded.Type, partAdded))
+					out = append(out, st.emit(partAdded.Type, partAdded))
 				}
 				if t := part.Get("text"); t.Exists() && t.String() != "" {
 					st.ReasoningBuf.WriteString(t.String())
@@ -235,7 +243,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 						SummaryIndex:   0,
 						Delta:          t.String(),
 					}
-					out = append(out, emitMarshaledEvent(msg.Type, msg))
+					out = append(out, st.emit(msg.Type, msg))
 				}
 				return true
 			}
@@ -261,7 +269,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 							Role:    "assistant",
 						},
 					}
-					out = append(out, emitMarshaledEvent(item.Type, item))
+					out = append(out, st.emit(item.Type, item))
 
 					partAdded := ContentPartAdded{
 						Type:           "response.content_part.added",
@@ -276,7 +284,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 							Text:        "",
 						},
 					}
-					out = append(out, emitMarshaledEvent(partAdded.Type, partAdded))
+					out = append(out, st.emit(partAdded.Type, partAdded))
 				}
 				st.TextBuf.WriteString(t.String())
 
@@ -289,7 +297,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					Delta:          t.String(),
 					Logprobs:       []any{},
 				}
-				out = append(out, emitMarshaledEvent(msg.Type, msg))
+				out = append(out, st.emit(msg.Type, msg))
 				return true
 			}
 
@@ -320,7 +328,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 						Name:      name,
 					},
 				}
-				out = append(out, emitMarshaledEvent(item.Type, item))
+				out = append(out, st.emit(item.Type, item))
 
 				if args := fc.Get("args"); args.Exists() {
 					argsJSON := args.Raw
@@ -333,7 +341,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 						OutputIndex:    idx,
 						Delta:          argsJSON,
 					}
-					out = append(out, emitMarshaledEvent(ad.Type, ad))
+					out = append(out, st.emit(ad.Type, ad))
 				}
 
 				return true
@@ -356,7 +364,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				Text:           "",
 				Logprobs:       []any{},
 			}
-			out = append(out, emitMarshaledEvent(done.Type, done))
+			out = append(out, st.emit(done.Type, done))
 
 			partDone := ResponseContentPartDone{
 				Type:           "response.content_part.done",
@@ -371,7 +379,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					Text:        "",
 				},
 			}
-			out = append(out, emitMarshaledEvent(partDone.Type, partDone))
+			out = append(out, st.emit(partDone.Type, partDone))
 
 			final := ResponseOutputItemDone{
 				Type:           "response.output_item.done",
@@ -388,7 +396,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					Role: "assistant",
 				},
 			}
-			out = append(out, emitMarshaledEvent(final.Type, final))
+			out = append(out, st.emit(final.Type, final))
 		}
 
 		if len(st.FuncArgsBuf) > 0 {
@@ -417,7 +425,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					OutputIndex:    idx,
 					Arguments:      args,
 				}
-				out = append(out, emitMarshaledEvent(fcDone.Type, fcDone))
+				out = append(out, st.emit(fcDone.Type, fcDone))
 
 				itemDone := ResponseOutputItemDone{
 					Type:           "response.output_item.done",
@@ -432,7 +440,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 						Name:      st.FuncNames[idx],
 					},
 				}
-				out = append(out, emitMarshaledEvent(itemDone.Type, itemDone))
+				out = append(out, st.emit(itemDone.Type, itemDone))
 			}
 		}
 
@@ -596,7 +604,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			completed.Response.Usage = usage
 		}
 
-		out = append(out, emitMarshaledEvent(completed.Type, completed))
+		out = append(out, st.emit(completed.Type, completed))
 	}
 
 	return out
