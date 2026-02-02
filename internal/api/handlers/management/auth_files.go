@@ -234,9 +234,42 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		return
 	}
 	auths := h.authManager.List()
+
+	statCache := make(map[string]statResult)
+	var mu sync.Mutex
+
+	uniquePaths := make(map[string]struct{})
+	for _, auth := range auths {
+		path := strings.TrimSpace(authAttribute(auth, "path"))
+		if path != "" {
+			uniquePaths[path] = struct{}{}
+		}
+	}
+
+	if len(uniquePaths) > 0 {
+		concurrency := 20
+		sem := make(chan struct{}, concurrency)
+		var wg sync.WaitGroup
+
+		for path := range uniquePaths {
+			wg.Add(1)
+			go func(p string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				info, err := os.Stat(p)
+				<-sem
+
+				mu.Lock()
+				statCache[p] = statResult{info: info, err: err}
+				mu.Unlock()
+			}(path)
+		}
+		wg.Wait()
+	}
+
 	files := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
-		if entry := h.buildAuthFileEntry(auth); entry != nil {
+		if entry := h.buildAuthFileEntry(auth, statCache); entry != nil {
 			files = append(files, entry)
 		}
 	}
@@ -330,7 +363,12 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 	c.JSON(200, gin.H{"files": files})
 }
 
-func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
+type statResult struct {
+	info os.FileInfo
+	err  error
+}
+
+func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth, statCache map[string]statResult) gin.H {
 	if auth == nil {
 		return nil
 	}
@@ -386,7 +424,20 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if path != "" {
 		entry["path"] = path
 		entry["source"] = "file"
-		if info, err := os.Stat(path); err == nil {
+
+		var info os.FileInfo
+		var err error
+		if statCache != nil {
+			if res, ok := statCache[path]; ok {
+				info, err = res.info, res.err
+			} else {
+				info, err = os.Stat(path)
+			}
+		} else {
+			info, err = os.Stat(path)
+		}
+
+		if err == nil {
 			entry["size"] = info.Size()
 			entry["modtime"] = info.ModTime()
 		} else if os.IsNotExist(err) {
