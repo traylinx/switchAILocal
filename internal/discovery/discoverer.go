@@ -113,21 +113,34 @@ func (d *Discoverer) DiscoverAll(ctx context.Context) (map[string][]*registry.Mo
 	log.WithField("count", len(sources)).Debug("Starting discovery for all sources")
 
 	results := make(map[string][]*registry.ModelInfo)
+	var wg sync.WaitGroup
+	var resultsMu sync.Mutex
 
 	for _, src := range sources {
-		log.WithField("provider", src.ProviderID).Debug("Running discovery for source")
-		models, err := d.discoverSource(ctx, src)
-		if err != nil {
-			log.WithError(err).WithField("provider", src.ProviderID).Warn("Discovery failed for provider")
-			// Try to use cached data
-			if cached := d.cache.GetWithGrace(src.ProviderID, GracePeriodDays); cached != nil {
-				log.WithField("provider", src.ProviderID).Info("Using cached models due to discovery failure")
-				results[src.ProviderID] = cached.Models
+		wg.Add(1)
+		go func(src SourceConfig) {
+			defer wg.Done()
+
+			log.WithField("provider", src.ProviderID).Debug("Running discovery for source")
+			models, err := d.discoverSource(ctx, src)
+			if err != nil {
+				log.WithError(err).WithField("provider", src.ProviderID).Warn("Discovery failed for provider")
+				// Try to use cached data
+				if cached := d.cache.GetWithGrace(src.ProviderID, GracePeriodDays); cached != nil {
+					log.WithField("provider", src.ProviderID).Info("Using cached models due to discovery failure")
+					resultsMu.Lock()
+					results[src.ProviderID] = cached.Models
+					resultsMu.Unlock()
+				}
+				return
 			}
-			continue
-		}
-		results[src.ProviderID] = models
+			resultsMu.Lock()
+			results[src.ProviderID] = models
+			resultsMu.Unlock()
+		}(src)
 	}
+
+	wg.Wait()
 
 	// Add Claude models using static fallback
 	claudeParser := parsers.NewClaudeParser()
