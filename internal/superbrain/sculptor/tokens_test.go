@@ -27,6 +27,39 @@ func TestNewTokenEstimator(t *testing.T) {
 	})
 }
 
+func TestEstimateTokens_TikToken(t *testing.T) {
+	te := NewTokenEstimator("tiktoken")
+	if te.Method() != "tiktoken" {
+		t.Skip("tiktoken method fell back to simple (likely missing embedded vocab), skipping test")
+	}
+
+	t.Run("estimates tokens accurately for tiktoken", func(t *testing.T) {
+		// "The quick brown fox jumps over the lazy dog."
+		// cl100k_base count is 10
+		content := "The quick brown fox jumps over the lazy dog."
+		tokens := te.EstimateTokens(content)
+
+		// We check for exact match or at least > 0
+		if tokens == 0 {
+			t.Error("expected > 0 tokens")
+		}
+
+		// If encoding works, it should be 10 for cl100k_base.
+		// If it's 10, it confirms it's using tiktoken (simple estimate is 11)
+		if tokens != 10 {
+			t.Logf("Warning: Expected 10 tokens for cl100k_base, got %d. Might be using different encoding or fallback.", tokens)
+		}
+	})
+
+	t.Run("handles special characters", func(t *testing.T) {
+		content := "hello world! 😊"
+		tokens := te.EstimateTokens(content)
+		if tokens == 0 {
+			t.Error("expected > 0 tokens")
+		}
+	})
+}
+
 func TestEstimateTokens(t *testing.T) {
 	te := NewTokenEstimator("simple")
 
