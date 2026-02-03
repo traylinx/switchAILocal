@@ -138,6 +138,11 @@ Format:
 **Learning:** `ClientIP()` in Gin is ambiguous and context-dependent. For critical security checks like "Localhost Only", relying on framework convenience methods that try to be "smart" about proxies is dangerous. Strict validation of `RemoteAddr` and explicit rejection of proxy headers is required for "Direct Connection" security models.
 **Prevention:** Implemented `isLocalhostDirect` which strictly validates `RemoteAddr` is loopback AND ensures `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` headers are absent.
 
+## 2026-06-04 - Path Traversal in DownloadAuthFile
+**Vulnerability:** The `DownloadAuthFile` endpoint relied solely on `strings.Contains(name, os.PathSeparator)` to prevent path traversal. This was insufficient because it only checked for the host OS separator (e.g., `/` on Linux), potentially allowing traversal on Windows (using `../`) or vice-versa, as `filepath.Join` and `os.ReadFile` can interpret separators differently than the validation logic.
+**Learning:** `os.PathSeparator` is insufficient for input validation in cross-platform applications or when handling paths from untrusted sources (like URLs). Attackers can use the alternate separator (`\` vs `/`) to bypass checks if the underlying file system operations accept them.
+**Prevention:** Validate against *all* known separators (`/` and `\`) using `strings.ContainsAny`. Additionally, enforce `filepath.Base()` usage to ensure the file path is restricted to the immediate filename, providing defense-in-depth even if validation logic is flawed.
+
 ---
 
 ## Sentinel's Daily Process

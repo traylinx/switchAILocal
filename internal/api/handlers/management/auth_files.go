@@ -490,7 +490,8 @@ func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {
 // Download single auth file by name
 func (h *Handler) DownloadAuthFile(c *gin.Context) {
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	// Sentinel: Fix path traversal vulnerability by checking for both / and \
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -498,7 +499,8 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "name must end with .json"})
 		return
 	}
-	full := filepath.Join(h.cfg.AuthDir, name)
+	// Sentinel: Use filepath.Base as defense-in-depth
+	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
 	data, err := os.ReadFile(full)
 	if err != nil {
 		if os.IsNotExist(err) {
