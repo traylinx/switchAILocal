@@ -397,6 +397,11 @@ function Plugin:on_request(req)
         return nil 
     end
 
+    -- Do not route if a specific provider is requested
+    if req.provider and req.provider ~= "" then
+        return nil
+    end
+
     -- Initialize metadata if missing
     req.metadata = req.metadata or {}
 

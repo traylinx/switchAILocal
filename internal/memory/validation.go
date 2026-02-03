@@ -10,7 +10,7 @@ import (
 var (
 	// API key hash must be sha256: followed by 64 hex characters
 	apiKeyHashRegex = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
-	
+
 	// Model name validation (provider:model format)
 	modelNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+:[a-zA-Z0-9_.-]+$`)
 )

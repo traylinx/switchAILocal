@@ -19,6 +19,9 @@ import (
 	"github.com/traylinx/switchAILocal/internal/api"
 	"github.com/traylinx/switchAILocal/internal/cli"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/heartbeat"
+	"github.com/traylinx/switchAILocal/internal/integration"
+	"github.com/traylinx/switchAILocal/internal/memory"
 	"github.com/traylinx/switchAILocal/internal/runtime/executor"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal"
 	sdkauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
@@ -33,6 +36,48 @@ import (
 //   - configPath: The path to the configuration file
 //   - localPassword: Optional password accepted for local management requests
 func StartService(cfg *config.Config, configPath string, localPassword string) {
+	// Convert config types for integration
+	memoryConfig := convertMemoryConfig(&cfg.Memory)
+	heartbeatConfig := convertHeartbeatConfig(&cfg.Heartbeat)
+
+	// Load integration configuration from main config
+	integrationCfg := &integration.IntegrationConfig{
+		Memory:     memoryConfig,
+		Heartbeat:  heartbeatConfig,
+		Steering:   &cfg.Steering,
+		Hooks:      &cfg.Hooks,
+		MainConfig: cfg,
+	}
+
+	// Create ServiceCoordinator with integration config
+	coordinator, err := integration.NewServiceCoordinator(integrationCfg)
+	if err != nil {
+		log.Errorf("failed to create service coordinator: %v", err)
+		// Continue without intelligent systems - fail gracefully
+		coordinator = nil
+	}
+
+	// Start ServiceCoordinator
+	if coordinator != nil {
+		startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := coordinator.Start(startCtx); err != nil {
+			log.Errorf("failed to start service coordinator: %v", err)
+			// Continue without intelligent systems - fail gracefully
+			coordinator = nil
+		}
+		startCancel()
+	}
+
+	// Create pipeline integrator if coordinator is available
+	var pipelineIntegrator *integration.RequestPipelineIntegrator
+	if coordinator != nil {
+		pipelineIntegrator = integration.NewRequestPipelineIntegrator(
+			coordinator.GetSteering(),
+			coordinator.GetMemory(),
+			coordinator.GetEventBus(),
+		)
+	}
+
 	builder := switchailocal.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
@@ -70,6 +115,11 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 			},
 		})
 
+	// Pass coordinator to API server via ServerOption
+	if pipelineIntegrator != nil {
+		builder = builder.WithServerOptions(api.WithPipelineIntegrator(pipelineIntegrator))
+	}
+
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -86,12 +136,29 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	service, err := builder.Build()
 	if err != nil {
 		log.Errorf("failed to build proxy service: %v", err)
+		// Stop coordinator on build failure
+		if coordinator != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if stopErr := coordinator.Stop(shutdownCtx); stopErr != nil {
+				log.Errorf("failed to stop service coordinator: %v", stopErr)
+			}
+			shutdownCancel()
+		}
 		return
 	}
 
 	err = service.Run(runCtx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Errorf("proxy service exited with error: %v", err)
+	}
+
+	// Stop coordinator on shutdown
+	if coordinator != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if stopErr := coordinator.Stop(shutdownCtx); stopErr != nil {
+			log.Errorf("failed to stop service coordinator: %v", stopErr)
+		}
 	}
 }
 
@@ -107,4 +174,46 @@ func WaitForCloudDeploy() {
 	// Block until shutdown signal is received
 	<-ctxSignal.Done()
 	log.Info("Cloud deploy mode: Shutdown signal received; exiting")
+}
+
+// convertMemoryConfig converts config.MemoryConfig to memory.MemoryConfig
+func convertMemoryConfig(cfg *config.MemoryConfig) *memory.MemoryConfig {
+	return &memory.MemoryConfig{
+		Enabled:       cfg.Enabled,
+		BaseDir:       cfg.BaseDir,
+		RetentionDays: cfg.RetentionDays,
+		MaxLogSizeMB:  cfg.MaxLogSizeMB,
+		Compression:   cfg.Compression,
+	}
+}
+
+// convertHeartbeatConfig converts config.HeartbeatConfig to heartbeat.HeartbeatConfig
+func convertHeartbeatConfig(cfg *config.HeartbeatConfig) *heartbeat.HeartbeatConfig {
+	// Parse duration strings
+	interval, err := time.ParseDuration(cfg.Interval)
+	if err != nil {
+		interval = 5 * time.Minute // Default
+	}
+	
+	timeout, err := time.ParseDuration(cfg.Timeout)
+	if err != nil {
+		timeout = 5 * time.Second // Default
+	}
+	
+	retryDelay, err := time.ParseDuration(cfg.RetryDelay)
+	if err != nil {
+		retryDelay = time.Second // Default
+	}
+	
+	return &heartbeat.HeartbeatConfig{
+		Enabled:                cfg.Enabled,
+		Interval:               interval,
+		Timeout:                timeout,
+		AutoDiscovery:          cfg.AutoDiscovery,
+		QuotaWarningThreshold:  cfg.QuotaWarningThreshold,
+		QuotaCriticalThreshold: cfg.QuotaCriticalThreshold,
+		MaxConcurrentChecks:    cfg.MaxConcurrentChecks,
+		RetryAttempts:          cfg.RetryAttempts,
+		RetryDelay:             retryDelay,
+	}
 }

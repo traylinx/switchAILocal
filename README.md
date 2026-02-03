@@ -390,11 +390,14 @@ intelligence:
 
 | Guide | Description |
 | --- | --- |
-| [State Box](docs/user/state-box.md) | Secure state management & configuration |
-| [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
+| [Installation](docs/user/installation.md) | Getting started guide |
 | [Configuration](docs/user/configuration.md) | All configuration options |
 | [Providers](docs/user/providers.md) | Setting up AI providers |
 | [API Reference](docs/user/api-reference.md) | REST API documentation |
+| [Intelligent Systems](docs/user/intelligent-systems.md) | Memory, Heartbeat, Steering, and Hooks |
+| [Advanced Features](docs/user/advanced-features.md) | Payload overrides, failover, and more |
+| [State Box](docs/user/state-box.md) | Secure state management & configuration |
+| [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
 
 ### Build from Source
 

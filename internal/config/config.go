@@ -114,6 +114,15 @@ type Config struct {
 	// Heartbeat configures proactive background monitoring for provider health.
 	Heartbeat HeartbeatConfig `yaml:"heartbeat" json:"heartbeat"`
 
+	// Memory configures the memory system for routing decisions and learning.
+	Memory MemoryConfig `yaml:"memory" json:"memory"`
+
+	// Steering configures context-aware routing rules.
+	Steering SteeringConfig `yaml:"steering" json:"steering"`
+
+	// Hooks configures the event-driven automation system.
+	Hooks HooksConfig `yaml:"hooks" json:"hooks"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
@@ -215,6 +224,31 @@ type QuotaExceeded struct {
 	// SwitchPreviewModel indicates whether to automatically switch to a preview model when a quota is exceeded.
 	SwitchPreviewModel bool `yaml:"switch-preview-model" json:"switch-preview-model"`
 }
+
+// MemoryConfig represents configuration for the memory system.
+// The memory system records routing decisions, learns user preferences, and tracks provider quirks.
+type MemoryConfig struct {
+	// Enabled toggles the memory system on or off.
+	// When false, no routing decisions are recorded.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// BaseDir is the directory where memory data is stored.
+	// Default: ".switchailocal/memory"
+	BaseDir string `yaml:"base-dir" json:"base-dir"`
+
+	// RetentionDays is the number of days to retain routing decision logs.
+	// Older logs are automatically cleaned up. Default: 90 days.
+	RetentionDays int `yaml:"retention-days" json:"retention-days"`
+
+	// MaxLogSizeMB is the maximum size in MB for a single log file.
+	// When exceeded, the log file is rotated. Default: 100 MB.
+	MaxLogSizeMB int `yaml:"max-log-size-mb" json:"max-log-size-mb"`
+
+	// Compression enables gzip compression for rotated log files.
+	// Default: true
+	Compression bool `yaml:"compression" json:"compression"`
+}
+
 
 // AmpModelMapping defines a model name mapping for Amp CLI requests.
 // When Amp requests a model that isn't available locally, this mapping
@@ -558,6 +592,23 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Heartbeat.RetryAttempts = 2
 	cfg.Heartbeat.RetryDelay = "1s"
 
+	// Set Memory defaults
+	cfg.Memory.Enabled = false // Disabled by default (opt-in)
+	cfg.Memory.BaseDir = ".switchailocal/memory"
+	cfg.Memory.RetentionDays = 90
+	cfg.Memory.MaxLogSizeMB = 100
+	cfg.Memory.Compression = true
+
+	// Set Steering defaults
+	cfg.Steering.Enabled = false // Disabled by default (opt-in)
+	cfg.Steering.RulesDir = ".switchailocal/steering"
+	cfg.Steering.HotReload = true
+
+	// Set Hooks defaults
+	cfg.Hooks.Enabled = false // Disabled by default (opt-in)
+	cfg.Hooks.HooksDir = ".switchailocal/hooks"
+	cfg.Hooks.HotReload = true
+
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -628,6 +679,15 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Heartbeat configuration
 	cfg.SanitizeHeartbeat()
+
+	// Sanitize Memory configuration
+	cfg.SanitizeMemory()
+
+	// Sanitize Steering configuration
+	cfg.SanitizeSteering()
+
+	// Sanitize Hooks configuration
+	cfg.SanitizeHooks()
 
 	// Sanitize Intelligence configuration
 	cfg.SDKConfig.SanitizeIntelligence()
@@ -768,6 +828,88 @@ func (cfg *Config) SanitizeGeminiKeys() {
 	}
 	cfg.GeminiKey = out
 }
+
+// SanitizeMemory validates and normalizes memory system configuration.
+// It ensures directories are set, retention days are positive, and log sizes are reasonable.
+func (cfg *Config) SanitizeMemory() {
+	if cfg == nil {
+		return
+	}
+
+	mem := &cfg.Memory
+
+	// Normalize base directory
+	mem.BaseDir = strings.TrimSpace(mem.BaseDir)
+	if mem.BaseDir == "" {
+		mem.BaseDir = ".switchailocal/memory"
+	}
+
+	// Validate retention days
+	if mem.RetentionDays < 0 {
+		mem.RetentionDays = 0 // 0 means no automatic cleanup
+	}
+	if mem.RetentionDays > 3650 { // Max 10 years
+		mem.RetentionDays = 3650
+	}
+
+	// Validate max log size
+	if mem.MaxLogSizeMB < 0 {
+		mem.MaxLogSizeMB = 0 // 0 means no rotation
+	}
+	if mem.MaxLogSizeMB > 10000 { // Max 10GB per file
+		mem.MaxLogSizeMB = 10000
+	}
+}
+
+// SanitizeSteering validates and normalizes steering engine configuration.
+// It ensures the rules directory is set and hot-reload is properly configured.
+func (cfg *Config) SanitizeSteering() {
+	if cfg == nil {
+		return
+	}
+
+	steer := &cfg.Steering
+
+	// Normalize rules directory (support both rules-dir and steering-dir for compatibility)
+	steer.RulesDir = strings.TrimSpace(steer.RulesDir)
+	steer.SteeringDir = strings.TrimSpace(steer.SteeringDir)
+	
+	// If RulesDir is empty but SteeringDir is set, use SteeringDir
+	if steer.RulesDir == "" && steer.SteeringDir != "" {
+		steer.RulesDir = steer.SteeringDir
+	}
+	
+	// If both are empty, set default
+	if steer.RulesDir == "" {
+		steer.RulesDir = ".switchailocal/steering"
+	}
+	
+	// Sync SteeringDir with RulesDir for backwards compatibility
+	steer.SteeringDir = steer.RulesDir
+
+	// Hot-reload defaults to true when steering is enabled
+	// No additional validation needed for boolean
+}
+
+// SanitizeHooks validates and normalizes hooks system configuration.
+// It ensures the hooks directory is set and hot-reload is properly configured.
+func (cfg *Config) SanitizeHooks() {
+	if cfg == nil {
+		return
+	}
+
+	hooks := &cfg.Hooks
+
+	// Normalize hooks directory
+	hooks.HooksDir = strings.TrimSpace(hooks.HooksDir)
+	if hooks.HooksDir == "" {
+		hooks.HooksDir = ".switchailocal/hooks"
+	}
+
+	// Hot-reload defaults to true when hooks are enabled
+	// No additional validation needed for boolean
+}
+
 
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)

@@ -110,6 +110,58 @@ usage-statistics-enabled: true
 
 ---
 
+## Intelligent Systems Integration
+
+The four intelligent systems (Memory, Heartbeat, Steering, Hooks) work together to provide enhanced routing, monitoring, and automation:
+
+### Request Flow with Intelligent Systems
+
+1. **Request Arrives** → HTTP handler receives request
+2. **Steering Applied** → Steering engine evaluates rules and may modify request (model, provider, parameters)
+3. **Routing Decision** → Server selects provider based on availability and rules
+4. **Memory Recording** → Routing decision is recorded with timestamp and context
+5. **Request Forwarded** → Request sent to selected provider
+6. **Response Returned** → Response sent back to client
+7. **Outcome Updated** → Memory system updates decision with success/failure outcome
+8. **Events Emitted** → Routing events trigger any matching hooks
+
+### Background Operations
+
+- **Heartbeat Monitor** runs periodic health checks on all providers
+- **Memory Cleanup** removes old records based on retention policy
+- **Hook Execution** processes events asynchronously without blocking requests
+- **Analytics Computation** calculates provider performance metrics
+
+### Hot-Reload Workflow
+
+When steering rules or hooks are modified:
+
+1. File watcher detects changes
+2. System validates new configuration
+3. If valid, new rules/hooks are loaded atomically
+4. Old configuration is replaced
+5. In-flight requests continue with old configuration
+6. New requests use new configuration
+7. Event is emitted for monitoring
+
+### Performance Impact
+
+- **Disabled**: Zero overhead (systems not initialized)
+- **Enabled**: < 3ms total overhead per request
+  - Steering evaluation: < 2ms
+  - Memory recording: < 1ms (async)
+  - Event emission: < 0.5ms (async)
+
+### Error Handling
+
+All intelligent systems follow fail-safe design:
+- Failures never block request processing
+- Errors are logged but don't propagate to clients
+- Systems gracefully degrade when unavailable
+- Server continues functioning if systems fail to initialize
+
+---
+
 ## CLI Provider Capabilities
 
 When using CLI tool providers (`geminicli`, `vibe`, `claudecli`, `codex`), `switchAILocal` exposes advanced capabilities through the `extra_body.cli` extension.

@@ -255,3 +255,71 @@ Access the graphical dashboard to:
 - View real-time request logs
 - Manage API keys
 
+---
+
+## Management API Endpoints
+
+The Management API provides programmatic access to server configuration and intelligent systems.
+
+**Authentication**: All management endpoints require the `X-Management-Key` header with your configured secret key.
+
+### Intelligent Systems Status
+
+**Memory Statistics**
+```bash
+curl http://localhost:18080/v0/management/memory/stats \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Returns memory system statistics including total decisions recorded, success rate, and storage usage.
+
+**Heartbeat Status**
+```bash
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Returns current health status of all monitored providers, including last check time, status, and quota usage.
+
+**Steering Rules**
+```bash
+curl http://localhost:18080/v0/management/steering/rules \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Returns all loaded steering rules with their priorities and conditions.
+
+**Hooks Status**
+```bash
+curl http://localhost:18080/v0/management/hooks/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Returns all configured hooks with their event subscriptions and execution counts.
+
+**Analytics**
+```bash
+curl http://localhost:18080/v0/management/analytics \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Returns computed analytics from the memory system, including provider performance metrics and routing patterns.
+
+### Hot-Reload Operations
+
+**Reload Steering Rules**
+```bash
+curl -X POST http://localhost:18080/v0/management/steering/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Reloads steering rules from disk without restarting the server.
+
+**Reload Hooks**
+```bash
+curl -X POST http://localhost:18080/v0/management/hooks/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Reloads hooks from disk without restarting the server.
+

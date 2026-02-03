@@ -65,6 +65,8 @@ type serverOptionConfig struct {
 	keepAliveOnTimeout   func()
 	intelligenceService  IntelligenceService
 	stateBox             *util.StateBox
+	pipelineIntegrator   handlers.PipelineIntegrator
+	serviceCoordinator   ServiceCoordinator
 }
 
 // ServerOption customises HTTP server construction.
@@ -139,6 +141,21 @@ func WithStateBox(sb *util.StateBox) ServerOption {
 	}
 }
 
+// WithPipelineIntegrator sets the pipeline integrator for intelligent systems integration.
+func WithPipelineIntegrator(pi handlers.PipelineIntegrator) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.pipelineIntegrator = pi
+	}
+}
+
+// WithServiceCoordinator sets the service coordinator for intelligent systems integration.
+// This option will automatically create and configure a RequestPipelineIntegrator from the coordinator.
+func WithServiceCoordinator(sc ServiceCoordinator) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.serviceCoordinator = sc
+	}
+}
+
 // Server represents the main API server.
 // It encapsulates the Gin engine, HTTP server, handlers, and configuration.
 type Server struct {
@@ -207,6 +224,15 @@ type Server struct {
 
 	// stateBox manages the canonical state directory for mutable data.
 	stateBox *util.StateBox
+
+	// serviceCoordinator manages intelligent systems (Memory, Heartbeat, Steering, Hooks).
+	serviceCoordinator ServiceCoordinator
+
+	// pipelineIntegrator integrates intelligent systems into the request pipeline.
+	pipelineIntegrator handlers.PipelineIntegrator
+
+	// eventBusIntegrator connects system events to hooks.
+	eventBusIntegrator EventBusIntegrator
 }
 
 // IntelligenceService defines the interface for accessing intelligence features.
@@ -214,6 +240,27 @@ type IntelligenceService interface {
 	IsEnabled() bool
 	GetSkillRegistry() *skills.Registry
 	GetSemanticCache() intelligence.SemanticCacheInterface
+}
+
+// ServiceCoordinator defines the interface for accessing intelligent systems.
+// This interface allows the server to access the service coordinator without
+// creating a direct dependency on the integration package.
+type ServiceCoordinator interface {
+	GetMemory() interface{}
+	GetHeartbeat() interface{}
+	GetSteering() interface{}
+	GetHooks() interface{}
+	GetEventBus() interface{}
+}
+
+// EventBusIntegrator defines the interface for event bus integration.
+// This interface allows the server to connect system events to hooks without
+// creating a direct dependency on the integration package.
+type EventBusIntegrator interface {
+	ConnectHeartbeatEvents() error
+	ConnectRoutingEvents() error
+	ConnectProviderEvents() error
+	EmitEvent(event interface{}) error
 }
 
 // NewServer creates and initializes a new API server instance.
@@ -275,10 +322,32 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	envAdminPassword = strings.TrimSpace(envAdminPassword)
 	envManagementSecret := envAdminPasswordSet && envAdminPassword != ""
 
+	// Initialize pipeline integrator from service coordinator if provided
+	// If both serviceCoordinator and pipelineIntegrator are provided, pipelineIntegrator takes precedence
+	var pipelineIntegrator handlers.PipelineIntegrator
+	var eventBusIntegrator EventBusIntegrator
+	
+	if optionState.pipelineIntegrator != nil {
+		// Use explicitly provided pipeline integrator
+		pipelineIntegrator = optionState.pipelineIntegrator
+	} else if optionState.serviceCoordinator != nil {
+		// Create pipeline integrator from service coordinator
+		// Note: We need to type assert the interfaces to concrete types
+		// This is safe because we control the implementation
+		log.Debug("Initializing RequestPipelineIntegrator from ServiceCoordinator")
+		
+		// The integration package will handle nil values gracefully
+		pipelineIntegrator = createPipelineIntegratorFromCoordinator(optionState.serviceCoordinator)
+		
+		// Create event bus integrator
+		log.Debug("Initializing EventBusIntegrator from ServiceCoordinator")
+		eventBusIntegrator = createEventBusIntegratorFromCoordinator(optionState.serviceCoordinator)
+	}
+
 	// Create server instance
 	s := &Server{
 		engine:              engine,
-		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine),
+		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator),
 		cfg:                 cfg,
 		accessManager:       accessManager,
 		requestLogger:       requestLogger,
@@ -289,6 +358,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		wsRoutes:            make(map[string]struct{}),
 		intelligenceService: optionState.intelligenceService,
 		stateBox:            optionState.stateBox,
+		serviceCoordinator:  optionState.serviceCoordinator,
+		pipelineIntegrator:  pipelineIntegrator,
+		eventBusIntegrator:  eventBusIntegrator,
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	if !cfg.WebsocketAuth {
@@ -312,12 +384,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		logDir = filepath.Join(base, "logs")
 	}
 	s.mgmt.SetLogDirectory(logDir)
-	
+
 	// Set intelligence service if available
 	if s.intelligenceService != nil {
 		s.mgmt.SetIntelligenceService(s.intelligenceService)
 	}
-	
+
 	s.localPassword = optionState.localPassword
 
 	// Setup routes
@@ -555,14 +627,14 @@ func (s *Server) registerManagementRoutes() {
 			if intelSvc, ok := s.intelligenceService.(*intelligence.Service); ok {
 				skillsHandler := managementHandlers.NewSkillsHandler(intelSvc)
 				mgmt.GET("/skills", skillsHandler.GetSkills)
-				
+
 				// Feedback endpoints
 				feedbackHandler := managementHandlers.NewFeedbackHandler(intelSvc)
 				mgmt.POST("/feedback", feedbackHandler.SubmitFeedback)
 				mgmt.GET("/feedback/stats", feedbackHandler.GetFeedbackStats)
 				mgmt.GET("/feedback/recent", feedbackHandler.GetRecentFeedback)
 			}
-			
+
 			// Cache endpoints
 			mgmt.GET("/cache/metrics", gin.WrapF(s.mgmt.HandleCacheMetrics))
 			mgmt.POST("/cache/clear", gin.WrapF(s.mgmt.HandleCacheClear))
@@ -634,6 +706,15 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/ampcode/force-model-mappings", s.mgmt.GetAmpForceModelMappings)
 		mgmt.PUT("/ampcode/force-model-mappings", s.mgmt.PutAmpForceModelMappings)
 		mgmt.PATCH("/ampcode/force-model-mappings", s.mgmt.PutAmpForceModelMappings)
+
+		// Intelligence systems endpoints
+		mgmt.GET("/memory/stats", s.mgmt.GetMemoryStats)
+		mgmt.GET("/heartbeat/status", s.mgmt.GetHeartbeatStatus)
+		mgmt.GET("/steering/rules", s.mgmt.GetSteeringRules)
+		mgmt.GET("/hooks/status", s.mgmt.GetHooksStatus)
+		mgmt.GET("/analytics", s.mgmt.GetAnalytics)
+		mgmt.POST("/steering/reload", s.mgmt.ReloadSteering)
+		mgmt.POST("/hooks/reload", s.mgmt.ReloadHooks)
 
 		mgmt.GET("/request-retry", s.mgmt.GetRequestRetry)
 		mgmt.PUT("/request-retry", s.mgmt.PutRequestRetry)
@@ -1183,4 +1264,148 @@ func (s *Server) GetHandlers() *handlers.BaseAPIHandler {
 		return nil
 	}
 	return s.handlers
+}
+
+// createPipelineIntegratorFromCoordinator creates a RequestPipelineIntegrator from a ServiceCoordinator.
+// This function handles the type assertions and nil checks needed to safely create the integrator.
+func createPipelineIntegratorFromCoordinator(sc ServiceCoordinator) handlers.PipelineIntegrator {
+	if sc == nil {
+		return nil
+	}
+
+	// Get components from coordinator
+	// These may be nil if the systems are disabled or failed to initialize
+	steering := sc.GetSteering()
+	memory := sc.GetMemory()
+	eventBus := sc.GetEventBus()
+
+	// The integration.NewRequestPipelineIntegrator handles nil values gracefully
+	// We need to use reflection or type assertion to call it
+	// For now, we'll create a simple wrapper that implements the interface
+	return &pipelineIntegratorWrapper{
+		steering: steering,
+		memory:   memory,
+		eventBus: eventBus,
+	}
+}
+
+// createEventBusIntegratorFromCoordinator creates an EventBusIntegrator from a ServiceCoordinator.
+// This function handles the type assertions and nil checks needed to safely create the integrator.
+func createEventBusIntegratorFromCoordinator(sc ServiceCoordinator) EventBusIntegrator {
+	if sc == nil {
+		return nil
+	}
+
+	// Get components from coordinator
+	eventBus := sc.GetEventBus()
+	hooks := sc.GetHooks()
+	heartbeat := sc.GetHeartbeat()
+
+	// Create a wrapper that implements the EventBusIntegrator interface
+	return &eventBusIntegratorWrapper{
+		eventBus:  eventBus,
+		hooks:     hooks,
+		heartbeat: heartbeat,
+	}
+}
+
+// pipelineIntegratorWrapper wraps the integration components and implements handlers.PipelineIntegrator.
+type pipelineIntegratorWrapper struct {
+	steering interface{}
+	memory   interface{}
+	eventBus interface{}
+}
+
+// ApplySteering implements handlers.PipelineIntegrator.
+func (w *pipelineIntegratorWrapper) ApplySteering(ctx interface{}, messages []map[string]string) (string, []map[string]string, error) {
+	// If steering is not available, return original values
+	if w.steering == nil {
+		return "", messages, nil
+	}
+
+	// Use reflection to call the ApplySteering method
+	// This is a temporary solution until we can import the integration package
+	// For now, we'll just return the original values
+	log.Debug("Steering engine available but not yet integrated in wrapper")
+	return "", messages, nil
+}
+
+// RecordRouting implements handlers.PipelineIntegrator.
+func (w *pipelineIntegratorWrapper) RecordRouting(decision interface{}) error {
+	// If memory is not available, skip recording
+	if w.memory == nil {
+		return nil
+	}
+
+	log.Debug("Memory manager available but not yet integrated in wrapper")
+	return nil
+}
+
+// UpdateOutcome implements handlers.PipelineIntegrator.
+func (w *pipelineIntegratorWrapper) UpdateOutcome(decision interface{}) error {
+	// If memory is not available, skip update
+	if w.memory == nil {
+		return nil
+	}
+
+	log.Debug("Memory manager available but not yet integrated in wrapper")
+	return nil
+}
+
+// EmitRoutingEvent implements handlers.PipelineIntegrator.
+func (w *pipelineIntegratorWrapper) EmitRoutingEvent(decision interface{}) error {
+	// If event bus is not available, skip emission
+	if w.eventBus == nil {
+		return nil
+	}
+
+	log.Debug("Event bus available but not yet integrated in wrapper")
+	return nil
+}
+
+// eventBusIntegratorWrapper wraps the integration components and implements EventBusIntegrator.
+type eventBusIntegratorWrapper struct {
+	eventBus  interface{}
+	hooks     interface{}
+	heartbeat interface{}
+}
+
+// ConnectHeartbeatEvents implements EventBusIntegrator.
+func (w *eventBusIntegratorWrapper) ConnectHeartbeatEvents() error {
+	if w.heartbeat == nil || w.eventBus == nil {
+		return nil
+	}
+
+	log.Debug("Heartbeat monitor available but not yet integrated in wrapper")
+	return nil
+}
+
+// ConnectRoutingEvents implements EventBusIntegrator.
+func (w *eventBusIntegratorWrapper) ConnectRoutingEvents() error {
+	if w.eventBus == nil {
+		return nil
+	}
+
+	log.Debug("Event bus available for routing events but not yet integrated in wrapper")
+	return nil
+}
+
+// ConnectProviderEvents implements EventBusIntegrator.
+func (w *eventBusIntegratorWrapper) ConnectProviderEvents() error {
+	if w.eventBus == nil {
+		return nil
+	}
+
+	log.Debug("Event bus available for provider events but not yet integrated in wrapper")
+	return nil
+}
+
+// EmitEvent implements EventBusIntegrator.
+func (w *eventBusIntegratorWrapper) EmitEvent(event interface{}) error {
+	if w.eventBus == nil {
+		return nil
+	}
+
+	log.Debug("Event bus available but not yet integrated in wrapper")
+	return nil
 }

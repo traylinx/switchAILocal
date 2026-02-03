@@ -180,22 +180,46 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+
+	// PipelineIntegrator integrates steering and memory into request processing.
+	// This is optional - if nil, intelligent systems are disabled.
+	PipelineIntegrator PipelineIntegrator
+}
+
+// PipelineIntegrator defines the interface for request pipeline integration.
+// This allows the handler to integrate with intelligent systems (steering, memory, events)
+// without creating a direct dependency on the integration package.
+type PipelineIntegrator interface {
+	// ApplySteering evaluates steering rules and modifies the request if rules match.
+	ApplySteering(ctx interface{}, messages []map[string]string) (string, []map[string]string, error)
+	
+	// RecordRouting records a routing decision to the memory system.
+	RecordRouting(decision interface{}) error
+	
+	// UpdateOutcome updates a routing decision with its outcome.
+	UpdateOutcome(decision interface{}) error
+	
+	// EmitRoutingEvent emits a routing decision event to the event bus.
+	EmitRoutingEvent(decision interface{}) error
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
 // It takes a slice of clients and configuration as input.
 //
 // Parameters:
-//   - cliClients: A slice of AI service clients
 //   - cfg: The application configuration
+//   - authManager: The authentication manager
+//   - luaEngine: The LUA plugin engine
+//   - pipelineIntegrator: Optional pipeline integrator for intelligent systems (can be nil)
 //
 // Returns:
 //   - *BaseAPIHandler: A new API handlers instance
-func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine) *BaseAPIHandler {
+func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine, pipelineIntegrator PipelineIntegrator) *BaseAPIHandler {
 	return &BaseAPIHandler{
-		Cfg:         cfg,
-		AuthManager: authManager,
-		LuaEngine:   luaEngine,
+		Cfg:                cfg,
+		AuthManager:        authManager,
+		LuaEngine:          luaEngine,
+		PipelineIntegrator: pipelineIntegrator,
 	}
 }
 
@@ -350,6 +374,8 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
+	startTime := time.Now()
+	
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
@@ -377,8 +403,21 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
+	
+	// Record routing decision start time
+	routingStartTime := time.Now()
+	
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
+	
+	// Calculate routing latency
+	routingLatency := time.Since(routingStartTime).Milliseconds()
+	
 	if err != nil {
+		// Record failed routing decision if pipeline integrator is available
+		if h.PipelineIntegrator != nil {
+			h.recordFailedRouting(ctx, modelName, normalizedModel, providers, routingLatency, err)
+		}
+		
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
 			if code := se.StatusCode(); code > 0 {
@@ -393,6 +432,13 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		}
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	
+	// Record successful routing decision if pipeline integrator is available
+	if h.PipelineIntegrator != nil {
+		responseTime := time.Since(startTime).Milliseconds()
+		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, providers, routingLatency, responseTime)
+	}
+	
 	// ROUTING: Apply LUA on_response hook
 	if h.LuaEngine.IsEnabled() {
 		resData := map[string]any{
@@ -943,4 +989,101 @@ Example: {"intent": "coding", "complexity": "complex", "privacy": "public", "con
 	}
 
 	return string(resp.Payload), nil
+}
+
+// recordSuccessfulRouting records a successful routing decision to the memory system.
+// This is a helper method that extracts relevant information and calls the pipeline integrator.
+func (h *BaseAPIHandler) recordSuccessfulRouting(ctx context.Context, requestedModel, selectedModel string, providers []string, routingLatency, responseTime int64) {
+	// Extract API key hash from context
+	apiKeyHash := ""
+	if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+		if hash, exists := ginCtx.Get("api_key_hash"); exists {
+			if hashStr, ok := hash.(string); ok {
+				apiKeyHash = hashStr
+			}
+		}
+	}
+	
+	// Build routing decision using the builder pattern
+	// Note: We use interface{} to avoid import cycles, the adapter will handle type conversion
+	decision := map[string]interface{}{
+		"api_key_hash": apiKeyHash,
+		"timestamp":    time.Now(),
+		"request": map[string]interface{}{
+			"model": requestedModel,
+		},
+		"routing": map[string]interface{}{
+			"selected_model": selectedModel,
+			"tier":           determineTier(providers),
+			"confidence":     1.0, // Default confidence when no steering is applied
+			"latency_ms":     routingLatency,
+		},
+		"outcome": map[string]interface{}{
+			"success":          true,
+			"response_time_ms": responseTime,
+		},
+	}
+	
+	// Record the routing decision (errors are logged internally by the integrator)
+	_ = h.PipelineIntegrator.RecordRouting(decision)
+	
+	// Emit routing event (errors are logged internally by the integrator)
+	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
+}
+
+// recordFailedRouting records a failed routing decision to the memory system.
+func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel, selectedModel string, providers []string, routingLatency int64, err error) {
+	// Extract API key hash from context
+	apiKeyHash := ""
+	if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+		if hash, exists := ginCtx.Get("api_key_hash"); exists {
+			if hashStr, ok := hash.(string); ok {
+				apiKeyHash = hashStr
+			}
+		}
+	}
+	
+	// Build routing decision for failure
+	decision := map[string]interface{}{
+		"api_key_hash": apiKeyHash,
+		"timestamp":    time.Now(),
+		"request": map[string]interface{}{
+			"model": requestedModel,
+		},
+		"routing": map[string]interface{}{
+			"selected_model": selectedModel,
+			"tier":           determineTier(providers),
+			"confidence":     1.0,
+			"latency_ms":     routingLatency,
+		},
+		"outcome": map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		},
+	}
+	
+	// Record the routing decision (errors are logged internally by the integrator)
+	_ = h.PipelineIntegrator.RecordRouting(decision)
+	
+	// Emit routing event (errors are logged internally by the integrator)
+	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
+}
+
+// determineTier determines the routing tier based on the provider list.
+// This is a simple heuristic that can be enhanced later.
+func determineTier(providers []string) string {
+	if len(providers) == 0 {
+		return "unknown"
+	}
+	
+	// Simple tier determination based on provider name
+	provider := providers[0]
+	switch provider {
+	case "openai", "anthropic", "google":
+		return "premium"
+	case "ollama", "lmstudio":
+		return "local"
+	default:
+		return "standard"
+	}
 }

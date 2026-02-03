@@ -33,6 +33,7 @@ type LocalCLIExecutor struct {
 	StreamFormatArgs []string
 	SupportsJSON     bool
 	SupportsStream   bool
+	UseStdin         bool
 
 	// Capability and Flag mapping fields
 	SupportsAttachments bool
@@ -56,6 +57,7 @@ func NewLocalCLIExecutor(tool cli.DiscoveredTool) *LocalCLIExecutor {
 		StreamFormatArgs:        tool.Definition.StreamFormatArgs,
 		SupportsJSON:            tool.Definition.SupportsJSON,
 		SupportsStream:          tool.Definition.SupportsStream,
+		UseStdin:                tool.Definition.UseStdin,
 		SupportsAttachments:     tool.Definition.SupportsAttachments,
 		AttachmentPrefix:        tool.Definition.AttachmentPrefix,
 		SandboxFlag:             tool.Definition.SandboxFlag,
@@ -107,6 +109,14 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	if e.UseStdin {
+		attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+		if err != nil {
+			return switchailocalexecutor.Response{}, err
+		}
+		cmd.Stdin = strings.NewReader(attachmentPrefix + prompt)
+	}
 
 	log.Debugf("Executing CLI: %s %v", e.BinaryPath, finalArgs)
 
@@ -280,6 +290,15 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	}
 
 	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
+
+	if e.UseStdin {
+		attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
+		if err != nil {
+			return nil, err
+		}
+		cmd.Stdin = strings.NewReader(attachmentPrefix + prompt)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -702,6 +721,11 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 	}
 
 	// Combine attachments and prompt as the final argument
+	// If UseStdin is true, we pass nothing here (attachments+prompt go to stdin).
+	if e.UseStdin {
+		return finalArgs, nil
+	}
+
 	finalPrompt := attachmentPrefix + prompt
 	finalArgs = append(finalArgs, finalPrompt)
 

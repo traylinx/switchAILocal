@@ -265,12 +265,15 @@ type FeedbackConfig struct {
 type SteeringConfig struct {
 	Enabled     bool   `yaml:"enabled" json:"enabled"`
 	SteeringDir string `yaml:"steering-dir,omitempty" json:"steering-dir,omitempty"`
+	RulesDir    string `yaml:"rules-dir,omitempty" json:"rules-dir,omitempty"` // Alias for SteeringDir
+	HotReload   bool   `yaml:"hot-reload,omitempty" json:"hot-reload,omitempty"`
 }
 
 // HooksConfig configures the hook system.
 type HooksConfig struct {
-	Enabled  bool   `yaml:"enabled" json:"enabled"`
-	HooksDir string `yaml:"hooks-dir,omitempty" json:"hooks-dir,omitempty"`
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	HooksDir  string `yaml:"hooks-dir,omitempty" json:"hooks-dir,omitempty"`
+	HotReload bool   `yaml:"hot-reload,omitempty" json:"hot-reload,omitempty"`
 }
 
 // LearningConfig configures the learning engine.
@@ -370,8 +373,13 @@ func (c *SDKConfig) SanitizeIntelligence() {
 	}
 
 	// Steering defaults
-	if c.Intelligence.Steering.SteeringDir == "" {
+	if c.Intelligence.Steering.SteeringDir == "" && c.Intelligence.Steering.RulesDir == "" {
+		c.Intelligence.Steering.RulesDir = ".switchailocal/steering"
 		c.Intelligence.Steering.SteeringDir = ".switchailocal/steering"
+	} else if c.Intelligence.Steering.RulesDir == "" {
+		c.Intelligence.Steering.RulesDir = c.Intelligence.Steering.SteeringDir
+	} else if c.Intelligence.Steering.SteeringDir == "" {
+		c.Intelligence.Steering.SteeringDir = c.Intelligence.Steering.RulesDir
 	}
 
 	// Hooks defaults

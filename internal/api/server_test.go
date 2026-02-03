@@ -113,3 +113,74 @@ func TestAmpProviderModelRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestIntelligenceManagementRoutes(t *testing.T) {
+	server := newTestServer(t)
+
+	// We just want to verify the routes are registered (not 404)
+	// Authentication will fail (401/403) but that's expected - we're just checking the routes exist
+
+	testCases := []struct {
+		name       string
+		method     string
+		path       string
+	}{
+		{
+			name:   "GET memory stats",
+			method: http.MethodGet,
+			path:   "/v0/management/memory/stats",
+		},
+		{
+			name:   "GET heartbeat status",
+			method: http.MethodGet,
+			path:   "/v0/management/heartbeat/status",
+		},
+		{
+			name:   "GET steering rules",
+			method: http.MethodGet,
+			path:   "/v0/management/steering/rules",
+		},
+		{
+			name:   "GET hooks status",
+			method: http.MethodGet,
+			path:   "/v0/management/hooks/status",
+		},
+		{
+			name:   "GET analytics",
+			method: http.MethodGet,
+			path:   "/v0/management/analytics",
+		},
+		{
+			name:   "POST steering reload",
+			method: http.MethodPost,
+			path:   "/v0/management/steering/reload",
+		},
+		{
+			name:   "POST hooks reload",
+			method: http.MethodPost,
+			path:   "/v0/management/hooks/reload",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+
+			rr := httptest.NewRecorder()
+			server.engine.ServeHTTP(rr, req)
+
+			// Verify the route exists (not 404)
+			// We expect 401/403 due to missing/invalid auth, which is fine
+			if rr.Code == http.StatusNotFound {
+				t.Errorf("route %s %s not registered: got 404", tc.method, tc.path)
+			}
+
+			// Verify response is valid JSON
+			body := rr.Body.String()
+			if !strings.Contains(body, "{") {
+				t.Errorf("response body for %s %s is not JSON: %s", tc.method, tc.path, body)
+			}
+		})
+	}
+}

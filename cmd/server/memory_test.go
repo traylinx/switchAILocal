@@ -186,17 +186,17 @@ func TestGetMemoryBaseDir(t *testing.T) {
 			config: &config.Config{
 				AuthDir: "/home/user/.switchailocal/auth",
 			},
-			expected: "/home/user/.switchailocal/memory",
+			expected: "/home/user/.switchailocal/auth/memory",
 		},
 		{
 			name:     "without auth dir",
 			config:   &config.Config{},
-			expected: "", // Will be current directory + .switchailocal/memory
+			expected: "", // Will be user home directory + .switchailocal/memory
 		},
 		{
 			name:     "nil config",
 			config:   nil,
-			expected: "", // Will be current directory + .switchailocal/memory
+			expected: "", // Will be user home directory + .switchailocal/memory
 		},
 	}
 
@@ -209,9 +209,14 @@ func TestGetMemoryBaseDir(t *testing.T) {
 					t.Errorf("expected %s, got %s", tt.expected, result)
 				}
 			} else {
-				// For cases where we expect current directory + .switchailocal/memory
-				wd, _ := os.Getwd()
-				expected := filepath.Join(wd, ".switchailocal", "memory")
+				// For cases where we expect user home directory + .switchailocal/memory
+				home, err := os.UserHomeDir()
+				if err != nil {
+					// Fallback to CWD
+					wd, _ := os.Getwd()
+					home = wd
+				}
+				expected := filepath.Join(home, ".switchailocal", "memory")
 				if result != expected {
 					t.Errorf("expected %s, got %s", expected, result)
 				}
@@ -410,16 +415,16 @@ func TestMemoryCommandsIntegration(t *testing.T) {
 		// Add a test routing decision
 		decision := &memory.RoutingDecision{
 			Timestamp:  time.Now(),
-			APIKeyHash: "sha256:test123",
+			APIKeyHash: "sha256:e0dbaa0c6455768bf812d8345ec96a2677d1e3bf17dbb0020b115c80092811e6",
 			Request: memory.RequestInfo{
 				Model:         "auto",
 				Intent:        "coding",
-				ContentHash:   "sha256:content123",
+				ContentHash:   "sha256:e0dbaa0c6455768bf812d8345ec96a2677d1e3bf17dbb0020b115c80092811e6",
 				ContentLength: 100,
 			},
 			Routing: memory.RoutingInfo{
 				Tier:          "semantic",
-				SelectedModel: "claude-sonnet-4",
+				SelectedModel: "anthropic:claude-sonnet-4",
 				Confidence:    0.95,
 				LatencyMs:     15,
 			},
@@ -463,7 +468,7 @@ func TestMemoryCommandsIntegration(t *testing.T) {
 		defer manager.Close()
 
 		// Get preferences for a test API key
-		apiKeyHash := "sha256:test123"
+		apiKeyHash := "sha256:e0dbaa0c6455768bf812d8345ec96a2677d1e3bf17dbb0020b115c80092811e6"
 		preferences, err := manager.GetUserPreferences(apiKeyHash)
 		if err != nil {
 			t.Errorf("failed to get user preferences: %v", err)

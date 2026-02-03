@@ -31,6 +31,7 @@ type ToolDefinition struct {
 	YoloFlag            string // CLI flag for YOLO mode (e.g., "--yolo")
 	SessionFlag         string // CLI flag for sessions (e.g., "--resume=" or "--continue")
 	// Security fields
+	UseStdin                bool   // Whether to pass the prompt via stdin instead of arguments
 	PositionalArgsSeparator string // Separator to use before positional arguments (e.g., "--")
 }
 
@@ -43,20 +44,21 @@ type DiscoveredTool struct {
 // KnownTools lists all CLI tools that SwitchAI supports as proxies.
 var KnownTools = []ToolDefinition{
 	{
-		Name:                "Google Gemini CLI",
-		BinaryName:          "gemini",
-		ProviderKey:         constant.GeminiCLI,
-		DefaultArgs:         []string{}, // Use positional prompt
-		JSONFormatArgs:      []string{"--output-format=json"},
-		StreamFormatArgs:    []string{"--output-format=stream-json"},
-		SupportsJSON:        true,
-		SupportsStream:      true,
-		SupportsAttachments: true,
-		AttachmentPrefix:    "@",
-		SandboxFlag:         "-s",
-		AutoApproveFlag:     "-y",
-		YoloFlag:            "--yolo",
-		SessionFlag:         "--resume=",
+		Name:                    "Google Gemini CLI",
+		BinaryName:              "gemini",
+		ProviderKey:             constant.GeminiCLI,
+		DefaultArgs:             []string{}, // Use positional prompt
+		JSONFormatArgs:          []string{"--output-format=json"},
+		StreamFormatArgs:        []string{"--output-format=stream-json"},
+		SupportsJSON:            true,
+		SupportsStream:          true,
+		SupportsAttachments:     true,
+		AttachmentPrefix:        "@",
+		SandboxFlag:             "-s",
+		AutoApproveFlag:         "-y",
+		YoloFlag:                "--yolo",
+		SessionFlag:             "--resume=",
+		UseStdin:                true,
 		PositionalArgsSeparator: "--",
 	},
 	{
