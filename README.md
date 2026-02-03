@@ -84,24 +84,53 @@ cd switchAILocal
 
 ### 2. Connect Your Providers
 
-#### Option A: Local CLI Wrappers (Easiest)
-If you have tools like `gemini`, `claude`, or `vibe` in your PATH, **switchAILocal finds them automatically.**
+Choose the authentication method that works best for you:
 
-- **Usage:** Use `geminicli:`, `claudecli:`, etc.
-- **Auth:** Uses your existing local CLI session.
+#### Option A: Local CLI Wrappers (Recommended - Zero Setup)
 
-#### Option B: API Keys (Standard)
-Add your AI Studio or Anthropic keys to `config.yaml`.
-
-#### Option C: Cloud Proxy Mode (Advanced OAuth)
-Run once to link your account (useful if you don't have API keys):
+**If you already have `gemini`, `claude`, or `vibe` CLI tools installed and authenticated**, switchAILocal uses them automatically. **No additional login required!**
 
 ```bash
-./switchAILocal --login        # Google Gemini
-./switchAILocal --claude-login # Anthropic Claude
+# Just use the CLI prefix - it works immediately
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "geminicli:gemini-2.5-pro", "messages": [...]}'
 ```
 
-📖 See the [Provider Guide](docs/user/providers.md) for a full comparison.
+- ✅ **Zero configuration** - Uses your existing CLI authentication
+- ✅ **Works immediately** - No `--login` needed
+- ✅ **Supports:** `geminicli:`, `claudecli:`, `codex:`, `vibe:`, `opencode:`
+
+#### Option B: API Keys (Standard)
+
+Add your AI Studio or Anthropic API keys to `config.yaml`:
+
+```yaml
+gemini:
+  api-key: "your-gemini-api-key"
+claude:
+  api-key: "your-claude-api-key"
+```
+
+Then use without the `cli` suffix: `gemini:`, `claude:`
+
+#### Option C: OAuth Cloud Proxy (Advanced - Alternative to CLI)
+
+**Only needed if:**
+- ❌ You don't have the CLI tools installed
+- ❌ You don't have API keys
+- ✅ You want switchAILocal to manage OAuth tokens directly
+
+```bash
+# Optional OAuth login (alternative to CLI wrappers)
+./switchAILocal --login        # Google Gemini OAuth
+./switchAILocal --claude-login # Anthropic Claude OAuth
+```
+
+⚠️ **Note:** This requires `GEMINI_CLIENT_ID` and `GEMINI_CLIENT_SECRET` environment variables. Most users should use **Option A** (CLI wrappers) instead.
+
+📖 See the [Provider Guide](docs/user/providers.md) for detailed setup instructions.
 
 ### 3. Check Status
 
