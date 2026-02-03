@@ -30,8 +30,8 @@ func (h *Handler) ReloadSteering(c *gin.Context) {
 		return
 	}
 	steeringEngine, ok := steeringRaw.(*steering.SteeringEngine)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid steering engine type"})
+	if !ok || steeringEngine == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Steering engine is not initialized"})
 		return
 	}
 	err := steeringEngine.LoadRules()
@@ -61,8 +61,8 @@ func (h *Handler) ReloadHooks(c *gin.Context) {
 		return
 	}
 	hooksMgr, ok := hooksRaw.(*hooks.HookManager)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid hooks manager type"})
+	if !ok || hooksMgr == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Hooks manager is not initialized"})
 		return
 	}
 	err := hooksMgr.LoadHooks()

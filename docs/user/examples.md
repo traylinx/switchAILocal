@@ -427,6 +427,7 @@ print(response.choices[0].message.content)
 `switchAILocal` includes four intelligent systems: Memory, Heartbeat, Steering, and Hooks.
 
 ### 📜 Memory & Analytics
+
 View performance stats for all providers and models based on historical data.
 
 ```bash
@@ -449,6 +450,7 @@ curl http://localhost:18080/v0/management/heartbeat/status \
 ```
 
 ### 🎛️ Steering Engine (Dynamic Routing)
+
 Reload steering rules without restarting the server or view current active rules.
 
 ```bash
@@ -476,4 +478,3 @@ curl -X POST http://localhost:18080/v0/management/hooks/test \
 ```
 
 ---
-

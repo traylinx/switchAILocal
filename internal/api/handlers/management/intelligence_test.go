@@ -26,26 +26,38 @@ import (
 
 // mockMemoryManager implements memory.MemoryManager for testing
 type mockMemoryManager struct {
-	stats     *memory.MemoryStats
-	analytics *memory.AnalyticsSummary
-	statsErr  error
+	stats        *memory.MemoryStats
+	analytics    *memory.AnalyticsSummary
+	statsErr     error
 	analyticsErr error
 }
 
 func (m *mockMemoryManager) RecordRouting(decision *memory.RoutingDecision) error { return nil }
-func (m *mockMemoryManager) GetUserPreferences(apiKeyHash string) (*memory.UserPreferences, error) { return nil, nil }
+func (m *mockMemoryManager) GetUserPreferences(apiKeyHash string) (*memory.UserPreferences, error) {
+	return nil, nil
+}
 func (m *mockMemoryManager) UpdateUserPreferences(prefs *memory.UserPreferences) error { return nil }
-func (m *mockMemoryManager) DeleteUserPreferences(apiKeyHash string) error { return nil }
-func (m *mockMemoryManager) AddQuirk(quirk *memory.Quirk) error { return nil }
-func (m *mockMemoryManager) GetProviderQuirks(provider string) ([]*memory.Quirk, error) { return nil, nil }
-func (m *mockMemoryManager) GetHistory(apiKeyHash string, limit int) ([]*memory.RoutingDecision, error) { return nil, nil }
-func (m *mockMemoryManager) GetAllHistory(limit int) ([]*memory.RoutingDecision, error) { return nil, nil }
+func (m *mockMemoryManager) DeleteUserPreferences(apiKeyHash string) error             { return nil }
+func (m *mockMemoryManager) AddQuirk(quirk *memory.Quirk) error                        { return nil }
+func (m *mockMemoryManager) GetProviderQuirks(provider string) ([]*memory.Quirk, error) {
+	return nil, nil
+}
+func (m *mockMemoryManager) GetHistory(apiKeyHash string, limit int) ([]*memory.RoutingDecision, error) {
+	return nil, nil
+}
+func (m *mockMemoryManager) GetAllHistory(limit int) ([]*memory.RoutingDecision, error) {
+	return nil, nil
+}
 func (m *mockMemoryManager) LearnFromOutcome(decision *memory.RoutingDecision) error { return nil }
-func (m *mockMemoryManager) GetStats() (*memory.MemoryStats, error) { return m.stats, m.statsErr }
-func (m *mockMemoryManager) GetAnalytics() (*memory.AnalyticsSummary, error) { return m.analytics, m.analyticsErr }
-func (m *mockMemoryManager) ComputeAnalytics() (*memory.AnalyticsSummary, error) { return m.analytics, m.analyticsErr }
+func (m *mockMemoryManager) GetStats() (*memory.MemoryStats, error)                  { return m.stats, m.statsErr }
+func (m *mockMemoryManager) GetAnalytics() (*memory.AnalyticsSummary, error) {
+	return m.analytics, m.analyticsErr
+}
+func (m *mockMemoryManager) ComputeAnalytics() (*memory.AnalyticsSummary, error) {
+	return m.analytics, m.analyticsErr
+}
 func (m *mockMemoryManager) Cleanup() error { return nil }
-func (m *mockMemoryManager) Close() error { return nil }
+func (m *mockMemoryManager) Close() error   { return nil }
 
 // mockHeartbeatMonitor implements heartbeat.HeartbeatMonitor for testing
 type mockHeartbeatMonitor struct {
@@ -54,21 +66,27 @@ type mockHeartbeatMonitor struct {
 	running  bool
 }
 
-func (m *mockHeartbeatMonitor) Start(ctx context.Context) error { return nil }
-func (m *mockHeartbeatMonitor) Stop() error { return nil }
+func (m *mockHeartbeatMonitor) Start(ctx context.Context) error    { return nil }
+func (m *mockHeartbeatMonitor) Stop() error                        { return nil }
 func (m *mockHeartbeatMonitor) CheckAll(ctx context.Context) error { return nil }
-func (m *mockHeartbeatMonitor) CheckProvider(ctx context.Context, provider string) (*heartbeat.HealthStatus, error) { return nil, nil }
-func (m *mockHeartbeatMonitor) GetStatus(provider string) (*heartbeat.HealthStatus, error) { return m.statuses[provider], nil }
+func (m *mockHeartbeatMonitor) CheckProvider(ctx context.Context, provider string) (*heartbeat.HealthStatus, error) {
+	return nil, nil
+}
+func (m *mockHeartbeatMonitor) GetStatus(provider string) (*heartbeat.HealthStatus, error) {
+	return m.statuses[provider], nil
+}
 func (m *mockHeartbeatMonitor) GetAllStatuses() map[string]*heartbeat.HealthStatus { return m.statuses }
-func (m *mockHeartbeatMonitor) RegisterChecker(checker heartbeat.ProviderHealthChecker) error { return nil }
-func (m *mockHeartbeatMonitor) UnregisterChecker(provider string) error { return nil }
-func (m *mockHeartbeatMonitor) SetInterval(interval time.Duration) {}
-func (m *mockHeartbeatMonitor) GetInterval() time.Duration { return time.Minute }
-func (m *mockHeartbeatMonitor) AddEventHandler(handler heartbeat.HeartbeatEventHandler) {}
+func (m *mockHeartbeatMonitor) RegisterChecker(checker heartbeat.ProviderHealthChecker) error {
+	return nil
+}
+func (m *mockHeartbeatMonitor) UnregisterChecker(provider string) error                    { return nil }
+func (m *mockHeartbeatMonitor) SetInterval(interval time.Duration)                         {}
+func (m *mockHeartbeatMonitor) GetInterval() time.Duration                                 { return time.Minute }
+func (m *mockHeartbeatMonitor) AddEventHandler(handler heartbeat.HeartbeatEventHandler)    {}
 func (m *mockHeartbeatMonitor) RemoveEventHandler(handler heartbeat.HeartbeatEventHandler) {}
-func (m *mockHeartbeatMonitor) GetStats() *heartbeat.HeartbeatStats { return m.stats }
-func (m *mockHeartbeatMonitor) IsRunning() bool { return m.running }
-func (m *mockHeartbeatMonitor) GetConfig() *heartbeat.HeartbeatConfig { return nil }
+func (m *mockHeartbeatMonitor) GetStats() *heartbeat.HeartbeatStats                        { return m.stats }
+func (m *mockHeartbeatMonitor) IsRunning() bool                                            { return m.running }
+func (m *mockHeartbeatMonitor) GetConfig() *heartbeat.HeartbeatConfig                      { return nil }
 
 // mockServiceCoordinator implements a minimal service coordinator for testing
 type mockServiceCoordinator struct {
@@ -78,21 +96,23 @@ type mockServiceCoordinator struct {
 	hooks     *hooks.HookManager
 }
 
-func (m *mockServiceCoordinator) IsEnabled() bool { return true }
+func (m *mockServiceCoordinator) IsEnabled() bool                                       { return true }
 func (m *mockServiceCoordinator) GetSemanticCache() intelligence.SemanticCacheInterface { return nil }
-func (m *mockServiceCoordinator) GetMemory() memory.MemoryManager { return m.memory }
-func (m *mockServiceCoordinator) GetHeartbeat() heartbeat.HeartbeatMonitor { return m.heartbeat }
-func (m *mockServiceCoordinator) GetSteering() *steering.SteeringEngine { return m.steering }
-func (m *mockServiceCoordinator) GetHooks() *hooks.HookManager { return m.hooks }
+func (m *mockServiceCoordinator) GetMemory() interface{}                                { return m.memory }
+func (m *mockServiceCoordinator) GetHeartbeat() interface{}                             { return m.heartbeat }
+func (m *mockServiceCoordinator) GetSteering() interface{}                              { return m.steering }
+func (m *mockServiceCoordinator) GetHooks() interface{}                                 { return m.hooks }
 
 func TestGetMemoryStats(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("memory system disabled", func(t *testing.T) {
+		mockSvc := &mockServiceCoordinator{
+			memory: nil, // Memory disabled
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				memory: nil, // Memory disabled
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -102,11 +122,11 @@ func TestGetMemoryStats(t *testing.T) {
 		handler.GetMemoryStats(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 		assert.Contains(t, response["message"], "disabled")
 	})
@@ -121,12 +141,14 @@ func TestGetMemoryStats(t *testing.T) {
 			CompressionEnabled: true,
 		}
 
-		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				memory: &mockMemoryManager{
-					stats: mockStats,
-				},
+		mockSvc := &mockServiceCoordinator{
+			memory: &mockMemoryManager{
+				stats: mockStats,
 			},
+		}
+		handler := &Handler{
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -136,14 +158,14 @@ func TestGetMemoryStats(t *testing.T) {
 		handler.GetMemoryStats(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.True(t, response["enabled"].(bool))
 		assert.NotNil(t, response["stats"])
-		
+
 		stats := response["stats"].(map[string]interface{})
 		assert.Equal(t, float64(1234), stats["total_decisions"])
 		assert.Equal(t, float64(56), stats["total_users"])
@@ -162,11 +184,11 @@ func TestGetMemoryStats(t *testing.T) {
 		handler.GetMemoryStats(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 	})
 }
@@ -175,10 +197,12 @@ func TestGetHeartbeatStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("heartbeat disabled", func(t *testing.T) {
+		mockSvc := &mockServiceCoordinator{
+			heartbeat: nil, // Heartbeat disabled
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				heartbeat: nil, // Heartbeat disabled
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -188,26 +212,26 @@ func TestGetHeartbeatStatus(t *testing.T) {
 		handler.GetHeartbeatStatus(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 		assert.Contains(t, response["message"], "disabled")
 	})
 
 	t.Run("heartbeat enabled with status", func(t *testing.T) {
 		mockStats := &heartbeat.HeartbeatStats{
-			StartTime:              time.Now(),
-			TotalCycles:            100,
-			TotalChecks:            500,
-			SuccessfulChecks:       480,
-			FailedChecks:           20,
-			ProvidersMonitored:     5,
-			HealthyProviders:       4,
-			DegradedProviders:      1,
-			UnavailableProviders:   0,
+			StartTime:            time.Now(),
+			TotalCycles:          100,
+			TotalChecks:          500,
+			SuccessfulChecks:     480,
+			FailedChecks:         20,
+			ProvidersMonitored:   5,
+			HealthyProviders:     4,
+			DegradedProviders:    1,
+			UnavailableProviders: 0,
 		}
 
 		mockStatuses := map[string]*heartbeat.HealthStatus{
@@ -219,14 +243,16 @@ func TestGetHeartbeatStatus(t *testing.T) {
 			},
 		}
 
-		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				heartbeat: &mockHeartbeatMonitor{
-					stats:    mockStats,
-					statuses: mockStatuses,
-					running:  true,
-				},
+		mockSvc := &mockServiceCoordinator{
+			heartbeat: &mockHeartbeatMonitor{
+				stats:    mockStats,
+				statuses: mockStatuses,
+				running:  true,
 			},
+		}
+		handler := &Handler{
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -236,11 +262,11 @@ func TestGetHeartbeatStatus(t *testing.T) {
 		handler.GetHeartbeatStatus(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.True(t, response["enabled"].(bool))
 		assert.True(t, response["running"].(bool))
 		assert.NotNil(t, response["stats"])
@@ -252,10 +278,12 @@ func TestGetSteeringRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("steering engine not initialized", func(t *testing.T) {
+		mockSvc := &mockServiceCoordinator{
+			steering: nil,
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				steering: nil,
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -265,25 +293,27 @@ func TestGetSteeringRules(t *testing.T) {
 		handler.GetSteeringRules(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 	})
 
 	t.Run("steering engine with rules", func(t *testing.T) {
 		// Create a temporary directory for steering rules
 		tmpDir := t.TempDir()
-		
+
 		steeringEngine, err := steering.NewSteeringEngine(tmpDir)
 		require.NoError(t, err)
 
+		mockSvc := &mockServiceCoordinator{
+			steering: steeringEngine,
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				steering: steeringEngine,
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -293,11 +323,11 @@ func TestGetSteeringRules(t *testing.T) {
 		handler.GetSteeringRules(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.True(t, response["enabled"].(bool))
 		assert.NotNil(t, response["rules"])
 		assert.Equal(t, float64(0), response["rules_count"]) // No rules loaded
@@ -308,10 +338,12 @@ func TestGetHooksStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("hooks manager not initialized", func(t *testing.T) {
+		mockSvc := &mockServiceCoordinator{
+			hooks: nil,
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				hooks: nil,
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -321,26 +353,28 @@ func TestGetHooksStatus(t *testing.T) {
 		handler.GetHooksStatus(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 	})
 
 	t.Run("hooks manager with hooks", func(t *testing.T) {
 		// Create a temporary directory for hooks
 		tmpDir := t.TempDir()
-		
+
 		eventBus := hooks.NewEventBus()
 		hooksManager, err := hooks.NewHookManager(tmpDir, eventBus)
 		require.NoError(t, err)
 
+		mockSvc := &mockServiceCoordinator{
+			hooks: hooksManager,
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				hooks: hooksManager,
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -350,11 +384,11 @@ func TestGetHooksStatus(t *testing.T) {
 		handler.GetHooksStatus(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.True(t, response["enabled"].(bool))
 		assert.NotNil(t, response["hooks"])
 		assert.Equal(t, float64(0), response["hooks_count"]) // No hooks loaded
@@ -366,10 +400,12 @@ func TestGetAnalytics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("memory system disabled", func(t *testing.T) {
+		mockSvc := &mockServiceCoordinator{
+			memory: nil,
+		}
 		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				memory: nil,
-			},
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -379,11 +415,11 @@ func TestGetAnalytics(t *testing.T) {
 		handler.GetAnalytics(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.False(t, response["enabled"].(bool))
 	})
 
@@ -397,12 +433,14 @@ func TestGetAnalytics(t *testing.T) {
 			TrendAnalysis:     &memory.TrendAnalysis{},
 		}
 
-		handler := &Handler{
-			intelligenceService: &mockServiceCoordinator{
-				memory: &mockMemoryManager{
-					analytics: mockAnalytics,
-				},
+		mockSvc := &mockServiceCoordinator{
+			memory: &mockMemoryManager{
+				analytics: mockAnalytics,
 			},
+		}
+		handler := &Handler{
+			intelligenceService: mockSvc,
+			serviceCoordinator:  mockSvc,
 		}
 
 		w := httptest.NewRecorder()
@@ -412,11 +450,11 @@ func TestGetAnalytics(t *testing.T) {
 		handler.GetAnalytics(c)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		
+
 		assert.True(t, response["enabled"].(bool))
 		assert.NotNil(t, response["analytics"])
 	})
@@ -454,15 +492,23 @@ func TestIntelligenceHandlersWithRealCoordinator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wrap the coordinator in a mock that implements IntelligenceService
-	mockWrapper := &mockServiceCoordinator{
-		memory:    coordinator.GetMemory(),
-		heartbeat: coordinator.GetHeartbeat(),
-		steering:  coordinator.GetSteering(),
-		hooks:     coordinator.GetHooks(),
+	mockWrapper := &mockServiceCoordinator{}
+	if m := coordinator.GetMemory(); m != nil {
+		mockWrapper.memory = m.(memory.MemoryManager)
+	}
+	if h := coordinator.GetHeartbeat(); h != nil {
+		mockWrapper.heartbeat = h.(heartbeat.HeartbeatMonitor)
+	}
+	if s := coordinator.GetSteering(); s != nil {
+		mockWrapper.steering = s.(*steering.SteeringEngine)
+	}
+	if hk := coordinator.GetHooks(); hk != nil {
+		mockWrapper.hooks = hk.(*hooks.HookManager)
 	}
 
 	handler := &Handler{
 		intelligenceService: mockWrapper,
+		serviceCoordinator:  mockWrapper,
 	}
 
 	t.Run("all systems disabled", func(t *testing.T) {

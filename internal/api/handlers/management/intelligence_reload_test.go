@@ -35,6 +35,7 @@ func TestReloadSteering_Success(t *testing.T) {
 	// Create handler
 	handler := &Handler{
 		intelligenceService: mockCoordinator,
+		serviceCoordinator:  mockCoordinator,
 	}
 
 	// Create test request
@@ -65,6 +66,7 @@ func TestReloadSteering_NotInitialized(t *testing.T) {
 	// Create handler with nil intelligence service
 	handler := &Handler{
 		intelligenceService: nil,
+		serviceCoordinator:  nil,
 	}
 
 	// Create test request
@@ -98,6 +100,7 @@ func TestReloadSteering_SteeringNil(t *testing.T) {
 	// Create handler
 	handler := &Handler{
 		intelligenceService: mockCoordinator,
+		serviceCoordinator:  mockCoordinator,
 	}
 
 	// Create test request
@@ -137,6 +140,7 @@ func TestReloadHooks_Success(t *testing.T) {
 	// Create handler
 	handler := &Handler{
 		intelligenceService: mockCoordinator,
+		serviceCoordinator:  mockCoordinator,
 	}
 
 	// Create test request
@@ -167,6 +171,7 @@ func TestReloadHooks_NotInitialized(t *testing.T) {
 	// Create handler with nil intelligence service
 	handler := &Handler{
 		intelligenceService: nil,
+		serviceCoordinator:  nil,
 	}
 
 	// Create test request
@@ -200,6 +205,7 @@ func TestReloadHooks_HooksNil(t *testing.T) {
 	// Create handler
 	handler := &Handler{
 		intelligenceService: mockCoordinator,
+		serviceCoordinator:  mockCoordinator,
 	}
 
 	// Create test request
@@ -225,7 +231,9 @@ func TestReloadHooks_HooksNil(t *testing.T) {
 type invalidIntelligenceService struct{}
 
 func (s *invalidIntelligenceService) IsEnabled() bool { return true }
-func (s *invalidIntelligenceService) GetSemanticCache() intelligence.SemanticCacheInterface { return nil }
+func (s *invalidIntelligenceService) GetSemanticCache() intelligence.SemanticCacheInterface {
+	return nil
+}
 
 // TestReloadSteering_WithInvalidCoordinator tests behavior with non-coordinator interface.
 func TestReloadSteering_WithInvalidCoordinator(t *testing.T) {
@@ -233,6 +241,7 @@ func TestReloadSteering_WithInvalidCoordinator(t *testing.T) {
 
 	handler := &Handler{
 		intelligenceService: &invalidIntelligenceService{},
+		serviceCoordinator:  nil, // Does not implement ServiceCoordinatorInterface
 	}
 
 	w := httptest.NewRecorder()
@@ -257,6 +266,7 @@ func TestReloadHooks_WithInvalidCoordinator(t *testing.T) {
 
 	handler := &Handler{
 		intelligenceService: &invalidIntelligenceService{},
+		serviceCoordinator:  nil,
 	}
 
 	w := httptest.NewRecorder()
@@ -274,4 +284,3 @@ func TestReloadHooks_WithInvalidCoordinator(t *testing.T) {
 	assert.False(t, response["enabled"].(bool))
 	assert.Contains(t, response["message"], "does not support")
 }
-

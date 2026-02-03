@@ -40,8 +40,8 @@ func (h *Handler) GetMemoryStats(c *gin.Context) {
 		return
 	}
 	memoryManager, ok := memoryManagerRaw.(memory.MemoryManager)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid memory manager type"})
+	if !ok || memoryManager == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Memory system is disabled"})
 		return
 	}
 	stats, err := memoryManager.GetStats()
@@ -70,8 +70,8 @@ func (h *Handler) GetHeartbeatStatus(c *gin.Context) {
 		return
 	}
 	hbMonitor, ok := hbMonitorRaw.(heartbeat.HeartbeatMonitor)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid heartbeat monitor type"})
+	if !ok || hbMonitor == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Heartbeat monitor is disabled"})
 		return
 	}
 	statuses := hbMonitor.GetAllStatuses()
@@ -104,8 +104,8 @@ func (h *Handler) GetSteeringRules(c *gin.Context) {
 		return
 	}
 	steeringEngine, ok := steeringRaw.(*steering.SteeringEngine)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid steering engine type"})
+	if !ok || steeringEngine == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Steering engine is not initialized"})
 		return
 	}
 	rules := steeringEngine.GetRules()
@@ -130,8 +130,8 @@ func (h *Handler) GetHooksStatus(c *gin.Context) {
 		return
 	}
 	hooksMgr, ok := hooksRaw.(*hooks.HookManager)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid hooks manager type"})
+	if !ok || hooksMgr == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Hooks manager is not initialized"})
 		return
 	}
 	allHooks := hooksMgr.GetHooks()
@@ -157,8 +157,8 @@ func (h *Handler) GetAnalytics(c *gin.Context) {
 		return
 	}
 	memoryManager, ok := memoryManagerRaw.(memory.MemoryManager)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error: invalid memory manager type"})
+	if !ok || memoryManager == nil {
+		c.JSON(http.StatusOK, gin.H{"enabled": false, "message": "Memory system is disabled"})
 		return
 	}
 	analytics, err := memoryManager.GetAnalytics()
