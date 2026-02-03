@@ -1,64 +1,83 @@
-# Enhanced Management Dashboard
+# Management Dashboard V2
 
-The **switchAILocal Management Dashboard** provides a sophisticated graphical interface for configuring your AI providers, managing models, and monitoring system status.
+The **switchAILocal Management Dashboard** is a modern, single-page React-based interface that provides an intuitive way to configure your AI providers, manage model routing, and adjust system settings—no YAML editing required.
 
 Access the dashboard at: `http://localhost:18080/management`
 
-## Features
+## 🌟 Key Features
 
-### 1. Unified Provider Configuration
-Manage all your AI providers (OpenAI, Gemini, Claude, Local models) from a single interface. The configuration modal is split into two tabs for better organization:
+The V2 dashboard is a complete architectural rewrite designed for performance, security, and ease of use:
 
-- **Basic Tab**: Essential settings like API Keys, Base URLs, and routing prefixes.
-- **Advanced Tab**: Deep control over your configuration.
-
-### 2. Advanced Configuration
-The **Advanced** tab exposes powerful configuration options previously only available by editing `config.yaml` manually:
-
-- **Custom Headers**: Add specific HTTP headers (e.g., for custom authentication or routing) using the Key-Value editor.
-- **Excluded Models**: Define patterns to exclude specific models. Supports wildcards:
-  - `*` (All models)
-  - `prefix-*` (e.g., `gemini-2.5-*`)
-  - `*-suffix` (e.g., `*-preview`)
-  - `*substring*` (e.g., `*flash*`)
-- **Proxy Override**: Set a specific SOCKS5/HTTP proxy for individual providers, overriding the global system proxy.
-
-### 3. Model Discovery & Aliasing
-Never manually copy-paste model names again.
-
-- **Model Discovery**: Enter a `Models URL` in the advanced configuration to fetch the list of available models directly from the provider.
-- **Model Aliases**: Map complex upstream model names to simple, client-friendly aliases.
-  - *Example*: Map `meta-llama/llama-4-maverick-17b-128e-instruct` to `llama4`.
-  - The dashboard provides a table interface to easily manage these mappings.
-
-### 4. Connection Testing
-Verify your configuration before saving. The "Test Connection" feature validates:
-- API Key validity
-- Base URL reachability
-- Proxy connectivity
-- Model availability
-
-### 5. Hot Reload
-All changes made in the dashboard are saved to `config.yaml` and applied immediately without requiring a server restart. Existing comments in your YAML file are preserved.
-
-## Usage
-
-1. **Open the Dashboard**: Navigate to `http://localhost:18080/management`.
-2. **Select a Provider**: Click "Configure" on any provider card.
-3. **Edit Settings**: Switch between Basic and Advanced tabs to modify settings.
-4. **Discover Models**: (Optional) In the Advanced tab, click "Fetch Models" to browse available models from the provider.
-5. **Test & Save**: Click "Test Connection" to verify, then "Save" to apply changes instantly.
+- **Modern React UI**: Responsive design built with React 18 and Lucide icons.
+- **Zero Dependencies**: A self-contained 226 KB HTML file that works offline with zero external network requests.
+- **Optimistic UI**: Real-time updates with immediate visual feedback.
+- **Universal Provider Support**: Visual configuration for 15+ CLI, Local, and Cloud providers.
+- **Visual Routing**: Manage model mappings via a clean table interface.
+- **Secure Authentication**: Integrated management key support with URL parameter convenience (`?key=...`).
 
 ---
 
-## Building from Source
+## 🛠️ Dashboard Components
 
-If you are developing `switchAILocal` or want to customize the dashboard, you can build it yourself:
+### 1. Provider Hub
+Configure and monitor your AI connections in real-time.
 
-1.  **Navigate to the root directory**.
-2.  **Run the UI build script**:
-    ```bash
-    ./ail_ui.sh
-    ```
-3.  **Result**: The build process will generate `static/management.html` in the project root.
-4.  **Verification**: The server will automatically pick up the new `management.html` from the `static/` directory when started.
+- **CLI Tools**: Connect to Gemini CLI, Claude CLI, Codex, and Vibe. Use your existing premium subscriptions for FREE.
+- **Local Models**: Auto-discovery for Ollama and LM Studio.
+- **Cloud APIs**: Setup Traylinx, Google, Anthropic, and Groq with secure API key masks.
+- **Connection Testing**: Integrated "Test Connection" buttons to verify setup before saving.
+
+### 2. Model Routing
+Manage how clients request models without manual YAML edits.
+
+-   **Model Switching**: Map standardized names (e.g., `gpt-4`) to specific backends (e.g., `claudecli:v3`).
+-   **Alias Management**: Create short, memorable aliases for long provider strings.
+-   **Live Updates**: Mappings are applied instantly without server restarts.
+
+### 3. System Settings
+Control the core proxy behavior.
+
+-   **Debug Mode**: One-click toggle for verbose server logging.
+-   **Proxy URL**: Configure the external access URL for remote clients.
+-   **System Info**: Real-time view of server host, port, and security (TLS) status.
+
+---
+
+## 🚀 Building & Development
+
+The Management UI resides in the `frontend/` directory and compiles to a single, inlined HTML file.
+
+### Quick Build
+Use the unified script to build the UI:
+```bash
+./ail_ui.sh
+```
+
+### Manual Build
+```bash
+cd frontend
+npm install
+npm run build
+```
+**Output**: `static/management.html` (~226 KB, self-contained)
+
+### Development Mode
+```bash
+cd frontend
+npm run dev
+```
+The dev server runs on `http://localhost:5173` and proxies requests to the SwitchAILocal backend.
+
+---
+
+## 🔬 Architecture Details
+
+-   **Framework**: React 18 + Vite
+-   **State Management**: Zustand (minimal boilerplate, high performance)
+-   **Data Fetching**: SWR (automatic polling, caching, and revalidation)
+-   **Styling**: Modern Vanilla CSS with system-wide variables
+-   **Inlining**: `vite-plugin-singlefile` bundles all CSS, JS, and Icons into one HTML file.
+
+---
+
+*The SwitchAILocal Management Dashboard: Empowering agents with a human-grade interface.* 🚀

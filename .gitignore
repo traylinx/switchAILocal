@@ -77,3 +77,11 @@ vendor/
 # New Feature Artifacts
 heartbeat
 coverage.html
+specs/
+
+# Temporary reports and verification files
+*-report.md
+*-verification-*.md
+TEST_RESULTS.md
+*QA_REPORT.md
+multimodal-verification-report.md

@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -544,29 +543,4 @@ func TestIntegrationWithHeartbeatMonitor(t *testing.T) {
 	// The event handler (heartbeatEventBridge) is called asynchronously but the Start() method
 	// waits for the event to be emitted before releasing the lock.
 	// This is a pre-existing issue in the heartbeat monitor, not in the EventBusIntegrator.
-}
-
-// mockFailingChecker is a mock health checker that always fails.
-type mockFailingChecker struct {
-	name string
-}
-
-func (m *mockFailingChecker) Check(ctx context.Context) (*heartbeat.HealthStatus, error) {
-	return nil, context.DeadlineExceeded
-}
-
-func (m *mockFailingChecker) GetName() string {
-	return m.name
-}
-
-func (m *mockFailingChecker) GetCheckInterval() time.Duration {
-	return time.Minute
-}
-
-func (m *mockFailingChecker) SupportsQuotaMonitoring() bool {
-	return false
-}
-
-func (m *mockFailingChecker) SupportsAutoDiscovery() bool {
-	return false
 }

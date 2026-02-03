@@ -23,6 +23,7 @@
 
 | Feature                       | Description                                                                                                                                                          |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🎨 **Modern Web UI**           | Single-file React dashboard to configure providers, manage model routing, and adjust settings (226 KB, zero dependencies)                                            |
 | 🔑 **Use Your Subscriptions**  | Connect Gemini CLI, Claude Code, Codex, Ollama, and more—no API keys needed                                                                                          |
 | 🎯 **Single Endpoint**         | Any OpenAI-compatible tool works with `http://localhost:18080`                                                                                                       |
 | 📎 **CLI Attachments**         | Pass files and folders directly to CLI providers via `extra_body.cli`                                                                                                |
@@ -388,16 +389,16 @@ intelligence:
 
 ### For Users
 
-| Guide | Description |
-| --- | --- |
-| [Installation](docs/user/installation.md) | Getting started guide |
-| [Configuration](docs/user/configuration.md) | All configuration options |
-| [Providers](docs/user/providers.md) | Setting up AI providers |
-| [API Reference](docs/user/api-reference.md) | REST API documentation |
-| [Intelligent Systems](docs/user/intelligent-systems.md) | Memory, Heartbeat, Steering, and Hooks |
-| [Advanced Features](docs/user/advanced-features.md) | Payload overrides, failover, and more |
-| [State Box](docs/user/state-box.md) | Secure state management & configuration |
-| [Management Dashboard](docs/user/management-dashboard.md) | Graphical configuration & model management |
+| Guide                                                     | Description                                                |
+| --------------------------------------------------------- | ---------------------------------------------------------- |
+| [Installation](docs/user/installation.md)                 | Getting started guide                                      |
+| [Configuration](docs/user/configuration.md)               | All configuration options                                  |
+| [Providers](docs/user/providers.md)                       | Setting up AI providers                                    |
+| [API Reference](docs/user/api-reference.md)               | REST API documentation                                     |
+| [Intelligent Systems](docs/user/intelligent-systems.md)   | Memory, Heartbeat, Steering, and Hooks                     |
+| [Advanced Features](docs/user/advanced-features.md)       | Payload overrides, failover, and more                      |
+| [State Box](docs/user/state-box.md)                       | Secure state management & configuration                    |
+| [Management Dashboard](docs/user/management-dashboard.md) | Modern web UI for provider setup, model routing & settings |
 
 ### Build from Source
 

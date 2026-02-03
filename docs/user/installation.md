@@ -27,16 +27,26 @@ This guide will walk you through setting up `switchAILocal` on your machine.
 
 ## Building the Management UI (Optional)
 
-If you wish to build the management dashboard from source:
+The management dashboard is a modern React application that compiles to a single HTML file.
 
 1.  **Run the UI build script**:
     ```bash
     ./ail_ui.sh
     ```
-    This script handles the `npm install` and `npm run build` processes and ensures the compiled dashboard is correctly placed in the `static/` directory.
+    This script:
+    - Installs dependencies (`npm install`)
+    - Builds the React app (`npm run build`)
+    - Inlines all assets (CSS, JS, SVGs)
+    - Outputs `static/management.html` (226 KB)
 
-2.  **Verify the artifact**:
-    Check that `static/management.html` has been created.
+2.  **Verify the build**:
+    ```bash
+    ls -lh static/management.html
+    ```
+    You should see a single HTML file (~226 KB).
+
+3.  **Access the dashboard**:
+    Start the server and navigate to `http://localhost:18080/management`
 
 ## Running the Server
 

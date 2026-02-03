@@ -30,6 +30,21 @@ remote-management:
   panel-github-repository: "..."   # Override asset source
 ```
 
+### Management Dashboard V2
+
+The new management interface is a modern React application that provides:
+- **Provider Hub**: Configure API keys and settings for 15+ providers.
+- **Visual Routing**: Create model mappings via a clean table interface.
+- **System Settings**: Toggle debug mode, set proxy URL, and view system info.
+- **Zero Dependencies**: Single 226 KB HTML file, works offline.
+
+Access at: `http://localhost:18080/management`
+
+**Authentication**:
+- If `secret-key` is set, you must login with the key
+- If `allow-remote: false` and no key is set, localhost auto-authenticates
+- Pass key via URL: `http://localhost:18080/management?key=your-key`
+
 ---
 
 ## Routing & Quota
