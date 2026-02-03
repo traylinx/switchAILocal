@@ -75,7 +75,6 @@ vendor/
 .snapshots
 
 # New Feature Artifacts
-heartbeat
 coverage.html
 specs/
 
