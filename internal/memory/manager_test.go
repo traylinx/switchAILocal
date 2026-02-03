@@ -287,12 +287,13 @@ func TestLearnFromOutcome(t *testing.T) {
 
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
-		APIKeyHash: "sha256:learner",
+		APIKeyHash: "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
 		Request: RequestInfo{
 			Model:  "auto",
 			Intent: "coding",
 		},
 		Routing: RoutingInfo{
+			Tier:          "cognitive",
 			SelectedModel: "claudecli:claude-sonnet-4",
 			Confidence:    0.92,
 		},
@@ -307,7 +308,7 @@ func TestLearnFromOutcome(t *testing.T) {
 	}
 
 	// Verify learning occurred
-	prefs, err := manager.GetUserPreferences("sha256:learner")
+	prefs, err := manager.GetUserPreferences("sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae")
 	if err != nil {
 		t.Errorf("Failed to get user preferences: %v", err)
 	}
@@ -513,12 +514,13 @@ func TestConcurrentOperations(t *testing.T) {
 			for j := 0; j < numOperations; j++ {
 				decision := &RoutingDecision{
 					Timestamp:  time.Now(),
-					APIKeyHash: "sha256:concurrent",
+					APIKeyHash: "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 					Request: RequestInfo{
 						Model:  "auto",
 						Intent: "coding",
 					},
 					Routing: RoutingInfo{
+						Tier:          "cognitive",
 						SelectedModel: "claudecli:claude-sonnet-4",
 						Confidence:    0.92,
 					},
@@ -529,8 +531,8 @@ func TestConcurrentOperations(t *testing.T) {
 
 				// These operations should not panic or error
 				_ = manager.RecordRouting(decision)
-				_, _ = manager.GetUserPreferences("sha256:concurrent")
-				_, _ = manager.GetHistory("sha256:concurrent", 5)
+				_, _ = manager.GetUserPreferences("sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+				_, _ = manager.GetHistory("sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", 5)
 				_, _ = manager.GetStats()
 			}
 		}(i)
@@ -576,7 +578,7 @@ func TestMemoryManager_GetAnalytics(t *testing.T) {
 	decisions := []*RoutingDecision{
 		{
 			Timestamp:  time.Now(),
-			APIKeyHash: "sha256:test123",
+			APIKeyHash: "sha256:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
 			Request: RequestInfo{
 				Model:  "auto",
 				Intent: "coding",
@@ -593,7 +595,7 @@ func TestMemoryManager_GetAnalytics(t *testing.T) {
 		},
 		{
 			Timestamp:  time.Now().Add(time.Hour),
-			APIKeyHash: "sha256:test456",
+			APIKeyHash: "sha256:8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
 			Request: RequestInfo{
 				Model:  "auto",
 				Intent: "reasoning",
@@ -749,7 +751,7 @@ func TestMemoryManager_DailyLogsIntegration(t *testing.T) {
 	// Record routing decision (should be logged to daily logs)
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
-		APIKeyHash: "sha256:test123",
+		APIKeyHash: "sha256:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
 		Request: RequestInfo{
 			Model:  "auto",
 			Intent: "coding",

@@ -39,7 +39,7 @@ func TestRecordRouting_Success(t *testing.T) {
 		Request: RequestInfo{
 			Model:         "auto",
 			Intent:        "coding",
-			ContentHash:   "sha256:def456",
+			ContentHash:   "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
 			ContentLength: 1234,
 		},
 		Routing: RoutingInfo{
@@ -125,7 +125,7 @@ func TestGetHistory_Success(t *testing.T) {
 
 	// Record multiple decisions for different API keys
 	apiKey1 := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	apiKey2 := "sha256:def456"
+	apiKey2 := "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
 
 	for i := 0; i < 5; i++ {
 		decision := &RoutingDecision{
@@ -136,6 +136,7 @@ func TestGetHistory_Success(t *testing.T) {
 				Intent: "coding",
 			},
 			Routing: RoutingInfo{
+				Tier:          "cognitive",
 				SelectedModel: "claudecli:claude-sonnet-4",
 			},
 		}
@@ -153,6 +154,7 @@ func TestGetHistory_Success(t *testing.T) {
 				Intent: "reasoning",
 			},
 			Routing: RoutingInfo{
+				Tier:          "cognitive",
 				SelectedModel: "geminicli:gemini-2.5-pro",
 			},
 		}
@@ -209,6 +211,10 @@ func TestGetHistory_WithLimit(t *testing.T) {
 			APIKeyHash: apiKey,
 			Request: RequestInfo{
 				Model: "auto",
+			},
+			Routing: RoutingInfo{
+				Tier:          "cognitive",
+				SelectedModel: "claudecli:claude-sonnet-4",
 			},
 		}
 		if err := store.RecordRouting(decision); err != nil {
@@ -294,6 +300,10 @@ func TestGetAllHistory(t *testing.T) {
 			Request: RequestInfo{
 				Model: "auto",
 			},
+			Routing: RoutingInfo{
+				Tier:          "cognitive",
+				SelectedModel: "claudecli:claude-sonnet-4",
+			},
 		}
 		if err := store.RecordRouting(decision); err != nil {
 			t.Fatalf("Failed to record decision: %v", err)
@@ -303,9 +313,13 @@ func TestGetAllHistory(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		decision := &RoutingDecision{
 			Timestamp:  time.Now(),
-			APIKeyHash: "sha256:def456",
+			APIKeyHash: "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
 			Request: RequestInfo{
 				Model: "auto",
+			},
+			Routing: RoutingInfo{
+				Tier:          "semantic",
+				SelectedModel: "geminicli:gemini-2.5-pro",
 			},
 		}
 		if err := store.RecordRouting(decision); err != nil {
@@ -353,6 +367,10 @@ func TestRoutingHistoryCount(t *testing.T) {
 			Request: RequestInfo{
 				Model: "auto",
 			},
+			Routing: RoutingInfo{
+				Tier:          "cognitive",
+				SelectedModel: "claudecli:claude-sonnet-4",
+			},
 		}
 		if err := store.RecordRouting(decision); err != nil {
 			t.Fatalf("Failed to record decision: %v", err)
@@ -387,6 +405,10 @@ func TestClose(t *testing.T) {
 		APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		Request: RequestInfo{
 			Model: "auto",
+		},
+		Routing: RoutingInfo{
+			Tier:          "cognitive",
+			SelectedModel: "claudecli:claude-sonnet-4",
 		},
 	}
 	if err := store.RecordRouting(decision); err != nil {
@@ -439,6 +461,10 @@ func TestConcurrentWrites(t *testing.T) {
 					Request: RequestInfo{
 						Model: "auto",
 					},
+					Routing: RoutingInfo{
+						Tier:          "cognitive",
+						SelectedModel: "claudecli:claude-sonnet-4",
+					},
 				}
 				if err := store.RecordRouting(decision); err != nil {
 					t.Errorf("Goroutine %d: Failed to record decision: %v", goroutineID, err)
@@ -488,6 +514,10 @@ func TestMostRecentFirst(t *testing.T) {
 			APIKeyHash: apiKey,
 			Request: RequestInfo{
 				Model: "auto",
+			},
+			Routing: RoutingInfo{
+				Tier:          "cognitive",
+				SelectedModel: "claudecli:claude-sonnet-4",
 			},
 		}
 		if err := store.RecordRouting(decision); err != nil {

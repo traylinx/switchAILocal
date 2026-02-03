@@ -43,7 +43,7 @@ func TestGetUserPreferences_NewUser(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs, err := store.GetUserPreferences(apiKeyHash)
 	if err != nil {
 		t.Fatalf("Failed to get user preferences: %v", err)
@@ -106,7 +106,7 @@ func TestUpdatePreferences(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs := &UserPreferences{
 		APIKeyHash:       apiKeyHash,
 		LastUpdated:      time.Now(),
@@ -165,7 +165,7 @@ func TestUpdatePreferences_InvalidInput(t *testing.T) {
 	defer store.Close()
 
 	// Test nil preferences
-	err = store.UpdatePreferences("sha256:abc123", nil)
+	err = store.UpdatePreferences("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", nil)
 	if err == nil {
 		t.Errorf("Expected error for nil preferences")
 	}
@@ -179,10 +179,10 @@ func TestUpdatePreferences_InvalidInput(t *testing.T) {
 
 	// Test invalid bias values
 	prefs = &UserPreferences{
-		APIKeyHash:   "sha256:abc123",
+		APIKeyHash:   "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ProviderBias: map[string]float64{"test": 2.0}, // Out of range
 	}
-	err = store.UpdatePreferences("sha256:abc123", prefs)
+	err = store.UpdatePreferences("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", prefs)
 	if err == nil {
 		t.Errorf("Expected error for out-of-range bias")
 	}
@@ -201,7 +201,7 @@ func TestLearnFromOutcome_Success(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
 		APIKeyHash: apiKeyHash,
@@ -209,6 +209,7 @@ func TestLearnFromOutcome_Success(t *testing.T) {
 			Intent: "coding",
 		},
 		Routing: RoutingInfo{
+			Tier:          "cognitive",
 			SelectedModel: "claudecli:claude-sonnet-4",
 		},
 		Outcome: OutcomeInfo{
@@ -252,7 +253,7 @@ func TestLearnFromOutcome_Failure(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
 		APIKeyHash: apiKeyHash,
@@ -260,6 +261,7 @@ func TestLearnFromOutcome_Failure(t *testing.T) {
 			Intent: "coding",
 		},
 		Routing: RoutingInfo{
+			Tier:          "cognitive",
 			SelectedModel: "claudecli:claude-sonnet-4",
 		},
 		Outcome: OutcomeInfo{
@@ -304,14 +306,14 @@ func TestMergePreferences(t *testing.T) {
 	defer store.Close()
 
 	base := &UserPreferences{
-		APIKeyHash:       "sha256:abc123",
+		APIKeyHash:       "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ModelPreferences: map[string]string{"coding": "claudecli:claude-sonnet-4"},
 		ProviderBias:     map[string]float64{"claudecli": 0.3},
 		CustomRules:      []PreferenceRule{{Condition: "base", Model: "base", Priority: 50}},
 	}
 
 	override := &UserPreferences{
-		APIKeyHash:       "sha256:abc123",
+		APIKeyHash:       "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ModelPreferences: map[string]string{"reasoning": "geminicli:gemini-2.5-pro"},
 		ProviderBias:     map[string]float64{"claudecli": 0.7, "geminicli": 0.5},
 		CustomRules:      []PreferenceRule{{Condition: "override", Model: "override", Priority: 100}},
@@ -355,7 +357,7 @@ func TestGetPreferencesByIntent(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs := &UserPreferences{
 		APIKeyHash:       apiKeyHash,
 		ModelPreferences: map[string]string{"coding": "claudecli:claude-sonnet-4"},
@@ -398,7 +400,7 @@ func TestGetProviderBias(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs := &UserPreferences{
 		APIKeyHash:   apiKeyHash,
 		ProviderBias: map[string]float64{"claudecli": 0.5},
@@ -444,7 +446,7 @@ func TestCacheExpiry(t *testing.T) {
 	// Set very short cache TTL for testing
 	store.cacheTTL = 1 * time.Millisecond
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs := &UserPreferences{
 		APIKeyHash:       apiKeyHash,
 		ModelPreferences: map[string]string{"coding": "claudecli:claude-sonnet-4"},
@@ -484,8 +486,8 @@ func TestClearCache(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash1 := "sha256:abc123"
-	apiKeyHash2 := "sha256:def456"
+	apiKeyHash1 := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	apiKeyHash2 := "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
 
 	// Add some preferences to cache
 	_, err = store.GetUserPreferences(apiKeyHash1)
@@ -549,8 +551,8 @@ func TestCount(t *testing.T) {
 	}
 
 	// Add some preferences
-	apiKeyHash1 := "sha256:abc123"
-	apiKeyHash2 := "sha256:def456"
+	apiKeyHash1 := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	apiKeyHash2 := "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
 
 	prefs1 := &UserPreferences{APIKeyHash: apiKeyHash1}
 	prefs2 := &UserPreferences{APIKeyHash: apiKeyHash2}
@@ -588,8 +590,8 @@ func TestListUsers(t *testing.T) {
 	defer store.Close()
 
 	// Add some preferences
-	apiKeyHash1 := "sha256:abc123"
-	apiKeyHash2 := "sha256:def456"
+	apiKeyHash1 := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	apiKeyHash2 := "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
 
 	prefs1 := &UserPreferences{APIKeyHash: apiKeyHash1}
 	prefs2 := &UserPreferences{APIKeyHash: apiKeyHash2}
@@ -642,7 +644,7 @@ func TestDeleteUserPreferences(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	prefs := &UserPreferences{APIKeyHash: apiKeyHash}
 
 	// Create preferences
@@ -690,7 +692,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKeyHash := "sha256:abc123"
+	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	
 	// Run concurrent operations
 	done := make(chan bool, 10)
@@ -715,7 +717,7 @@ func TestConcurrentAccess(t *testing.T) {
 			for j := 0; j < 10; j++ {
 				prefs := &UserPreferences{
 					APIKeyHash:       apiKeyHash,
-					ModelPreferences: map[string]string{fmt.Sprintf("intent%d", id): fmt.Sprintf("model%d", id)},
+					ModelPreferences: map[string]string{fmt.Sprintf("intent%d", id): fmt.Sprintf("provider%d:model%d", id, id)},
 				}
 				err := store.UpdatePreferences(apiKeyHash, prefs)
 				if err != nil {
