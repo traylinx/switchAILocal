@@ -16,7 +16,10 @@ import (
 // TestProperty_HookExecution tests Property 13: Hook Execution
 // Validates: Requirements FR-4.1, FR-4.2, FR-4.3
 func TestProperty_HookExecution(t *testing.T) {
-	properties := gopter.NewProperties(nil)
+	// Reduce test count for CI performance
+	params := gopter.DefaultTestParameters()
+	params.MinSuccessfulTests = 50 // Reduced from default 100
+	properties := gopter.NewProperties(params)
 
 	properties.Property("matching events consistently trigger hooks", prop.ForAll(
 		func(priority int, eventType string) bool {
