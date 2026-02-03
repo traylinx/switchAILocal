@@ -20,9 +20,11 @@ import (
 	"github.com/traylinx/switchAILocal/internal/cli"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/heartbeat"
+	"github.com/traylinx/switchAILocal/internal/hooks"
 	"github.com/traylinx/switchAILocal/internal/integration"
 	"github.com/traylinx/switchAILocal/internal/memory"
 	"github.com/traylinx/switchAILocal/internal/runtime/executor"
+	"github.com/traylinx/switchAILocal/internal/steering"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal"
 	sdkauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
@@ -72,9 +74,9 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	var pipelineIntegrator *integration.RequestPipelineIntegrator
 	if coordinator != nil {
 		pipelineIntegrator = integration.NewRequestPipelineIntegrator(
-			coordinator.GetSteering(),
-			coordinator.GetMemory(),
-			coordinator.GetEventBus(),
+			coordinator.GetSteering().(*steering.SteeringEngine),
+			coordinator.GetMemory().(memory.MemoryManager),
+			coordinator.GetEventBus().(*hooks.EventBus),
 		)
 	}
 
@@ -116,8 +118,11 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 		})
 
 	// Pass coordinator to API server via ServerOption
-	if pipelineIntegrator != nil {
-		builder = builder.WithServerOptions(api.WithPipelineIntegrator(pipelineIntegrator))
+	if coordinator != nil {
+		builder = builder.WithServerOptions(
+			api.WithServiceCoordinator(coordinator),
+			api.WithPipelineIntegrator(pipelineIntegrator),
+		)
 	}
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -147,7 +152,9 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 		return
 	}
 
+	fmt.Println("INTELLIGENCE_DIAGNOSTIC: About to call service.Run() in StartService")
 	err = service.Run(runCtx)
+	fmt.Println("INTELLIGENCE_DIAGNOSTIC: service.Run() returned")
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Errorf("proxy service exited with error: %v", err)
 	}
@@ -194,17 +201,17 @@ func convertHeartbeatConfig(cfg *config.HeartbeatConfig) *heartbeat.HeartbeatCon
 	if err != nil {
 		interval = 5 * time.Minute // Default
 	}
-	
+
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil {
 		timeout = 5 * time.Second // Default
 	}
-	
+
 	retryDelay, err := time.ParseDuration(cfg.RetryDelay)
 	if err != nil {
 		retryDelay = time.Second // Default
 	}
-	
+
 	return &heartbeat.HeartbeatConfig{
 		Enabled:                cfg.Enabled,
 		Interval:               interval,

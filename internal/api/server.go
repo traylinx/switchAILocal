@@ -274,11 +274,20 @@ type EventBusIntegrator interface {
 // Returns:
 //   - *Server: A new server instance
 func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdkaccess.Manager, configFilePath string, luaEngine *plugin.LuaEngine, opts ...ServerOption) *Server {
+	fmt.Println("INTELLIGENCE_DIAGNOSTIC: NewServer called")
+	log.Info("INTELLIGENCE_DIAGNOSTIC: NewServer called")
 	optionState := &serverOptionConfig{
 		requestLoggerFactory: defaultRequestLoggerFactory,
 	}
 	for i := range opts {
 		opts[i](optionState)
+	}
+	if optionState.serviceCoordinator != nil {
+		fmt.Println("INTELLIGENCE_DIAGNOSTIC: ServiceCoordinator provided to NewServer")
+		log.Info("INTELLIGENCE_DIAGNOSTIC: ServiceCoordinator provided to NewServer")
+	} else {
+		fmt.Println("INTELLIGENCE_DIAGNOSTIC: ServiceCoordinator NOT provided to NewServer")
+		log.Warn("INTELLIGENCE_DIAGNOSTIC: ServiceCoordinator NOT provided to NewServer")
 	}
 	// Set gin mode
 	if !cfg.Debug {
@@ -326,7 +335,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	// If both serviceCoordinator and pipelineIntegrator are provided, pipelineIntegrator takes precedence
 	var pipelineIntegrator handlers.PipelineIntegrator
 	var eventBusIntegrator EventBusIntegrator
-	
+
 	if optionState.pipelineIntegrator != nil {
 		// Use explicitly provided pipeline integrator
 		pipelineIntegrator = optionState.pipelineIntegrator
@@ -335,10 +344,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		// Note: We need to type assert the interfaces to concrete types
 		// This is safe because we control the implementation
 		log.Debug("Initializing RequestPipelineIntegrator from ServiceCoordinator")
-		
+
 		// The integration package will handle nil values gracefully
 		pipelineIntegrator = createPipelineIntegratorFromCoordinator(optionState.serviceCoordinator)
-		
+
 		// Create event bus integrator
 		log.Debug("Initializing EventBusIntegrator from ServiceCoordinator")
 		eventBusIntegrator = createEventBusIntegratorFromCoordinator(optionState.serviceCoordinator)
@@ -410,6 +419,13 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	// Apply additional router configurators from options
 	if optionState.routerConfigurator != nil {
 		optionState.routerConfigurator(engine, s.handlers, cfg)
+	}
+
+	// Pass service coordinator to management handler if available
+	if s.serviceCoordinator != nil {
+		if sc, ok := s.serviceCoordinator.(managementHandlers.ServiceCoordinatorInterface); ok {
+			s.mgmt.SetServiceCoordinator(sc)
+		}
 	}
 
 	// Register management routes and enable them by default.
@@ -594,10 +610,13 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 }
 
 func (s *Server) registerManagementRoutes() {
+	log.Debug("registerManagementRoutes called")
 	if s == nil || s.engine == nil || s.mgmt == nil {
+		log.Debug("registerManagementRoutes: server, engine, or mgmt is nil")
 		return
 	}
 	if !s.managementRoutesRegistered.CompareAndSwap(false, true) {
+		log.Debug("registerManagementRoutes: already registered")
 		return
 	}
 

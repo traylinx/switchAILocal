@@ -199,7 +199,7 @@ func TestRecordRouting(t *testing.T) {
 
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
-		APIKeyHash: "sha256:test123",
+		APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		Request: RequestInfo{
 			Model:  "auto",
 			Intent: "coding",
@@ -221,7 +221,7 @@ func TestRecordRouting(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify decision was recorded
-	history, err := manager.GetHistory("sha256:test123", 10)
+	history, err := manager.GetHistory("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 10)
 	if err != nil {
 		t.Errorf("Failed to get history: %v", err)
 	}
@@ -230,8 +230,8 @@ func TestRecordRouting(t *testing.T) {
 		t.Errorf("Expected 1 decision in history, got %d", len(history))
 	}
 
-	if history[0].APIKeyHash != "sha256:test123" {
-		t.Errorf("Expected API key hash sha256:test123, got %s", history[0].APIKeyHash)
+	if history[0].APIKeyHash != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Errorf("Expected API key hash sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, got %s", history[0].APIKeyHash)
 	}
 }
 

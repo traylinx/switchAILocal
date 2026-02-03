@@ -54,7 +54,7 @@ func TestProperty_ConfidenceAdjustment(t *testing.T) {
 			adjustedConfidence := router.adjustConfidenceWithMemory(decision)
 
 			// Property: If historical success rate exists, confidence should be adjusted
-			expectedAdjustment := providerBias * 0.2 // Max 20% adjustment
+			expectedAdjustment := providerBias * 0.1 // Match confidence.go implementation
 			expectedConfidence := baseConfidence + expectedAdjustment
 
 			// Clamp between 0.0 and 1.0

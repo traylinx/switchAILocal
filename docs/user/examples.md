@@ -420,3 +420,60 @@ print(response.choices[0].message.content)
 
 > **Note:** For `ollama`, ensure the underlying model (e.g., `llava`, `moondream`, `devstral-small-2`) supports vision. `switchAILocal` automatically converts the OpenAI format to the provider's native image format.
 
+---
+
+## 🧠 Intelligent Systems Samples
+
+`switchAILocal` includes four intelligent systems: Memory, Heartbeat, Steering, and Hooks.
+
+### 📜 Memory & Analytics
+View performance stats for all providers and models based on historical data.
+
+```bash
+# Get overall memory and system statistics
+curl http://localhost:18080/v0/management/memory/stats \
+  -H "X-Management-Key: your-secret-key"
+
+# View performance analytics (success rates, latency)
+curl http://localhost:18080/v0/management/analytics \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### 💓 Heartbeat Monitoring
+
+Check the real-time health and quota status of all configured providers.
+
+```bash
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### 🎛️ Steering Engine (Dynamic Routing)
+Reload steering rules without restarting the server or view current active rules.
+
+```bash
+# List all active steering rules
+curl http://localhost:18080/v0/management/steering/rules \
+  -H "X-Management-Key: your-secret-key"
+
+# Force a hot-reload of steering rules from disk
+curl -X POST http://localhost:18080/v0/management/steering/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### ⚓ Hooks Manager
+Triggering actions based on system events. You can view registered hooks.
+
+```bash
+# List all registered hooks
+curl http://localhost:18080/v0/management/hooks \
+  -H "X-Management-Key: your-secret-key"
+
+# Manually trigger a test event (e.g. for testing webhooks)
+curl -X POST http://localhost:18080/v0/management/hooks/test \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"event": "health_check_failed", "provider": "openai"}'
+```
+
+---
+

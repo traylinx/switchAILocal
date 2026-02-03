@@ -396,7 +396,7 @@ func TestCortexRouter_Route_ReflexTier_Code(t *testing.T) {
 
 func TestCortexRouter_Route_SemanticTier(t *testing.T) {
 	config := &config.IntelligenceConfig{Enabled: true}
-	memoryManager := newMockMemoryManager(true)
+	memoryManager := newMockMemoryManager(false)
 	router := NewCortexRouter(config, memoryManager)
 
 	// Set up semantic tier

@@ -45,7 +45,7 @@ type IntegrationConfig struct {
 	Heartbeat *heartbeat.HeartbeatConfig
 	Steering  *config.SteeringConfig
 	Hooks     *config.HooksConfig
-	
+
 	// MainConfig is the full application configuration, used for provider registration
 	MainConfig *config.Config
 }
@@ -192,7 +192,7 @@ func (sc *ServiceCoordinator) initializeSystems() error {
 		log.Debug("Initializing Heartbeat Monitor...")
 		hbMonitor := heartbeat.NewHeartbeatMonitor(sc.config.Heartbeat)
 		sc.heartbeat = hbMonitor
-		
+
 		// Register provider checkers from configuration
 		if sc.config.MainConfig != nil {
 			log.Debug("Registering provider health checkers...")
@@ -201,7 +201,7 @@ func (sc *ServiceCoordinator) initializeSystems() error {
 				// Don't fail initialization if checker registration fails
 			}
 		}
-		
+
 		log.Info("Heartbeat Monitor initialized successfully")
 	} else {
 		log.Debug("Heartbeat Monitor is disabled, skipping initialization")
@@ -268,23 +268,23 @@ func (sc *ServiceCoordinator) Start(ctx context.Context) error {
 	// Connect event sources to event bus
 	log.Debug("Connecting event sources to event bus...")
 	eventIntegrator := NewEventBusIntegrator(sc.eventBus, sc.hooks, sc.heartbeat)
-	
+
 	// Connect heartbeat monitor events
 	if err := eventIntegrator.ConnectHeartbeatEvents(); err != nil {
 		log.Warnf("Failed to connect heartbeat events: %v", err)
 		// Don't fail startup if event connection fails
 	}
-	
+
 	// Connect routing decision events (no-op, but call for completeness)
 	if err := eventIntegrator.ConnectRoutingEvents(); err != nil {
 		log.Warnf("Failed to connect routing events: %v", err)
 	}
-	
+
 	// Connect provider failure events (no-op, but call for completeness)
 	if err := eventIntegrator.ConnectProviderEvents(); err != nil {
 		log.Warnf("Failed to connect provider events: %v", err)
 	}
-	
+
 	log.Info("Event sources connected to event bus successfully")
 
 	sc.started = true
@@ -391,7 +391,7 @@ func (sc *ServiceCoordinator) Stop(ctx context.Context) error {
 
 // GetMemory returns the Memory Manager instance.
 // Returns nil if the memory system is disabled or failed to initialize.
-func (sc *ServiceCoordinator) GetMemory() memory.MemoryManager {
+func (sc *ServiceCoordinator) GetMemory() interface{} {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.memoryManager
@@ -399,7 +399,7 @@ func (sc *ServiceCoordinator) GetMemory() memory.MemoryManager {
 
 // GetHeartbeat returns the Heartbeat Monitor instance.
 // Returns nil if the heartbeat monitor is disabled or failed to initialize.
-func (sc *ServiceCoordinator) GetHeartbeat() heartbeat.HeartbeatMonitor {
+func (sc *ServiceCoordinator) GetHeartbeat() interface{} {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.heartbeat
@@ -407,7 +407,7 @@ func (sc *ServiceCoordinator) GetHeartbeat() heartbeat.HeartbeatMonitor {
 
 // GetSteering returns the Steering Engine instance.
 // Returns nil if the steering engine failed to initialize.
-func (sc *ServiceCoordinator) GetSteering() *steering.SteeringEngine {
+func (sc *ServiceCoordinator) GetSteering() interface{} {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.steering
@@ -415,7 +415,7 @@ func (sc *ServiceCoordinator) GetSteering() *steering.SteeringEngine {
 
 // GetHooks returns the Hooks Manager instance.
 // Returns nil if the hooks manager failed to initialize.
-func (sc *ServiceCoordinator) GetHooks() *hooks.HookManager {
+func (sc *ServiceCoordinator) GetHooks() interface{} {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.hooks
@@ -423,7 +423,7 @@ func (sc *ServiceCoordinator) GetHooks() *hooks.HookManager {
 
 // GetEventBus returns the Event Bus instance.
 // The event bus is always initialized, even if hooks are disabled.
-func (sc *ServiceCoordinator) GetEventBus() *hooks.EventBus {
+func (sc *ServiceCoordinator) GetEventBus() interface{} {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.eventBus

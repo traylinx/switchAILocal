@@ -197,9 +197,11 @@ func (s *Service) Run(ctx context.Context) error {
 		}()
 	}
 
+	fmt.Println("INTELLIGENCE_DIAGNOSTIC: About to call api.NewServer in Run()")
 	// handlers no longer depend on legacy clients; pass nil slice initially
-	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.luaEngine, 
+	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.luaEngine,
 		append(s.serverOptions, api.WithIntelligenceService(s.intelligenceService))...)
+	fmt.Println("INTELLIGENCE_DIAGNOSTIC: api.NewServer call returned")
 
 	// Wire discoverer for /v1/models/refresh endpoint
 	if s.discoverer != nil && s.server != nil {

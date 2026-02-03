@@ -40,19 +40,20 @@ type attemptInfo struct {
 
 // Handler aggregates config reference, persistence path and helpers.
 type Handler struct {
-	cfg                  *config.Config
-	configFilePath       string
-	mu                   sync.Mutex
-	attemptsMu           sync.Mutex
-	failedAttempts       map[string]*attemptInfo // keyed by client IP
-	authManager          *coreauth.Manager
-	usageStats           *usage.RequestStatistics
-	tokenStore           coreauth.Store
-	localPassword        string
-	allowRemoteOverride  bool
-	envSecret            string
-	logDir               string
-	intelligenceService  IntelligenceService
+	cfg                 *config.Config
+	configFilePath      string
+	mu                  sync.Mutex
+	attemptsMu          sync.Mutex
+	failedAttempts      map[string]*attemptInfo // keyed by client IP
+	authManager         *coreauth.Manager
+	usageStats          *usage.RequestStatistics
+	tokenStore          coreauth.Store
+	localPassword       string
+	allowRemoteOverride bool
+	envSecret           string
+	logDir              string
+	intelligenceService IntelligenceService
+	serviceCoordinator  ServiceCoordinatorInterface
 }
 
 // NewHandler creates a new management handler instance.
@@ -100,6 +101,11 @@ func (h *Handler) SetLogDirectory(dir string) {
 // SetIntelligenceService updates the intelligence service reference.
 func (h *Handler) SetIntelligenceService(svc IntelligenceService) {
 	h.intelligenceService = svc
+}
+
+// SetServiceCoordinator updates the service coordinator reference.
+func (h *Handler) SetServiceCoordinator(coordinator ServiceCoordinatorInterface) {
+	h.serviceCoordinator = coordinator
 }
 
 // Middleware enforces access control for management endpoints.
