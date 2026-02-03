@@ -3,6 +3,7 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,9 +55,9 @@ func TestProperty_HookExecution(t *testing.T) {
 			// Use a channel to detect execution (since LogWarning just logs)
 			// Implementation tricky without custom action.
 			// Let's register a CUSTOM action for this test instead of built-in.
-			triggered := false
+			var triggered atomic.Bool
 			manager.RegisterAction("custom_action", func(h *Hook, ctx *EventContext) error {
-				triggered = true
+				triggered.Store(true)
 				return nil
 			})
 
@@ -82,7 +83,7 @@ func TestProperty_HookExecution(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 
 			shouldTrigger := priority > 10
-			return triggered == shouldTrigger
+			return triggered.Load() == shouldTrigger
 		},
 		gen.IntRange(0, 20),
 		gen.OneConstOf("request_received", "request_failed", "quota_warning"),

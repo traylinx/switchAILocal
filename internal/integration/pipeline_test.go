@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -160,9 +161,11 @@ func TestEmitRoutingEvent_WithEventBus(t *testing.T) {
 	rpi := NewRequestPipelineIntegrator(nil, nil, eventBus)
 
 	// Subscribe to routing events
-	eventReceived := false
+	var eventReceived sync.WaitGroup
+	eventReceived.Add(1)
+	
 	eventBus.Subscribe(hooks.EventRoutingDecision, func(ctx *hooks.EventContext) {
-		eventReceived = true
+		defer eventReceived.Done()
 
 		// Verify event data
 		if ctx.Event != hooks.EventRoutingDecision {
@@ -206,11 +209,18 @@ func TestEmitRoutingEvent_WithEventBus(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Give event bus time to process
-	time.Sleep(50 * time.Millisecond)
+	// Wait for event to be processed
+	done := make(chan struct{})
+	go func() {
+		eventReceived.Wait()
+		close(done)
+	}()
 
-	if !eventReceived {
-		t.Error("Expected event to be received by subscriber")
+	select {
+	case <-done:
+		// Event was received
+	case <-time.After(time.Second):
+		t.Error("Timeout waiting for event to be received by subscriber")
 	}
 }
 
@@ -245,9 +255,11 @@ func TestEmitRoutingEvent_WithError(t *testing.T) {
 	rpi := NewRequestPipelineIntegrator(nil, nil, eventBus)
 
 	// Subscribe to routing events
-	eventReceived := false
+	var eventReceived sync.WaitGroup
+	eventReceived.Add(1)
+	
 	eventBus.Subscribe(hooks.EventRoutingDecision, func(ctx *hooks.EventContext) {
-		eventReceived = true
+		defer eventReceived.Done()
 
 		// Verify error message is included
 		if ctx.ErrorMessage != "Provider timeout" {
@@ -280,10 +292,17 @@ func TestEmitRoutingEvent_WithError(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Give event bus time to process
-	time.Sleep(50 * time.Millisecond)
+	// Wait for event to be processed
+	done := make(chan struct{})
+	go func() {
+		eventReceived.Wait()
+		close(done)
+	}()
 
-	if !eventReceived {
-		t.Error("Expected event to be received by subscriber")
+	select {
+	case <-done:
+		// Event was received
+	case <-time.After(time.Second):
+		t.Error("Timeout waiting for event to be received by subscriber")
 	}
 }

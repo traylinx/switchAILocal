@@ -111,11 +111,12 @@ func (b *EventBus) Publish(ctx *EventContext) {
 // PublishAsync distributes an event asynchronously via the queue.
 func (b *EventBus) PublishAsync(ctx *EventContext) {
 	b.mu.RLock()
-	if b.shutdown {
-		b.mu.RUnlock()
+	isShutdown := b.shutdown
+	b.mu.RUnlock()
+	
+	if isShutdown {
 		return
 	}
-	b.mu.RUnlock()
 	
 	select {
 	case <-b.ctx.Done():

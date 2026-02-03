@@ -2,6 +2,7 @@ package heartbeat
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +17,7 @@ type MockHealthChecker struct {
 	supportsQuota         bool
 	supportsAutoDiscovery bool
 	checkCount            int
+	mu                    sync.Mutex // Protects concurrent access
 }
 
 func NewMockHealthChecker(name string) *MockHealthChecker {
@@ -30,24 +32,30 @@ func NewMockHealthChecker(name string) *MockHealthChecker {
 }
 
 func (m *MockHealthChecker) Check(ctx context.Context) (*HealthStatus, error) {
+	m.mu.Lock()
 	m.checkCount++
+	currentErr := m.err
+	currentStatus := m.status
+	currentResponseTime := m.responseTime
+	currentName := m.name
+	m.mu.Unlock()
 
-	if m.err != nil {
-		return nil, m.err
+	if currentErr != nil {
+		return nil, currentErr
 	}
 
 	// Simulate response time
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-time.After(m.responseTime):
+	case <-time.After(currentResponseTime):
 	}
 
 	return &HealthStatus{
-		Provider:     m.name,
-		Status:       m.status,
+		Provider:     currentName,
+		Status:       currentStatus,
 		LastCheck:    time.Now(),
-		ResponseTime: m.responseTime,
+		ResponseTime: currentResponseTime,
 		ModelsCount:  5,
 		QuotaUsed:    0.5,
 		QuotaLimit:   1000,
@@ -55,30 +63,44 @@ func (m *MockHealthChecker) Check(ctx context.Context) (*HealthStatus, error) {
 }
 
 func (m *MockHealthChecker) GetName() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.name
 }
 
 func (m *MockHealthChecker) GetCheckInterval() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.checkInterval
 }
 
 func (m *MockHealthChecker) SupportsQuotaMonitoring() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.supportsQuota
 }
 
 func (m *MockHealthChecker) SupportsAutoDiscovery() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.supportsAutoDiscovery
 }
 
 func (m *MockHealthChecker) SetStatus(status ProviderStatus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.status = status
 }
 
 func (m *MockHealthChecker) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.err = err
 }
 
 func (m *MockHealthChecker) GetCheckCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.checkCount
 }
 

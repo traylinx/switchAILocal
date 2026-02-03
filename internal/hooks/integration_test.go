@@ -38,7 +38,10 @@ func TestHookIntegration_EndToEnd(t *testing.T) {
 	// Create test webhook server
 	var webhookPayload map[string]interface{}
 	var webhookHeaders http.Header
+	var webhookMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		webhookMu.Lock()
+		defer webhookMu.Unlock()
 		webhookHeaders = r.Header.Clone()
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &webhookPayload)
@@ -103,8 +106,10 @@ params:
 
 	// Test 1: Webhook hook should trigger
 	t.Run("WebhookHook", func(t *testing.T) {
+		webhookMu.Lock()
 		webhookPayload = nil
 		webhookHeaders = nil
+		webhookMu.Unlock()
 
 		ctx := &EventContext{
 			Event:     EventRequestFailed,
@@ -118,6 +123,8 @@ params:
 		bus.Publish(ctx)
 		time.Sleep(100 * time.Millisecond) // Wait for async execution
 
+		webhookMu.Lock()
+		defer webhookMu.Unlock()
 		require.NotNil(t, webhookPayload, "Webhook should have been called")
 		assert.Equal(t, string(EventRequestFailed), webhookPayload["event"])
 		assert.Equal(t, "webhook-hook", webhookPayload["hook_id"])
