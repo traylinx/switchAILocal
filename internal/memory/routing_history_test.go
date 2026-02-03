@@ -35,7 +35,7 @@ func TestRecordRouting_Success(t *testing.T) {
 
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
-		APIKeyHash: "sha256:abc123",
+		APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		Request: RequestInfo{
 			Model:         "auto",
 			Intent:        "coding",
@@ -124,7 +124,7 @@ func TestGetHistory_Success(t *testing.T) {
 	defer store.Close()
 
 	// Record multiple decisions for different API keys
-	apiKey1 := "sha256:abc123"
+	apiKey1 := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	apiKey2 := "sha256:def456"
 
 	for i := 0; i < 5; i++ {
@@ -200,7 +200,7 @@ func TestGetHistory_WithLimit(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKey := "sha256:abc123"
+	apiKey := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 	// Record 10 decisions
 	for i := 0; i < 10; i++ {
@@ -267,7 +267,7 @@ func TestGetHistory_NonExistentFile(t *testing.T) {
 	defer store.Close()
 
 	// Get history should return empty array, not error
-	history, err := store.GetHistory("sha256:abc123", 10)
+	history, err := store.GetHistory("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 10)
 	if err != nil {
 		t.Errorf("Expected no error for non-existent file, got: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestGetAllHistory(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		decision := &RoutingDecision{
 			Timestamp:  time.Now(),
-			APIKeyHash: "sha256:abc123",
+			APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			Request: RequestInfo{
 				Model: "auto",
 			},
@@ -349,7 +349,7 @@ func TestRoutingHistoryCount(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		decision := &RoutingDecision{
 			Timestamp:  time.Now(),
-			APIKeyHash: "sha256:abc123",
+			APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			Request: RequestInfo{
 				Model: "auto",
 			},
@@ -384,7 +384,7 @@ func TestClose(t *testing.T) {
 	// Record a decision
 	decision := &RoutingDecision{
 		Timestamp:  time.Now(),
-		APIKeyHash: "sha256:abc123",
+		APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		Request: RequestInfo{
 			Model: "auto",
 		},
@@ -435,7 +435,7 @@ func TestConcurrentWrites(t *testing.T) {
 			for i := 0; i < writesPerGoroutine; i++ {
 				decision := &RoutingDecision{
 					Timestamp:  time.Now(),
-					APIKeyHash: "sha256:abc123",
+					APIKeyHash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 					Request: RequestInfo{
 						Model: "auto",
 					},
@@ -477,7 +477,7 @@ func TestMostRecentFirst(t *testing.T) {
 	}
 	defer store.Close()
 
-	apiKey := "sha256:abc123"
+	apiKey := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 	// Record decisions with increasing timestamps
 	timestamps := make([]time.Time, 5)

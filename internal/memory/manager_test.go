@@ -206,6 +206,7 @@ func TestRecordRouting(t *testing.T) {
 		},
 		Routing: RoutingInfo{
 			SelectedModel: "claudecli:claude-sonnet-4",
+			Tier:          "cognitive",
 			Confidence:    0.92,
 		},
 		Outcome: OutcomeInfo{
