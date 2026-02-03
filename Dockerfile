@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION
 
 # Runtime stage
 
-FROM alpine:3.23.2
+FROM alpine:3.23.3
 
 RUN apk add --no-cache tzdata ca-certificates nodejs npm
 
