@@ -111,6 +111,9 @@ type Config struct {
 	// Superbrain configures the intelligent orchestration and self-healing capabilities.
 	Superbrain SuperbrainConfig `yaml:"superbrain" json:"superbrain"`
 
+	// Heartbeat configures proactive background monitoring for provider health.
+	Heartbeat HeartbeatConfig `yaml:"heartbeat" json:"heartbeat"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
@@ -544,6 +547,17 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Superbrain.Security.AuditLogPath = "./logs/superbrain_audit.log"
 	cfg.Superbrain.Security.ForbiddenOperations = []string{"file_delete", "system_command"}
 
+	// Set Heartbeat defaults
+	cfg.Heartbeat.Enabled = false // Disabled by default (opt-in)
+	cfg.Heartbeat.Interval = "5m"
+	cfg.Heartbeat.Timeout = "5s"
+	cfg.Heartbeat.AutoDiscovery = true
+	cfg.Heartbeat.QuotaWarningThreshold = 0.80  // 80%
+	cfg.Heartbeat.QuotaCriticalThreshold = 0.95 // 95%
+	cfg.Heartbeat.MaxConcurrentChecks = 10
+	cfg.Heartbeat.RetryAttempts = 2
+	cfg.Heartbeat.RetryDelay = "1s"
+
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -611,6 +625,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Superbrain configuration
 	cfg.SanitizeSuperbrain()
+
+	// Sanitize Heartbeat configuration
+	cfg.SanitizeHeartbeat()
 
 	// Sanitize Intelligence configuration
 	cfg.SDKConfig.SanitizeIntelligence()

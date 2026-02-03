@@ -72,3 +72,8 @@ __pycache__/
 
 # Go vendor
 vendor/
+.snapshots
+
+# New Feature Artifacts
+heartbeat
+coverage.html

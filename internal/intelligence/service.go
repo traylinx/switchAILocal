@@ -17,6 +17,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/hooks"
 	"github.com/traylinx/switchAILocal/internal/intelligence/cache"
 	"github.com/traylinx/switchAILocal/internal/intelligence/cascade"
 	"github.com/traylinx/switchAILocal/internal/intelligence/confidence"
@@ -27,6 +28,9 @@ import (
 	"github.com/traylinx/switchAILocal/internal/intelligence/semantic"
 	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
 	"github.com/traylinx/switchAILocal/internal/intelligence/verification"
+	"github.com/traylinx/switchAILocal/internal/learning"
+	"github.com/traylinx/switchAILocal/internal/memory"
+	"github.com/traylinx/switchAILocal/internal/steering"
 	"github.com/traylinx/switchAILocal/internal/util"
 )
 
@@ -60,6 +64,11 @@ type Service struct {
 	verifier   *verification.Verifier
 	cascade    *cascade.Manager
 	feedback   *feedback.Collector
+	steering   *steering.SteeringEngine
+	hooks      *hooks.HookManager
+	eventBus   *hooks.EventBus
+	learning   *learning.LearningEngine
+	memory     memory.MemoryManager
 }
 
 // NewService creates a new IntelligenceService instance.
@@ -368,8 +377,87 @@ func (s *Service) Initialize(ctx context.Context) error {
 		}
 	}
 
+	// Phase 3: Steering Engine
+	if s.config.Steering.Enabled {
+		log.Info("Initializing steering engine...")
+		steeringDir := s.config.Steering.SteeringDir
+		if steeringDir == "" {
+			steeringDir = ".switchailocal/steering"
+		}
+
+		engine, err := steering.NewSteeringEngine(steeringDir)
+		if err != nil {
+			log.Warnf("Failed to create steering engine: %v", err)
+		} else {
+			if err := engine.LoadRules(); err != nil {
+				log.Warnf("Failed to load steering rules: %v", err)
+			}
+			s.steering = engine
+			// Start watching for changes
+			if err := s.steering.StartWatcher(); err != nil {
+				log.Warnf("Failed to start steering watcher: %v", err)
+			}
+			log.Infof("Steering engine initialized with %d rules", len(engine.GetRules()))
+		}
+	}
+
+	// Phase 4: Hooks System
+	if s.config.Hooks.Enabled {
+		log.Info("Initializing hooks system...")
+		s.eventBus = hooks.NewEventBus()
+
+		hooksDir := s.config.Hooks.HooksDir
+		if hooksDir == "" {
+			hooksDir = ".switchailocal/hooks"
+		}
+
+		manager, err := hooks.NewHookManager(hooksDir, s.eventBus)
+		if err != nil {
+			log.Warnf("Failed to create hook manager: %v", err)
+		} else {
+			// Register built-in actions
+			hooks.RegisterBuiltInActions(manager)
+
+			// Load hooks
+			if err := manager.LoadHooks(); err != nil {
+				log.Warnf("Failed to load hooks: %v", err)
+			}
+
+			// Start watching
+			if err := manager.StartWatcher(); err != nil {
+				log.Warnf("Failed to start hooks watcher: %v", err)
+			}
+			manager.SubscribeToAllEvents()
+
+			s.hooks = manager
+			log.Info("Hooks system initialized")
+		}
+	}
+
+	// Phase 5: Learning Engine
+	if s.config.Learning.Enabled && s.memory != nil {
+		log.Info("Initializing learning engine...")
+		engine, err := learning.NewLearningEngine(&s.config.Learning, s.memory)
+		if err != nil {
+			log.Warnf("Failed to create learning engine: %v", err)
+		} else {
+			s.learning = engine
+			s.learning.Start()
+			log.Info("Learning engine initialized")
+		}
+	} else if s.config.Learning.Enabled && s.memory == nil {
+		log.Warn("Learning engine enabled but memory manager not available, disabling")
+	}
+
 	log.Info("Intelligence services initialized successfully")
 	return nil
+}
+
+// SetMemoryManager sets the memory manager for intelligence services.
+func (s *Service) SetMemoryManager(mm memory.MemoryManager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.memory = mm
 }
 
 // IsEnabled returns whether intelligence services are active.
@@ -758,12 +846,41 @@ func (s *Service) isFileCorrupted(filePath string) bool {
 	return true // Doesn't look like valid JSON
 }
 
-// GetStateBox returns the StateBox instance used by the intelligence service.
-// Returns nil if StateBox was not initialized.
-func (s *Service) GetStateBox() *util.StateBox {
+// GetCortexRouter returns the Cortex Router instance.
+// Returns nil if not initialized or memory integration is not available.
+func (s *Service) GetCortexRouter() *CortexRouter {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.stateBox
+
+	if !s.enabled {
+		return nil
+	}
+
+	// Create router with current configuration and memory manager (if available)
+	// In a full implementation, this would be initialized during service startup
+	router := NewCortexRouter(s.config, nil) // Memory manager would be injected here
+
+	// Set up semantic tier if available
+	if s.semantic != nil {
+		router.SetSemanticTier(&semanticTierWrapper{tier: s.semantic})
+	}
+
+	// Set up semantic cache if available
+	if s.cache != nil {
+		router.SetSemanticCache(s.cache)
+	}
+
+	// Set up steering engine if available
+	if s.steering != nil {
+		router.SetSteeringEngine(s.steering)
+	}
+
+	// Set up event bus if available
+	if s.eventBus != nil {
+		router.SetEventBus(s.eventBus)
+	}
+
+	return router
 }
 
 func (w *feedbackCollectorWrapper) IsEnabled() bool {
@@ -889,4 +1006,12 @@ func (w *semanticTierWrapper) IsEnabled() bool {
 
 func (w *semanticTierWrapper) GetMetrics() map[string]interface{} {
 	return w.tier.GetMetrics()
+}
+
+// GetStateBox returns the StateBox instance used by the intelligence service.
+// Returns nil if StateBox was not initialized.
+func (s *Service) GetStateBox() *util.StateBox {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stateBox
 }

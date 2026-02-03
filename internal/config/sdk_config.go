@@ -180,6 +180,15 @@ type IntelligenceConfig struct {
 
 	// Feedback configures feedback collection.
 	Feedback FeedbackConfig `yaml:"feedback,omitempty" json:"feedback,omitempty"`
+
+	// Steering configures context-aware routing rules.
+	Steering SteeringConfig `yaml:"steering,omitempty" json:"steering,omitempty"`
+
+	// Hooks configures the event-driven automation system.
+	Hooks HooksConfig `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+
+	// Learning configures the adaptive learning engine.
+	Learning LearningConfig `yaml:"learning,omitempty" json:"learning,omitempty"`
 }
 
 // FeatureFlag represents a simple on/off toggle for a feature.
@@ -235,9 +244,9 @@ type SemanticCacheConfig struct {
 
 // VerificationConfig configures classification verification.
 type VerificationConfig struct {
-	Enabled                  bool    `yaml:"enabled" json:"enabled"`
-	ConfidenceThresholdLow   float64 `yaml:"confidence-threshold-low,omitempty" json:"confidence-threshold-low,omitempty"`
-	ConfidenceThresholdHigh  float64 `yaml:"confidence-threshold-high,omitempty" json:"confidence-threshold-high,omitempty"`
+	Enabled                 bool    `yaml:"enabled" json:"enabled"`
+	ConfidenceThresholdLow  float64 `yaml:"confidence-threshold-low,omitempty" json:"confidence-threshold-low,omitempty"`
+	ConfidenceThresholdHigh float64 `yaml:"confidence-threshold-high,omitempty" json:"confidence-threshold-high,omitempty"`
 }
 
 // CascadeConfig configures model cascading.
@@ -252,12 +261,33 @@ type FeedbackConfig struct {
 	RetentionDays int  `yaml:"retention-days,omitempty" json:"retention-days,omitempty"`
 }
 
+// SteeringConfig configures the steering engine.
+type SteeringConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	SteeringDir string `yaml:"steering-dir,omitempty" json:"steering-dir,omitempty"`
+}
+
+// HooksConfig configures the hook system.
+type HooksConfig struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	HooksDir string `yaml:"hooks-dir,omitempty" json:"hooks-dir,omitempty"`
+}
+
+// LearningConfig configures the learning engine.
+type LearningConfig struct {
+	Enabled             bool    `yaml:"enabled" json:"enabled"`
+	MinSampleSize       int     `yaml:"min-sample-size,omitempty" json:"min-sample-size,omitempty"`
+	ConfidenceThreshold float64 `yaml:"confidence-threshold,omitempty" json:"confidence-threshold,omitempty"`
+	AutoApply           bool    `yaml:"auto-apply,omitempty" json:"auto-apply,omitempty"`
+	AnalysisInterval    string  `yaml:"analysis-interval,omitempty" json:"analysis-interval,omitempty"`
+}
+
 // SanitizeIntelligence normalizes the intelligence routing configuration.
 func (c *SDKConfig) SanitizeIntelligence() {
 	if c == nil {
 		return
 	}
-	
+
 	// Existing v1.0 fields
 	c.Intelligence.RouterModel = strings.TrimSpace(c.Intelligence.RouterModel)
 	c.Intelligence.RouterFallback = strings.TrimSpace(c.Intelligence.RouterFallback)
@@ -278,7 +308,7 @@ func (c *SDKConfig) SanitizeIntelligence() {
 			c.Intelligence.Matrix[cleanK] = cleanV
 		}
 	}
-	
+
 	// Phase 2 defaults (all disabled by default when master switch is off)
 	// Discovery defaults
 	if c.Intelligence.Discovery.RefreshInterval == 0 {
@@ -287,32 +317,32 @@ func (c *SDKConfig) SanitizeIntelligence() {
 	if c.Intelligence.Discovery.CacheDir == "" {
 		c.Intelligence.Discovery.CacheDir = "~/.switchailocal/cache/discovery"
 	}
-	
+
 	// Auto-assign defaults
 	if c.Intelligence.AutoAssign.Overrides == nil {
 		c.Intelligence.AutoAssign.Overrides = make(map[string]string)
 	}
-	
+
 	// Skills defaults
 	if c.Intelligence.Skills.Directory == "" {
 		c.Intelligence.Skills.Directory = "plugins/cortex-router/skills"
 	}
-	
+
 	// Embedding defaults
 	if c.Intelligence.Embedding.Model == "" {
 		c.Intelligence.Embedding.Model = "all-MiniLM-L6-v2"
 	}
-	
+
 	// Semantic tier defaults
 	if c.Intelligence.SemanticTier.ConfidenceThreshold == 0 {
 		c.Intelligence.SemanticTier.ConfidenceThreshold = 0.85
 	}
-	
+
 	// Skill matching defaults
 	if c.Intelligence.SkillMatching.ConfidenceThreshold == 0 {
 		c.Intelligence.SkillMatching.ConfidenceThreshold = 0.80
 	}
-	
+
 	// Semantic cache defaults
 	if c.Intelligence.SemanticCache.SimilarityThreshold == 0 {
 		c.Intelligence.SemanticCache.SimilarityThreshold = 0.95
@@ -320,7 +350,7 @@ func (c *SDKConfig) SanitizeIntelligence() {
 	if c.Intelligence.SemanticCache.MaxSize == 0 {
 		c.Intelligence.SemanticCache.MaxSize = 10000
 	}
-	
+
 	// Verification defaults
 	if c.Intelligence.Verification.ConfidenceThresholdLow == 0 {
 		c.Intelligence.Verification.ConfidenceThresholdLow = 0.60
@@ -328,14 +358,35 @@ func (c *SDKConfig) SanitizeIntelligence() {
 	if c.Intelligence.Verification.ConfidenceThresholdHigh == 0 {
 		c.Intelligence.Verification.ConfidenceThresholdHigh = 0.90
 	}
-	
+
 	// Cascade defaults
 	if c.Intelligence.Cascade.QualityThreshold == 0 {
 		c.Intelligence.Cascade.QualityThreshold = 0.70
 	}
-	
+
 	// Feedback defaults
 	if c.Intelligence.Feedback.RetentionDays == 0 {
 		c.Intelligence.Feedback.RetentionDays = 90
+	}
+
+	// Steering defaults
+	if c.Intelligence.Steering.SteeringDir == "" {
+		c.Intelligence.Steering.SteeringDir = ".switchailocal/steering"
+	}
+
+	// Hooks defaults
+	if c.Intelligence.Hooks.HooksDir == "" {
+		c.Intelligence.Hooks.HooksDir = ".switchailocal/hooks"
+	}
+
+	// Learning defaults
+	if c.Intelligence.Learning.MinSampleSize == 0 {
+		c.Intelligence.Learning.MinSampleSize = 100
+	}
+	if c.Intelligence.Learning.ConfidenceThreshold == 0 {
+		c.Intelligence.Learning.ConfidenceThreshold = 0.85
+	}
+	if c.Intelligence.Learning.AnalysisInterval == "" {
+		c.Intelligence.Learning.AnalysisInterval = "24h"
 	}
 }

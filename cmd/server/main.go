@@ -8,15 +8,20 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +33,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/managementasset"
+	"github.com/traylinx/switchAILocal/internal/memory"
 	"github.com/traylinx/switchAILocal/internal/misc"
 	"github.com/traylinx/switchAILocal/internal/store"
 	_ "github.com/traylinx/switchAILocal/internal/translator"
@@ -215,6 +221,32 @@ func main() {
 
 	// Parse the command-line flags.
 	flag.Parse()
+
+	// Check for memory subcommands before processing other flags
+	if len(os.Args) > 1 && os.Args[1] == "memory" {
+		handleMemoryCommand(os.Args[2:])
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "heartbeat" {
+		handleHeartbeatCommand(os.Args[2:])
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "steering" {
+		handleSteeringCommand(os.Args[2:])
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "hooks" {
+		handleHooksCommand(os.Args[2:])
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "learning" {
+		handleLearningCommand(os.Args[2:])
+		return
+	}
 
 	// Validate environment variables for security issues
 	if err := validateEnvironmentVariables(); err != nil {
@@ -633,3 +665,742 @@ func main() {
 		}
 	}
 }
+
+// handleMemoryCommand processes memory subcommands
+func handleMemoryCommand(args []string) {
+	// Parse memory command options
+	opts, err := ParseMemoryCommand(args)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		printMemoryUsage()
+		os.Exit(1)
+	}
+
+	// Load minimal configuration for memory commands
+	// We need this to determine the memory base directory
+	var cfg *config.Config
+
+	// Try to load existing config
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Errorf("failed to get working directory: %v", err)
+		os.Exit(1)
+	}
+
+	configFilePath := filepath.Join(wd, "config.yaml")
+	cfg, err = config.LoadConfigOptional(configFilePath, false)
+	if err != nil {
+		// If config loading fails, use empty config
+		cfg = &config.Config{}
+	}
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+
+	// Execute memory command
+	DoMemoryCommand(cfg, opts)
+}
+
+// MemoryCommand represents the available memory subcommands
+type MemoryCommand string
+
+const (
+	MemoryInit        MemoryCommand = "init"
+	MemoryStatus      MemoryCommand = "status"
+	MemoryHistory     MemoryCommand = "history"
+	MemoryPreferences MemoryCommand = "preferences"
+	MemoryReset       MemoryCommand = "reset"
+	MemoryExport      MemoryCommand = "export"
+)
+
+// MemoryOptions holds the command-line options for memory commands
+type MemoryOptions struct {
+	Command    MemoryCommand
+	Limit      int
+	APIKey     string
+	APIKeyHash string
+	Confirm    bool
+	Output     string
+	Format     string
+}
+
+// DoMemoryCommand executes the specified memory command with the given options
+func DoMemoryCommand(cfg *config.Config, opts *MemoryOptions) {
+	switch opts.Command {
+	case MemoryInit:
+		doMemoryInit(cfg)
+	case MemoryStatus:
+		doMemoryStatus(cfg)
+	case MemoryHistory:
+		doMemoryHistory(cfg, opts)
+	case MemoryPreferences:
+		doMemoryPreferences(cfg, opts)
+	case MemoryReset:
+		doMemoryReset(cfg, opts)
+	case MemoryExport:
+		doMemoryExport(cfg, opts)
+	default:
+		fmt.Printf("Unknown memory command: %s\n", opts.Command)
+		printMemoryUsage()
+		os.Exit(1)
+	}
+}
+
+// doMemoryInit initializes the memory system
+func doMemoryInit(cfg *config.Config) {
+	fmt.Println("Initializing switchAILocal memory system...")
+
+	// Create memory configuration
+	memoryConfig := &memory.MemoryConfig{
+		Enabled:       true,
+		BaseDir:       getMemoryBaseDir(cfg),
+		RetentionDays: 90,
+		MaxLogSizeMB:  100,
+		Compression:   true,
+	}
+
+	// Initialize memory manager
+	manager, err := memory.NewMemoryManager(memoryConfig)
+	if err != nil {
+		log.Errorf("Failed to initialize memory system: %v", err)
+		os.Exit(1)
+	}
+	defer manager.Close()
+
+	fmt.Printf("✓ Memory system initialized successfully\n")
+	fmt.Printf("  Base directory: %s\n", memoryConfig.BaseDir)
+	fmt.Printf("  Retention: %d days\n", memoryConfig.RetentionDays)
+	fmt.Printf("  Compression: %v\n", memoryConfig.Compression)
+	fmt.Printf("  Max log size: %d MB\n", memoryConfig.MaxLogSizeMB)
+
+	// Display directory structure
+	fmt.Println("\nDirectory structure created:")
+	fmt.Printf("  %s/\n", memoryConfig.BaseDir)
+	fmt.Printf("  ├── routing-history.jsonl\n")
+	fmt.Printf("  ├── provider-quirks.md\n")
+	fmt.Printf("  ├── user-preferences/\n")
+	fmt.Printf("  ├── daily/\n")
+	fmt.Printf("  └── analytics/\n")
+
+	fmt.Println("\nMemory system is ready to use!")
+}
+
+// doMemoryStatus shows memory system health and disk usage
+func doMemoryStatus(cfg *config.Config) {
+	fmt.Println("switchAILocal Memory System Status")
+	fmt.Println("==================================")
+
+	// Create memory configuration
+	memoryConfig := &memory.MemoryConfig{
+		Enabled:       true,
+		BaseDir:       getMemoryBaseDir(cfg),
+		RetentionDays: 90,
+		MaxLogSizeMB:  100,
+		Compression:   true,
+	}
+
+	// Check if memory system exists
+	if _, err := os.Stat(memoryConfig.BaseDir); os.IsNotExist(err) {
+		fmt.Println("❌ Memory system not initialized")
+		fmt.Println("   Run 'switchAILocal memory init' to initialize")
+		return
+	}
+
+	// Initialize memory manager
+	manager, err := memory.NewMemoryManager(memoryConfig)
+	if err != nil {
+		log.Errorf("Failed to initialize memory manager: %v", err)
+		os.Exit(1)
+	}
+	defer manager.Close()
+
+	// Get memory statistics
+	stats, err := manager.GetStats()
+	if err != nil {
+		log.Errorf("Failed to get memory statistics: %v", err)
+		os.Exit(1)
+	}
+
+	// Display status
+	fmt.Printf("Status: ✓ Healthy\n")
+	fmt.Printf("Base Directory: %s\n", memoryConfig.BaseDir)
+	fmt.Printf("Enabled: %v\n", memoryConfig.Enabled)
+	fmt.Println()
+
+	// Display statistics
+	fmt.Println("Statistics:")
+	fmt.Printf("  Total Routing Decisions: %d\n", stats.TotalDecisions)
+	fmt.Printf("  Total Users: %d\n", stats.TotalUsers)
+	fmt.Printf("  Total Provider Quirks: %d\n", stats.TotalQuirks)
+	fmt.Printf("  Disk Usage: %s\n", formatBytes(stats.DiskUsageBytes))
+
+	if !stats.NewestDecision.IsZero() {
+		fmt.Printf("  Newest Decision: %s\n", stats.NewestDecision.Format(time.RFC3339))
+	}
+	if !stats.OldestDecision.IsZero() {
+		fmt.Printf("  Oldest Decision: %s\n", stats.OldestDecision.Format(time.RFC3339))
+	}
+
+	fmt.Println()
+
+	// Display configuration
+	fmt.Println("Configuration:")
+	fmt.Printf("  Retention Days: %d\n", stats.RetentionDays)
+	fmt.Printf("  Compression Enabled: %v\n", stats.CompressionEnabled)
+
+	if !stats.LastCleanup.IsZero() {
+		fmt.Printf("  Last Cleanup: %s\n", stats.LastCleanup.Format(time.RFC3339))
+	}
+
+	// Display daily logs statistics if available
+	if stats.DailyLogsStats != nil {
+		fmt.Println()
+		fmt.Println("Daily Logs:")
+		fmt.Printf("  Total Files: %d\n", stats.DailyLogsStats.TotalLogFiles)
+		fmt.Printf("  Total Entries: %d\n", stats.DailyLogsStats.TotalEntries)
+		fmt.Printf("  Disk Usage: %s\n", formatBytes(stats.DailyLogsStats.DiskUsageBytes))
+	}
+
+	// Display analytics information
+	if !stats.LastAnalyticsUpdate.IsZero() {
+		fmt.Println()
+		fmt.Printf("Last Analytics Update: %s\n", stats.LastAnalyticsUpdate.Format(time.RFC3339))
+	}
+}
+
+// doMemoryHistory displays recent routing decisions
+func doMemoryHistory(cfg *config.Config, opts *MemoryOptions) {
+	// Create memory configuration
+	memoryConfig := &memory.MemoryConfig{
+		Enabled:       true,
+		BaseDir:       getMemoryBaseDir(cfg),
+		RetentionDays: 90,
+		MaxLogSizeMB:  100,
+		Compression:   true,
+	}
+
+	// Initialize memory manager
+	manager, err := memory.NewMemoryManager(memoryConfig)
+	if err != nil {
+		log.Errorf("Failed to initialize memory manager: %v", err)
+		os.Exit(1)
+	}
+	defer manager.Close()
+
+	// Set default limit if not specified
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Get routing history
+	var decisions []*memory.RoutingDecision
+	if opts.APIKeyHash != "" {
+		decisions, err = manager.GetHistory(opts.APIKeyHash, limit)
+	} else {
+		decisions, err = manager.GetAllHistory(limit)
+	}
+
+	if err != nil {
+		log.Errorf("Failed to get routing history: %v", err)
+		os.Exit(1)
+	}
+
+	// Display header
+	fmt.Printf("Recent Routing Decisions (limit: %d)\n", limit)
+	fmt.Println("=====================================")
+
+	if len(decisions) == 0 {
+		fmt.Println("No routing decisions found.")
+		return
+	}
+
+	// Display decisions
+	for i, decision := range decisions {
+		fmt.Printf("\n[%d] %s\n", i+1, decision.Timestamp.Format(time.RFC3339))
+		fmt.Printf("    API Key: %s\n", maskAPIKeyHash(decision.APIKeyHash))
+		fmt.Printf("    Model: %s → %s\n", decision.Request.Model, decision.Routing.SelectedModel)
+		fmt.Printf("    Intent: %s\n", decision.Request.Intent)
+		fmt.Printf("    Tier: %s (confidence: %.2f)\n", decision.Routing.Tier, decision.Routing.Confidence)
+		fmt.Printf("    Latency: %dms\n", decision.Routing.LatencyMs)
+
+		status := "✓"
+		if !decision.Outcome.Success {
+			status = "✗"
+		}
+		fmt.Printf("    Outcome: %s Success: %v", status, decision.Outcome.Success)
+		if decision.Outcome.ResponseTimeMs > 0 {
+			fmt.Printf(", Response: %dms", decision.Outcome.ResponseTimeMs)
+		}
+		if decision.Outcome.QualityScore > 0 {
+			fmt.Printf(", Quality: %.2f", decision.Outcome.QualityScore)
+		}
+		if decision.Outcome.Error != "" {
+			fmt.Printf(", Error: %s", decision.Outcome.Error)
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("\nShowing %d of %d decisions\n", len(decisions), len(decisions))
+}
+
+// doMemoryPreferences displays user preferences for an API key
+func doMemoryPreferences(cfg *config.Config, opts *MemoryOptions) {
+	// Validate API key or hash is provided
+	if opts.APIKey == "" && opts.APIKeyHash == "" {
+		fmt.Println("Error: --api-key or --api-key-hash must be provided")
+		os.Exit(1)
+	}
+
+	// Create memory configuration
+	memoryConfig := &memory.MemoryConfig{
+		Enabled:       true,
+		BaseDir:       getMemoryBaseDir(cfg),
+		RetentionDays: 90,
+		MaxLogSizeMB:  100,
+		Compression:   true,
+	}
+
+	// Initialize memory manager
+	manager, err := memory.NewMemoryManager(memoryConfig)
+	if err != nil {
+		log.Errorf("Failed to initialize memory manager: %v", err)
+		os.Exit(1)
+	}
+	defer manager.Close()
+
+	// Get API key hash
+	apiKeyHash := opts.APIKeyHash
+	if opts.APIKey != "" {
+		apiKeyHash = hashAPIKey(opts.APIKey)
+	}
+
+	// Get user preferences
+	preferences, err := manager.GetUserPreferences(apiKeyHash)
+	if err != nil {
+		log.Errorf("Failed to get user preferences: %v", err)
+		os.Exit(1)
+	}
+
+	// Display preferences
+	fmt.Printf("User Preferences for API Key: %s\n", maskAPIKeyHash(apiKeyHash))
+	fmt.Println("==========================================")
+	fmt.Printf("Last Updated: %s\n", preferences.LastUpdated.Format(time.RFC3339))
+	fmt.Println()
+
+	// Model preferences
+	if len(preferences.ModelPreferences) > 0 {
+		fmt.Println("Model Preferences:")
+		for intent, model := range preferences.ModelPreferences {
+			fmt.Printf("  %s → %s\n", intent, model)
+		}
+		fmt.Println()
+	}
+
+	// Provider bias
+	if len(preferences.ProviderBias) > 0 {
+		fmt.Println("Provider Bias:")
+		for provider, bias := range preferences.ProviderBias {
+			biasStr := fmt.Sprintf("%.2f", bias)
+			if bias > 0 {
+				biasStr = "+" + biasStr
+			}
+			fmt.Printf("  %s: %s\n", provider, biasStr)
+		}
+		fmt.Println()
+	}
+
+	// Custom rules
+	if len(preferences.CustomRules) > 0 {
+		fmt.Println("Custom Rules:")
+		for i, rule := range preferences.CustomRules {
+			fmt.Printf("  [%d] %s → %s (priority: %d)\n", i+1, rule.Condition, rule.Model, rule.Priority)
+		}
+		fmt.Println()
+	}
+
+	if len(preferences.ModelPreferences) == 0 && len(preferences.ProviderBias) == 0 && len(preferences.CustomRules) == 0 {
+		fmt.Println("No preferences learned yet.")
+		fmt.Println("Preferences will be learned automatically as you use switchAILocal.")
+	}
+}
+
+// doMemoryReset clears all memory data with confirmation
+func doMemoryReset(cfg *config.Config, opts *MemoryOptions) {
+	if !opts.Confirm {
+		fmt.Println("⚠️  WARNING: This will permanently delete all memory data including:")
+		fmt.Println("  • Routing history")
+		fmt.Println("  • User preferences")
+		fmt.Println("  • Provider quirks")
+		fmt.Println("  • Daily logs")
+		fmt.Println("  • Analytics data")
+		fmt.Println()
+		fmt.Println("Use --confirm flag to proceed with reset.")
+		fmt.Println()
+		fmt.Println("💡 Tip: Use 'switchAILocal memory export' to create a backup first.")
+		return
+	}
+
+	// Get memory base directory
+	baseDir := getMemoryBaseDir(cfg)
+
+	// Check if memory directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		fmt.Println("Memory system not found - nothing to reset.")
+		return
+	}
+
+	// Create automatic backup before reset
+	timestamp := time.Now().Format("20060102-150405")
+	backupPath := fmt.Sprintf("memory-backup-before-reset-%s.tar.gz", timestamp)
+	
+	fmt.Println("Creating automatic backup before reset...")
+	fmt.Printf("Backup file: %s\n", backupPath)
+	
+	// Create backup
+	if err := createMemoryBackup(cfg, backupPath); err != nil {
+		fmt.Fprintf(os.Stderr, "\n❌ Error: Failed to create backup: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Reset cancelled for safety. Your data is preserved.\n")
+		fmt.Fprintf(os.Stderr, "\n💡 Tip: Ensure you have write permissions and sufficient disk space.\n")
+		os.Exit(1)
+	}
+	
+	fmt.Printf("✓ Backup created successfully: %s\n\n", backupPath)
+	fmt.Println("Proceeding with reset...")
+
+	// Remove the entire memory directory
+	if err := os.RemoveAll(baseDir); err != nil {
+		log.Errorf("Failed to remove memory directory: %v", err)
+		fmt.Fprintf(os.Stderr, "\n❌ Reset failed, but your data is safe in the backup: %s\n", backupPath)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ Memory system reset successfully\n")
+	fmt.Printf("  Removed directory: %s\n", baseDir)
+	fmt.Printf("  Backup available: %s\n", backupPath)
+	fmt.Println("\n💡 Run 'switchAILocal memory init' to reinitialize the memory system.")
+	fmt.Printf("💡 To restore from backup: tar -xzf %s -C ~/\n", backupPath)
+}
+
+// doMemoryExport creates a backup of all memory data
+func doMemoryExport(cfg *config.Config, opts *MemoryOptions) {
+	// Set default output filename if not provided
+	output := opts.Output
+	if output == "" {
+		timestamp := time.Now().Format("20060102-150405")
+		output = fmt.Sprintf("switchailocal-memory-%s.tar.gz", timestamp)
+	}
+
+	// Get memory base directory
+	baseDir := getMemoryBaseDir(cfg)
+
+	// Check if memory directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		fmt.Println("Memory system not found - nothing to export.")
+		return
+	}
+
+	fmt.Printf("Exporting memory data to: %s\n", output)
+
+	// Create output file
+	outFile, err := os.Create(output)
+	if err != nil {
+		log.Errorf("Failed to create output file: %v", err)
+		os.Exit(1)
+	}
+	defer outFile.Close()
+
+	// Create gzip writer
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	// Create tar writer
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	// Walk through memory directory and add files to archive
+	err = filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Get relative path
+		relPath, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Create tar header
+		header := &tar.Header{
+			Name:    relPath,
+			Size:    info.Size(),
+			Mode:    int64(info.Mode()),
+			ModTime: info.ModTime(),
+		}
+
+		// Write header
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// Open and copy file content
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(tarWriter, file)
+		return err
+	})
+
+	if err != nil {
+		log.Errorf("Failed to create archive: %v", err)
+		os.Exit(1)
+	}
+
+	// Get file size
+	if stat, err := os.Stat(output); err == nil {
+		fmt.Printf("✓ Export completed successfully\n")
+		fmt.Printf("  Archive size: %s\n", formatBytes(stat.Size()))
+		fmt.Printf("  Contains all memory data from: %s\n", baseDir)
+	}
+}
+
+// createMemoryBackup creates a backup of memory data (used internally)
+func createMemoryBackup(cfg *config.Config, output string) error {
+	// Get memory base directory
+	baseDir := getMemoryBaseDir(cfg)
+
+	// Check if memory directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		return fmt.Errorf("memory system not found")
+	}
+
+	// Create output file
+	outFile, err := os.Create(output)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	// Create gzip writer
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	// Create tar writer
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	// Walk through memory directory and add files to archive
+	err = filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Get relative path
+		relPath, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Create tar header
+		header := &tar.Header{
+			Name:    relPath,
+			Size:    info.Size(),
+			Mode:    int64(info.Mode()),
+			ModTime: info.ModTime(),
+		}
+
+		// Write header
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// Open and copy file content
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(tarWriter, file)
+		return err
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create archive: %w", err)
+	}
+
+	return nil
+}
+
+// Helper functions
+
+// getMemoryBaseDir returns the base directory for memory storage
+func getMemoryBaseDir(cfg *config.Config) string {
+	if cfg != nil && cfg.AuthDir != "" {
+		return filepath.Join(cfg.AuthDir, "memory")
+	}
+
+	// Default to user home directory + .switchailocal/memory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to current directory if home directory is not accessible
+		wd, _ := os.Getwd()
+		return filepath.Join(wd, ".switchailocal", "memory")
+	}
+	return filepath.Join(home, ".switchailocal", "memory")
+}
+
+// hashAPIKey creates a SHA-256 hash of an API key
+func hashAPIKey(apiKey string) string {
+	hash := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("sha256:%x", hash)
+}
+
+// maskAPIKeyHash masks an API key hash for display
+func maskAPIKeyHash(hash string) string {
+	if len(hash) < 16 {
+		return hash
+	}
+	return hash[:16] + "..."
+}
+
+// formatBytes formats bytes into human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// printMemoryUsage prints usage information for memory commands
+func printMemoryUsage() {
+	fmt.Println("Usage: switchAILocal memory <command> [options]")
+	fmt.Println()
+	fmt.Println("Available commands:")
+	fmt.Println("  init                     Initialize memory system")
+	fmt.Println("  status                   Show memory system health and disk usage")
+	fmt.Println("  history                  View recent routing decisions")
+	fmt.Println("  preferences              View user preferences")
+	fmt.Println("  reset                    Clear all memory data")
+	fmt.Println("  export                   Backup memory data")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --limit <n>              Limit number of history entries (default: 100)")
+	fmt.Println("  --api-key <key>          API key for preferences lookup")
+	fmt.Println("  --api-key-hash <hash>    API key hash for preferences lookup")
+	fmt.Println("  --confirm                Confirm destructive operations")
+	fmt.Println("  --output <file>          Output file for export (default: auto-generated)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  switchAILocal memory init")
+	fmt.Println("  switchAILocal memory status")
+	fmt.Println("  switchAILocal memory history --limit 50")
+	fmt.Println("  switchAILocal memory preferences --api-key sk-test-123")
+	fmt.Println("  switchAILocal memory reset --confirm")
+	fmt.Println("  switchAILocal memory export --output backup.tar.gz")
+}
+
+// ParseMemoryCommand parses memory command from command line arguments
+func ParseMemoryCommand(args []string) (*MemoryOptions, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("no memory command specified")
+	}
+
+	opts := &MemoryOptions{
+		Limit:  100,    // default limit
+		Format: "text", // default format
+	}
+
+	// Parse command
+	switch args[0] {
+	case "init":
+		opts.Command = MemoryInit
+	case "status":
+		opts.Command = MemoryStatus
+	case "history":
+		opts.Command = MemoryHistory
+	case "preferences":
+		opts.Command = MemoryPreferences
+	case "reset":
+		opts.Command = MemoryReset
+	case "export":
+		opts.Command = MemoryExport
+	default:
+		return nil, fmt.Errorf("unknown memory command: %s", args[0])
+	}
+
+	// Parse options
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+
+		switch arg {
+		case "--limit":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--limit requires a value")
+			}
+			limit, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid limit value: %s", args[i+1])
+			}
+			opts.Limit = limit
+			i++ // skip next argument
+
+		case "--api-key":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--api-key requires a value")
+			}
+			opts.APIKey = args[i+1]
+			i++ // skip next argument
+
+		case "--api-key-hash":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--api-key-hash requires a value")
+			}
+			opts.APIKeyHash = args[i+1]
+			i++ // skip next argument
+
+		case "--confirm":
+			opts.Confirm = true
+
+		case "--output":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--output requires a value")
+			}
+			opts.Output = args[i+1]
+			i++ // skip next argument
+
+		case "--format":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--format requires a value")
+			}
+			opts.Format = args[i+1]
+			i++ // skip next argument
+
+		default:
+			return nil, fmt.Errorf("unknown option: %s", arg)
+		}
+	}
+
+	return opts, nil
+}
+
+// handleHeartbeatCommand processes heartbeat subcommands

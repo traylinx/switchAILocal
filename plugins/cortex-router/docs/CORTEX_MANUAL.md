@@ -7,6 +7,7 @@ The **Cortex Intelligent Router** is the cognitive nucleus of `switchAILocal`. I
 ## 1. Request Interception Logic
 
 Cortex only activates when a user explicitly requests an abstract model ID. It intercepts requests where:
+
 - `model == "auto"`
 - `model == "cortex"`
 
@@ -14,86 +15,73 @@ If any other specific model ID is provided (e.g., `gemini:pro`), Cortex steps as
 
 ---
 
-## 2. Tier 0: Payload Pre-Processing
+## 2. Multi-Tier Routing Architecture (Phase 6)
 
-Before classification, Cortex extracts the core content. 
-- It looks for the `"content"` field within the JSON request body.
-- If it's a standard chat request, it parses the messages to find the latest user prompt.
-- **Special Case**: It checks if the payload is an **Image Generation** request (contains `prompt` but no `messages`). If so, it immediately routes to the `image_gen` expert and sets the internal operation metadata to `images_generations`.
+Cortex uses a cascading multi-tier approach to balance speed, cost, and intelligence.
 
----
+### Tier 0: Memory & Preferences (Highest Priority)
 
-## 3. Tier 1: The Reflex Tier (Regex-Based)
+Cortex checks for learned user preferences and cached decisions.
 
-This tier runs at near-zero latency using Lua string matching. It acts as a safety and efficiency filter.
+- **Learned Preferences**: If a user consistently prefers a specific model for an intent (e.g., "coding"), Cortex prioritizes it.
+- **Semantic Cache**: Exact or highly similar prompts are routed based on previous successful results.
 
-### A. Visual Input Detection
-Cortex scans the entire raw request body for visual markers:
-- **Pattern**: `\"image_url\"` or `\"type\"%s*:%s*\"image\"`
-- **Action**: Routes to the `vision` expert immediately.
+### Tier 1: The Reflex Tier (Pattern-Based)
 
-### B. PII (Personally Identifiable Information) Detection
-To ensure data privacy, Cortex checks for email patterns.
-- **Pattern**: `[%w%.%_%-]+@[%w%.%_%-]+%.%a%a+`
-- **Action**: Routes to the `secure` expert (intended to be a local or highly trusted model).
+Fast, rule-based routing using high-performance regex in Go.
 
-### C. Code Detection
-Cortex looks for common programming markers:
-- ` ``` ` (Markdown code blocks)
-- `def%s+[%w_]+` (Python function definitions)
-- `function%s*[%w_]*%(` (Javascript/Lua function definitions)
-- `class%s+[%w_]+` (Class definitions)
-- **Action**: Routes to the `coding` expert.
+- **PII Detection**: Routes sensitive data to local/secure models.
+- **Code/Math Detection**: Recognizes programming and mathematical syntax.
+- **Greeting Detection**: Routes simple interactions to fast, low-cost models.
 
-### D. Context Length Awareness
-If the prompt text exceeds **4,000 characters**, Cortex preemptively routes it to the `long_ctx` expert to avoid context window overflows on smaller models.
+### Tier 2: The Semantic Tier (Embedding-Based)
 
----
+Uses vector embeddings to match the user's prompt against a library of known intents.
 
-## 4. Tier 2: The Cognitive Tier (LLM-Based)
+- **Mechanism**: Compares the prompt's embedding with intent centroids.
+- **Confidence**: Requires high similarity (> 0.7) to trigger.
 
-If no Reflex rules trigger, Cortex engages the **Router Model** (configured via `intelligence.router-model`).
+### Tier 3: The Cognitive Tier (LLM-Based Fallback)
 
-### The Classification Call
-Cortex calls the internal `switchai.classify(text)` function. The Go host wraps your prompt in a hidden system instruction that demands a JSON response in this exact format:
-```json
-{
-  "intent": "coding | reasoning | creative | image_generation | audio_transcription | audio_speech",
-  "complexity": "simple | complex"
-}
-```
+The final fallback using LLM-based classification.
 
-### The Decision Matrix Logic
-Upon receiving the classification, Cortex maps the intent to your `config.yaml` matrix:
-
-| Intent                | Complexity | Matrix Key Used |
-| :-------------------- | :--------- | :-------------- |
-| `coding`              | Any        | `coding`        |
-| `reasoning`           | `complex`  | `reasoning`     |
-| `creative`            | Any        | `creative`      |
-| `image_generation`    | Any        | `image_gen`     |
-| `audio_transcription` | Any        | `transcription` |
-| `audio_speech`        | Any        | `speech`        |
-| *Else*                | *Else*     | `fast`          |
+- **Router Model**: A small, fast model (e.g., Qwen 0.5B) classifies the intent and complexity.
+- **Decision Matrix**: Maps the classification result to the best available expert.
 
 ---
 
-## 5. Metadata & Operation Overrides
+## 3. Memory Integration
 
-Cortex doesn't just change the model; it also adjusts the **Operation Metadata**. This ensures that if a user sends a chat-like prompt that is classified as `image_generation`, the system knows to call the image generation endpoint of the target provider rather than the chat completion endpoint.
+The memory system allows Cortex to "learn" from every interaction:
 
-- `image_generation` -> `operation: images_generations`
-- `audio_transcription` -> `operation: audio_transcriptions`
-- `audio_speech` -> `operation: audio_speech`
+- **Decision Recording**: Every routing decision is logged with metadata (intent, confidence, tier).
+- **Outcome Learning**: Success/failure of requests updates the provider bias and model preferences.
+- **Provider Quirks**: Discovered issues (e.g., "hallucinates in system prompts") are stored as quirks and used to adjust confidence scores in future decisions.
 
 ---
 
-## 6. Implementation Reference (Lua)
+## 4. Reliability & Health Monitoring
 
-The logic is contained within `/plugins/cortex-router/handler.lua`. 
+Cortex is aware of the health of the underlying providers:
 
-### State Management
-Cortex uses a **Host-Side Cache** (managed in Go) to remember classification results for identical prompts. This prevents redundant (and potentially expensive/slow) calls to the Router Model for repeated queries.
+- **Health Checks**: Periodic monitoring of provider availability and latency.
+- **Fallback Routing**: If the preferred model or provider is down, Cortex automatically falls back to the next best available option in the tier.
+- **Quota Awareness**: Detects and respects rate limits, shifting traffic away from exhausted quotas before failures occur.
 
-### Safety: Infinite Loop Protection
-Cortex uses a `skip_lua` flag when calling the Router Model. This ensures that the classification request itself doesn't trigger another round of Cortex analysis, preventing recursive loops.
+---
+
+## 5. Implementation Reference (Go)
+
+The core logic is implemented in `internal/intelligence/router.go`.
+
+### Key Components
+- `CortexRouter`: The main routing engine coordinating all tiers.
+- `MemoryManager`: Persists history and learned preferences.
+- `SemanticTier`: Handles embedding-based matching.
+- `ModelRegistry`: Tracks model availability across providers.
+
+---
+
+## 10. Safety: Infinite Loop Protection
+
+Cortex ensures that classification requests (Cognitive Tier) do not themselves trigger the router, preventing recursive loops via internal flags and specialized model IDs.

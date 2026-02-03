@@ -107,16 +107,21 @@ type ModelRegistry struct {
 var globalRegistry *ModelRegistry
 var registryOnce sync.Once
 
+// NewModelRegistry creates a new, empty model registry.
+func NewModelRegistry() *ModelRegistry {
+	return &ModelRegistry{
+		models:           make(map[string]*ModelRegistration),
+		clientModels:     make(map[string][]string),
+		clientModelInfos: make(map[string]map[string]*ModelInfo),
+		clientProviders:  make(map[string]string),
+		mutex:            &sync.RWMutex{},
+	}
+}
+
 // GetGlobalRegistry returns the global model registry instance
 func GetGlobalRegistry() *ModelRegistry {
 	registryOnce.Do(func() {
-		globalRegistry = &ModelRegistry{
-			models:           make(map[string]*ModelRegistration),
-			clientModels:     make(map[string][]string),
-			clientModelInfos: make(map[string]map[string]*ModelInfo),
-			clientProviders:  make(map[string]string),
-			mutex:            &sync.RWMutex{},
-		}
+		globalRegistry = NewModelRegistry()
 	})
 	return globalRegistry
 }
