@@ -27,6 +27,12 @@ import (
 	"github.com/traylinx/switchAILocal/sdk/api/handlers"
 )
 
+var (
+	headerData = []byte("data: ")
+	headerDone = []byte("data: [DONE]\n\n")
+	newline    = []byte("\n\n")
+)
+
 // OpenAIAPIHandler contains the handlers for OpenAI API endpoints.
 // It holds a pool of clients to interact with the backend service.
 type OpenAIAPIHandler struct {
@@ -426,7 +432,7 @@ func convertChatCompletionsStreamChunkToCompletions(chunkData []byte) []byte {
 //   - rawJSON: The raw JSON bytes of the OpenAI-compatible request
 func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
 	c.Header("Content-Type", "application/json")
-	
+
 	// Set skill metadata header if available
 	if metadata, exists := c.Get("request_metadata"); exists {
 		if metaMap, ok := metadata.(map[string]any); ok {
@@ -478,7 +484,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 		c.Header("Connection", "keep-alive")
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("X-Accel-Buffering", "no")
-		
+
 		// Set skill metadata header if available
 		if metadata, exists := c.Get("request_metadata"); exists {
 			if metaMap, ok := metadata.(map[string]any); ok {
@@ -516,7 +522,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 				if !headersSet {
 					setSSEHeaders()
 				}
-				_, _ = fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
+				_, _ = c.Writer.Write(headerDone)
 				flusher.Flush()
 				cliCancel(nil)
 				return
@@ -527,7 +533,9 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 				setSSEHeaders()
 			}
 
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(chunk))
+			_, _ = c.Writer.Write(headerData)
+			_, _ = c.Writer.Write(chunk)
+			_, _ = c.Writer.Write(newline)
 			flusher.Flush()
 
 			// Continue streaming the rest
@@ -623,7 +631,7 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 				if !headersSet {
 					setSSEHeaders()
 				}
-				_, _ = fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
+				_, _ = c.Writer.Write(headerDone)
 				flusher.Flush()
 				cliCancel(nil)
 				return
@@ -637,7 +645,9 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			// Write the first chunk
 			converted := convertChatCompletionsStreamChunkToCompletions(chunk)
 			if converted != nil {
-				_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(converted))
+				_, _ = c.Writer.Write(headerData)
+				_, _ = c.Writer.Write(converted)
+				_, _ = c.Writer.Write(newline)
 				flusher.Flush()
 			}
 
@@ -680,7 +690,9 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(chunk))
+			_, _ = c.Writer.Write(headerData)
+			_, _ = c.Writer.Write(chunk)
+			_, _ = c.Writer.Write(newline)
 		},
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
 			if errMsg == nil {
@@ -695,10 +707,12 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 				errText = errMsg.Error.Error()
 			}
 			body := handlers.BuildErrorResponseBody(status, errText)
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(body))
+			_, _ = c.Writer.Write(headerData)
+			_, _ = c.Writer.Write(body)
+			_, _ = c.Writer.Write(newline)
 		},
 		WriteDone: func() {
-			_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+			_, _ = c.Writer.Write(headerDone)
 		},
 	})
 }
