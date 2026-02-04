@@ -327,6 +327,12 @@ func (h *Handler) InitializeSecret(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// Sentinel: Ensure initialization is only allowed from localhost to prevent remote takeover
+	if !isLocalhostDirect(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "initialization only allowed from localhost"})
+		return
+	}
+
 	// Check if already configured
 	if (h.cfg != nil && h.cfg.RemoteManagement.SecretKey != "") || h.envSecret != "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "management secret is already configured"})
