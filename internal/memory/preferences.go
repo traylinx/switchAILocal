@@ -329,9 +329,33 @@ func (ps *PreferencesStore) saveToFile(prefs *UserPreferences) error {
 		return fmt.Errorf("failed to marshal preferences to JSON: %w", err)
 	}
 
-	// Write to file with proper permissions
-	if err := os.WriteFile(filePath, data, filePermissions); err != nil {
-		return fmt.Errorf("failed to write preferences file: %w", err)
+	// Write to temp file first for atomic update
+	dir := filepath.Dir(filePath)
+	tmpFile, err := os.CreateTemp(dir, "prefs-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Ensure cleanup on error
+	defer func() {
+		_ = tmpFile.Close()
+		if _, err := os.Stat(tmpPath); err == nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		return fmt.Errorf("failed to write temp preferences file: %w", err)
+	}
+	// Explicit close before rename
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		return fmt.Errorf("failed to rename preferences file: %w", err)
 	}
 
 	return nil
