@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unsafe"
 )
 
 // FileAnalyzer detects and analyzes file references in request content.
@@ -134,6 +135,12 @@ func looksLikePath(s string) bool {
 	return false
 }
 
+// unsafeString converts a byte slice to a string without allocation.
+// The string assumes the byte slice is not mutated while the string is in use.
+func unsafeString(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
 // analyzeReference analyzes a single file reference.
 func (fa *FileAnalyzer) analyzeReference(path string) FileReference {
 	ref := FileReference{
@@ -166,7 +173,8 @@ func (fa *FileAnalyzer) analyzeReference(path string) FileReference {
 		// Read and estimate single file
 		content, err := os.ReadFile(fullPath)
 		if err == nil {
-			ref.EstimatedTokens = fa.estimator.EstimateTokens(string(content))
+			// Optimization: Use unsafeString to avoid allocation when estimating tokens
+			ref.EstimatedTokens = fa.estimator.EstimateTokens(unsafeString(content))
 			ref.FileCount = 1
 		}
 	}
@@ -220,7 +228,8 @@ func (fa *FileAnalyzer) scanDirectory(dirPath string) (int, int) {
 			return nil
 		}
 
-		totalTokens += fa.estimator.EstimateTokens(string(content))
+		// Optimization: Use unsafeString to avoid allocation when estimating tokens
+		totalTokens += fa.estimator.EstimateTokens(unsafeString(content))
 		fileCount++
 
 		return nil
