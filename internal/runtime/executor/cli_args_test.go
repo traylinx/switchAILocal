@@ -45,16 +45,40 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			wantArgs:   []string{"--", "hello world"},
 		},
 		{
-			name: "Vibe CLI - No Separator (Default)",
+			name: "Vibe CLI - With Separator",
 			executor: &LocalCLIExecutor{
 				Provider:                "vibe",
-				PositionalArgsSeparator: "",
+				PositionalArgsSeparator: "--",
 				Args:                    []string{"-p"},
 			},
 			prompt:     "hello",
 			cliOpts:    nil,
 			formatArgs: nil,
-			wantArgs:   []string{"-p", "hello"},
+			wantArgs:   []string{"-p", "--", "hello"},
+		},
+		{
+			name: "Claude CLI - Separator Injection",
+			executor: &LocalCLIExecutor{
+				Provider:                "claudecli",
+				PositionalArgsSeparator: "--",
+				Args:                    []string{"--print"},
+			},
+			prompt:     "hello world",
+			cliOpts:    nil,
+			formatArgs: nil,
+			wantArgs:   []string{"--print", "--", "hello world"},
+		},
+		{
+			name: "Command Injection Prevention",
+			executor: &LocalCLIExecutor{
+				Provider:                "claudecli",
+				PositionalArgsSeparator: "--",
+				Args:                    []string{"--print"},
+			},
+			prompt:     "--dangerously-skip-permissions",
+			cliOpts:    nil,
+			formatArgs: nil,
+			wantArgs:   []string{"--print", "--", "--dangerously-skip-permissions"},
 		},
 		{
 			name: "Complex Flags and Attachments with Separator",
