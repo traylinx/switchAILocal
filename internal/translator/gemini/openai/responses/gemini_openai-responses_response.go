@@ -37,9 +37,9 @@ type geminiToResponsesState struct {
 
 	// function call aggregation (keyed by output_index)
 	NextIndex   int
-	FuncArgsBuf map[int]*strings.Builder
-	FuncNames   map[int]string
-	FuncCallIDs map[int]string
+	FuncArgsBuf []*strings.Builder
+	FuncNames   []string
+	FuncCallIDs []string
 
 	// streaming event buffer reuse
 	EventBuf *bytes.Buffer
@@ -78,9 +78,9 @@ func (st *geminiToResponsesState) emit(event string, v any) string {
 func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []string {
 	if *param == nil {
 		*param = &geminiToResponsesState{
-			FuncArgsBuf: make(map[int]*strings.Builder),
-			FuncNames:   make(map[int]string),
-			FuncCallIDs: make(map[int]string),
+			FuncArgsBuf: make([]*strings.Builder, 0, 4),
+			FuncNames:   make([]string, 0, 4),
+			FuncCallIDs: make([]string, 0, 4),
 		}
 	}
 	st := (*param).(*geminiToResponsesState)
@@ -307,6 +307,18 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				name := fc.Get("name").String()
 				idx := st.NextIndex
 				st.NextIndex++
+
+				// Ensure slice capacity
+				for len(st.FuncArgsBuf) <= idx {
+					st.FuncArgsBuf = append(st.FuncArgsBuf, nil)
+				}
+				for len(st.FuncNames) <= idx {
+					st.FuncNames = append(st.FuncNames, "")
+				}
+				for len(st.FuncCallIDs) <= idx {
+					st.FuncCallIDs = append(st.FuncCallIDs, "")
+				}
+
 				if st.FuncArgsBuf[idx] == nil {
 					st.FuncArgsBuf[idx] = &strings.Builder{}
 				}
@@ -399,49 +411,39 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			out = append(out, st.emit(final.Type, final))
 		}
 
-		if len(st.FuncArgsBuf) > 0 {
-			idxs := make([]int, 0, len(st.FuncArgsBuf))
-			for idx := range st.FuncArgsBuf {
-				idxs = append(idxs, idx)
-			}
-			for i := 0; i < len(idxs); i++ {
-				for j := i + 1; j < len(idxs); j++ {
-					if idxs[j] < idxs[i] {
-						idxs[i], idxs[j] = idxs[j], idxs[i]
-					}
-				}
+		for idx, b := range st.FuncArgsBuf {
+			if b == nil {
+				continue
 			}
 
-			for _, idx := range idxs {
-				args := "{}"
-				if b := st.FuncArgsBuf[idx]; b != nil && b.Len() > 0 {
-					args = b.String()
-				}
-
-				fcDone := ResponseFunctionCallArgumentsDone{
-					Type:           "response.function_call_arguments.done",
-					SequenceNumber: nextSeq(),
-					ItemID:         fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
-					OutputIndex:    idx,
-					Arguments:      args,
-				}
-				out = append(out, st.emit(fcDone.Type, fcDone))
-
-				itemDone := ResponseOutputItemDone{
-					Type:           "response.output_item.done",
-					SequenceNumber: nextSeq(),
-					OutputIndex:    idx,
-					Item: OutputItem{
-						ID:        fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
-						Type:      "function_call",
-						Status:    "completed",
-						Arguments: args,
-						CallID:    st.FuncCallIDs[idx],
-						Name:      st.FuncNames[idx],
-					},
-				}
-				out = append(out, st.emit(itemDone.Type, itemDone))
+			args := ""
+			if b.Len() > 0 {
+				args = b.String()
 			}
+
+			fcDone := ResponseFunctionCallArgumentsDone{
+				Type:           "response.function_call_arguments.done",
+				SequenceNumber: nextSeq(),
+				ItemID:         fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
+				OutputIndex:    idx,
+				Arguments:      args,
+			}
+			out = append(out, st.emit(fcDone.Type, fcDone))
+
+			itemDone := ResponseOutputItemDone{
+				Type:           "response.output_item.done",
+				SequenceNumber: nextSeq(),
+				OutputIndex:    idx,
+				Item: OutputItem{
+					ID:        fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
+					Type:      "function_call",
+					Status:    "completed",
+					Arguments: args,
+					CallID:    st.FuncCallIDs[idx],
+					Name:      st.FuncNames[idx],
+				},
+			}
+			out = append(out, st.emit(itemDone.Type, itemDone))
 		}
 
 		// Response Completed
@@ -544,32 +546,22 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				Role:    "assistant",
 			})
 		}
-		if len(st.FuncArgsBuf) > 0 {
-			idxs := make([]int, 0, len(st.FuncArgsBuf))
-			for idx := range st.FuncArgsBuf {
-				idxs = append(idxs, idx)
+		for idx, b := range st.FuncArgsBuf {
+			if b == nil {
+				continue
 			}
-			for i := 0; i < len(idxs); i++ {
-				for j := i + 1; j < len(idxs); j++ {
-					if idxs[j] < idxs[i] {
-						idxs[i], idxs[j] = idxs[j], idxs[i]
-					}
-				}
+			args := ""
+			if b.Len() > 0 {
+				args = b.String()
 			}
-			for _, idx := range idxs {
-				args := ""
-				if b := st.FuncArgsBuf[idx]; b != nil {
-					args = b.String()
-				}
-				outputs = append(outputs, OutputItem{
-					ID:        fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
-					Type:      "function_call",
-					Status:    "completed",
-					Arguments: args,
-					CallID:    st.FuncCallIDs[idx],
-					Name:      st.FuncNames[idx],
-				})
-			}
+			outputs = append(outputs, OutputItem{
+				ID:        fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
+				Type:      "function_call",
+				Status:    "completed",
+				Arguments: args,
+				CallID:    st.FuncCallIDs[idx],
+				Name:      st.FuncNames[idx],
+			})
 		}
 
 		if len(outputs) > 0 {
