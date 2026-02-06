@@ -92,7 +92,7 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve binary path
-	binary := req.Binary
+	var binary string
 	if path, err := exec.LookPath(base); err == nil {
 		binary = path
 	} else {
@@ -116,6 +116,15 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+
+	// Sentinel: Security Fix - Prevent execution of arbitrary paths (e.g., /tmp/evil/gemini)
+	// If the binary was not found in PATH or allowed common locations, do not fall back
+	// to the requested path. This ensures we only run tools installed in trusted locations.
+	if binary == "" {
+		log.Printf("Security Block: Binary '%s' not found in system PATH or common locations", base)
+		http.Error(w, "Binary not found in system PATH", http.StatusNotFound)
+		return
 	}
 
 	log.Printf("Executing on Host: %s %v", binary, req.Args)

@@ -143,6 +143,11 @@ Format:
 **Learning:** `os.PathSeparator` is insufficient for input validation in cross-platform applications or when handling paths from untrusted sources (like URLs). Attackers can use the alternate separator (`\` vs `/`) to bypass checks if the underlying file system operations accept them.
 **Prevention:** Validate against *all* known separators (`/` and `\`) using `strings.ContainsAny`. Additionally, enforce `filepath.Base()` usage to ensure the file path is restricted to the immediate filename, providing defense-in-depth even if validation logic is flawed.
 
+## 2026-06-08 - Arbitrary Path Execution in Bridge Agent
+**Vulnerability:** The bridge agent enforced a whitelist on the *filename* (`filepath.Base`) of the requested binary but fell back to executing the raw user-provided path if the binary was not found in the system `PATH`. This allowed attackers to execute arbitrary malicious binaries (e.g., `/tmp/evil/gemini`) as long as they were renamed to match a whitelisted name.
+**Learning:** Checking `filepath.Base()` against a whitelist is insufficient for execution control if the full path is not also validated or restricted. Fallback mechanisms in security-critical paths (like "if not in PATH, use raw path") often introduce vulnerabilities by allowing attackers to bypass the primary restriction (the PATH lookup).
+**Prevention:** Strictly enforce that the executed binary must be resolved via a trusted mechanism (e.g., `exec.LookPath` or a hardcoded list of trusted directories). Never fall back to executing a user-provided absolute/relative path when the intent is to restrict execution to known system tools.
+
 ---
 
 ## Sentinel's Daily Process
