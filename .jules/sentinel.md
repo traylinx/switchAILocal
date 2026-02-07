@@ -143,6 +143,11 @@ Format:
 **Learning:** `os.PathSeparator` is insufficient for input validation in cross-platform applications or when handling paths from untrusted sources (like URLs). Attackers can use the alternate separator (`\` vs `/`) to bypass checks if the underlying file system operations accept them.
 **Prevention:** Validate against *all* known separators (`/` and `\`) using `strings.ContainsAny`. Additionally, enforce `filepath.Base()` usage to ensure the file path is restricted to the immediate filename, providing defense-in-depth even if validation logic is flawed.
 
+## 2026-06-08 - Weak Localhost Check in Gemini CLI Handler
+**Vulnerability:** The Gemini CLI handler (`POST /v1internal:method`) relied on `strings.HasPrefix(RemoteAddr, "127.0.0.1:")` to restrict access to localhost. This check is insufficient because it does not account for `X-Forwarded-For` headers or other proxy mechanisms that might allow external attackers to spoof localhost requests if the application is deployed behind a reverse proxy.
+**Learning:** Checking `RemoteAddr` string prefix is fragile. Robust localhost checks must verify the IP is a loopback address using `net.ParseIP` and explicitly reject requests containing proxy headers (`X-Forwarded-For`, etc.) to prevent spoofing or bypasses in proxied environments.
+**Prevention:** Centralized the robust `isLocalhostDirect` logic (previously unexported in management handlers) into `internal/util/network.go` and applied it to all internal-only endpoints.
+
 ---
 
 ## Sentinel's Daily Process
