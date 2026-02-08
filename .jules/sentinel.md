@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-02-08 - [Critical] Arbitrary Binary Execution in Bridge Agent
+**Vulnerability:** The bridge agent allowed execution of arbitrary binaries by path if the binary name matched the whitelist but was not found in the system PATH. It fell back to using the user-provided path directly.
+**Learning:** Initializing variables with user input before validation/resolution is dangerous. The code initialized `binary := req.Binary` and only updated it if a safe path was found, leaving the unsafe value as the default fallback.
+**Prevention:** Always initialize variables to safe defaults (e.g., empty string) and explicitly error out if safe resolution fails. Do not use user input as a fallback for system operations.
