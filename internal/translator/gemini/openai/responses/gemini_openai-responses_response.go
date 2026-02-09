@@ -52,6 +52,9 @@ var responseIDCounter uint64
 // funcCallIDCounter provides a process-wide unique counter for function call identifiers.
 var funcCallIDCounter uint64
 
+// emptyLogprobs is a reusable empty slice for logprobs to avoid allocations.
+var emptyLogprobs = []any{}
+
 func (st *geminiToResponsesState) emit(event string, v any) string {
 	if st.EventBuf == nil {
 		st.EventBuf = new(bytes.Buffer)
@@ -94,7 +97,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		return []string{}
 	}
 
-	out := make([]string, 0, 4)
+	out := make([]string, 0, 8)
 	nextSeq := func() int { st.Seq++; return st.Seq }
 
 	// Helper to finalize reasoning summary events in correct order.
@@ -171,7 +174,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				CreatedAt:  st.CreatedAt,
 				Status:     "in_progress",
 				Background: false,
-				Output:     &[]any{},
+				Output:     &emptyLogprobs,
 			},
 		}
 		out = append(out, st.emit(created.Type, created))
@@ -232,73 +235,77 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					}
 					out = append(out, st.emit(partAdded.Type, partAdded))
 				}
-				if t := part.Get("text"); t.Exists() && t.String() != "" {
-					st.ReasoningBuf.WriteString(t.String())
+				if t := part.Get("text"); t.Exists() {
+					if textVal := t.String(); textVal != "" {
+						st.ReasoningBuf.WriteString(textVal)
 
-					msg := ReasoningSummaryTextDelta{
-						Type:           "response.reasoning_summary_text.delta",
-						SequenceNumber: nextSeq(),
-						ItemID:         st.ReasoningItemID,
-						OutputIndex:    st.ReasoningIndex,
-						SummaryIndex:   0,
-						Delta:          t.String(),
+						msg := ReasoningSummaryTextDelta{
+							Type:           "response.reasoning_summary_text.delta",
+							SequenceNumber: nextSeq(),
+							ItemID:         st.ReasoningItemID,
+							OutputIndex:    st.ReasoningIndex,
+							SummaryIndex:   0,
+							Delta:          textVal,
+						}
+						out = append(out, st.emit(msg.Type, msg))
 					}
-					out = append(out, st.emit(msg.Type, msg))
 				}
 				return true
 			}
 
 			// Assistant visible text
-			if t := part.Get("text"); t.Exists() && t.String() != "" {
-				finalizeReasoning()
-				if !st.MsgOpened {
-					st.MsgOpened = true
-					st.MsgIndex = st.NextIndex
-					st.NextIndex++
-					st.CurrentMsgID = fmt.Sprintf("msg_%s_0", st.ResponseID)
+			if t := part.Get("text"); t.Exists() {
+				if textVal := t.String(); textVal != "" {
+					finalizeReasoning()
+					if !st.MsgOpened {
+						st.MsgOpened = true
+						st.MsgIndex = st.NextIndex
+						st.NextIndex++
+						st.CurrentMsgID = fmt.Sprintf("msg_%s_0", st.ResponseID)
 
-					item := OutputItemAdded{
-						Type:           "response.output_item.added",
-						SequenceNumber: nextSeq(),
-						OutputIndex:    st.MsgIndex,
-						Item: OutputItem{
-							ID:      st.CurrentMsgID,
-							Type:    "message",
-							Status:  "in_progress",
-							Content: []ContentPart{},
-							Role:    "assistant",
-						},
+						item := OutputItemAdded{
+							Type:           "response.output_item.added",
+							SequenceNumber: nextSeq(),
+							OutputIndex:    st.MsgIndex,
+							Item: OutputItem{
+								ID:      st.CurrentMsgID,
+								Type:    "message",
+								Status:  "in_progress",
+								Content: []ContentPart{},
+								Role:    "assistant",
+							},
+						}
+						out = append(out, st.emit(item.Type, item))
+
+						partAdded := ContentPartAdded{
+							Type:           "response.content_part.added",
+							SequenceNumber: nextSeq(),
+							ItemID:         st.CurrentMsgID,
+							OutputIndex:    st.MsgIndex,
+							ContentIndex:   0,
+							Part: ContentPart{
+								Type:        "output_text",
+								Annotations: emptyLogprobs,
+								Logprobs:    emptyLogprobs,
+								Text:        "",
+							},
+						}
+						out = append(out, st.emit(partAdded.Type, partAdded))
 					}
-					out = append(out, st.emit(item.Type, item))
+					st.TextBuf.WriteString(textVal)
 
-					partAdded := ContentPartAdded{
-						Type:           "response.content_part.added",
+					msg := OutputTextDelta{
+						Type:           "response.output_text.delta",
 						SequenceNumber: nextSeq(),
 						ItemID:         st.CurrentMsgID,
 						OutputIndex:    st.MsgIndex,
 						ContentIndex:   0,
-						Part: ContentPart{
-							Type:        "output_text",
-							Annotations: []any{},
-							Logprobs:    []any{},
-							Text:        "",
-						},
+						Delta:          textVal,
+						Logprobs:       emptyLogprobs,
 					}
-					out = append(out, st.emit(partAdded.Type, partAdded))
+					out = append(out, st.emit(msg.Type, msg))
+					return true
 				}
-				st.TextBuf.WriteString(t.String())
-
-				msg := OutputTextDelta{
-					Type:           "response.output_text.delta",
-					SequenceNumber: nextSeq(),
-					ItemID:         st.CurrentMsgID,
-					OutputIndex:    st.MsgIndex,
-					ContentIndex:   0,
-					Delta:          t.String(),
-					Logprobs:       []any{},
-				}
-				out = append(out, st.emit(msg.Type, msg))
-				return true
 			}
 
 			// Function call
@@ -362,7 +369,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				OutputIndex:    st.MsgIndex,
 				ContentIndex:   0,
 				Text:           "",
-				Logprobs:       []any{},
+				Logprobs:       emptyLogprobs,
 			}
 			out = append(out, st.emit(done.Type, done))
 
@@ -374,8 +381,8 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				ContentIndex:   0,
 				Part: ContentPart{
 					Type:        "output_text",
-					Annotations: []any{},
-					Logprobs:    []any{},
+					Annotations: emptyLogprobs,
+					Logprobs:    emptyLogprobs,
 					Text:        "",
 				},
 			}
@@ -540,7 +547,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				ID:      st.CurrentMsgID,
 				Type:    "message",
 				Status:  "completed",
-				Content: []ContentPart{{Type: "output_text", Annotations: []any{}, Logprobs: []any{}, Text: st.TextBuf.String()}},
+				Content: []ContentPart{{Type: "output_text", Annotations: emptyLogprobs, Logprobs: emptyLogprobs, Text: st.TextBuf.String()}},
 				Role:    "assistant",
 			})
 		}
@@ -787,8 +794,8 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 			Role:   "assistant",
 			Content: []ContentPart{{
 				Type:        "output_text",
-				Annotations: []any{},
-				Logprobs:    []any{},
+				Annotations: emptyLogprobs,
+				Logprobs:    emptyLogprobs,
 				Text:        messageText.String(),
 			}},
 		}
