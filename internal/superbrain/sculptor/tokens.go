@@ -3,7 +3,14 @@
 package sculptor
 
 import (
+	"sync"
+
 	"github.com/tiktoken-go/tokenizer"
+)
+
+var (
+	tiktokenEstimator     *TokenEstimator
+	tiktokenEstimatorOnce sync.Once
 )
 
 // TokenEstimator provides methods for estimating token counts in text content.
@@ -19,20 +26,21 @@ type TokenEstimator struct {
 // Valid methods are "simple" (fast approximation) and "tiktoken" (accurate but slower).
 // If an invalid method is provided, defaults to "simple".
 func NewTokenEstimator(method string) *TokenEstimator {
-	var codec tokenizer.Codec
-	var err error
-
 	if method == "tiktoken" {
-		// Use cl100k_base as the default tokenizer for general purpose counting
-		codec, err = tokenizer.Get(tokenizer.Cl100kBase)
-		if err != nil {
-			// Fallback to simple if tokenizer fails to load
-			method = "simple"
-		}
-	} else if method != "simple" {
-		method = "simple"
+		tiktokenEstimatorOnce.Do(func() {
+			codec, err := tokenizer.Get(tokenizer.Cl100kBase)
+			if err != nil {
+				// Fallback to simple if tokenizer fails to load
+				tiktokenEstimator = &TokenEstimator{method: "simple"}
+			} else {
+				tiktokenEstimator = &TokenEstimator{method: "tiktoken", codec: codec}
+			}
+		})
+		return tiktokenEstimator
 	}
-	return &TokenEstimator{method: method, codec: codec}
+	// For simple method, we can just return a new instance or a shared one.
+	// Since it has no state other than "method", it's cheap to create.
+	return &TokenEstimator{method: "simple"}
 }
 
 // EstimateTokens estimates the number of tokens in the given content.
