@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-02-12 - Missing PositionalArgsSeparator in CLI Tools
+**Vulnerability:** Command injection vulnerability in Mistral Vibe, Anthropic Claude, and OpenAI Codex CLI tools due to missing positional argument separator (`--`). User prompts could be interpreted as flags.
+**Learning:** Tool definitions were missing a critical security configuration field (`PositionalArgsSeparator`) that was present in the struct but not set for these specific tools, leaving them vulnerable to argument injection. The executor logic supported it, but the configuration was incomplete.
+**Prevention:** Added a regression test (`TestKnownTools_PositionalArgsSeparator`) to enforce that all CLI tool definitions explicitly configure a separator to prevent future omissions.

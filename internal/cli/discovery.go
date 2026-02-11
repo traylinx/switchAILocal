@@ -73,6 +73,7 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "--auto-approve",
 		YoloFlag:            "--auto-approve",
 		SessionFlag:         "--continue",
+		PositionalArgsSeparator: "--",
 	},
 	{
 		Name:                "Anthropic Claude CLI",
@@ -87,6 +88,7 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "--dangerously-skip-permissions",
 		YoloFlag:            "--dangerously-skip-permissions",
 		SessionFlag:         "--resume",
+		PositionalArgsSeparator: "--",
 	},
 	{
 		Name:                "OpenAI Codex CLI",
@@ -99,6 +101,7 @@ var KnownTools = []ToolDefinition{
 		SandboxFlag:         "--sandbox",
 		AutoApproveFlag:     "--full-auto",
 		YoloFlag:            "--full-auto",
+		PositionalArgsSeparator: "--",
 	},
 }
 
