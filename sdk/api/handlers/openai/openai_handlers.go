@@ -196,6 +196,7 @@ func convertCompletionsRequestToChatCompletions(rawJSON []byte) []byte {
 		// Return original if unmarshal fails, or handle error?
 		// Given we can't easily recover, we might proceed with partial data or return empty.
 		// For now let's assume valid JSON or best effort.
+		_ = err // Suppress lint error
 	}
 
 	// Construct ChatCompletionRequest
