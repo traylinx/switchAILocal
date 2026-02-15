@@ -37,9 +37,9 @@ type geminiToResponsesState struct {
 
 	// function call aggregation (keyed by output_index)
 	NextIndex   int
-	FuncArgsBuf map[int]*strings.Builder
-	FuncNames   map[int]string
-	FuncCallIDs map[int]string
+	FuncArgsBuf []*strings.Builder
+	FuncNames   []string
+	FuncCallIDs []string
 
 	// streaming event buffer reuse
 	EventBuf *bytes.Buffer
@@ -51,6 +51,35 @@ var responseIDCounter uint64
 
 // funcCallIDCounter provides a process-wide unique counter for function call identifiers.
 var funcCallIDCounter uint64
+
+func (st *geminiToResponsesState) ensureFuncCapacity(idx int) {
+	if idx >= len(st.FuncArgsBuf) {
+		// Calculate new capacity (at least idx + 1)
+		// We can grow slightly more to avoid frequent reallocations, e.g., next power of 2 or chunk size
+		newCap := idx + 1
+		if newCap < 2*len(st.FuncArgsBuf) {
+			newCap = 2 * len(st.FuncArgsBuf)
+		}
+		if newCap < 4 {
+			newCap = 4
+		}
+
+		// Grow FuncArgsBuf
+		newBuf := make([]*strings.Builder, newCap)
+		copy(newBuf, st.FuncArgsBuf)
+		st.FuncArgsBuf = newBuf
+
+		// Grow FuncNames
+		newNames := make([]string, newCap)
+		copy(newNames, st.FuncNames)
+		st.FuncNames = newNames
+
+		// Grow FuncCallIDs
+		newIDs := make([]string, newCap)
+		copy(newIDs, st.FuncCallIDs)
+		st.FuncCallIDs = newIDs
+	}
+}
 
 func (st *geminiToResponsesState) emit(event string, v any) string {
 	if st.EventBuf == nil {
@@ -78,9 +107,9 @@ func (st *geminiToResponsesState) emit(event string, v any) string {
 func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []string {
 	if *param == nil {
 		*param = &geminiToResponsesState{
-			FuncArgsBuf: make(map[int]*strings.Builder),
-			FuncNames:   make(map[int]string),
-			FuncCallIDs: make(map[int]string),
+			FuncArgsBuf: make([]*strings.Builder, 0, 4),
+			FuncNames:   make([]string, 0, 4),
+			FuncCallIDs: make([]string, 0, 4),
 		}
 	}
 	st := (*param).(*geminiToResponsesState)
@@ -307,6 +336,8 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				name := fc.Get("name").String()
 				idx := st.NextIndex
 				st.NextIndex++
+
+				st.ensureFuncCapacity(idx)
 				if st.FuncArgsBuf[idx] == nil {
 					st.FuncArgsBuf[idx] = &strings.Builder{}
 				}
@@ -400,21 +431,13 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		}
 
 		if len(st.FuncArgsBuf) > 0 {
-			idxs := make([]int, 0, len(st.FuncArgsBuf))
-			for idx := range st.FuncArgsBuf {
-				idxs = append(idxs, idx)
-			}
-			for i := 0; i < len(idxs); i++ {
-				for j := i + 1; j < len(idxs); j++ {
-					if idxs[j] < idxs[i] {
-						idxs[i], idxs[j] = idxs[j], idxs[i]
-					}
+			for idx, b := range st.FuncArgsBuf {
+				if b == nil {
+					continue
 				}
-			}
 
-			for _, idx := range idxs {
 				args := "{}"
-				if b := st.FuncArgsBuf[idx]; b != nil && b.Len() > 0 {
+				if b.Len() > 0 {
 					args = b.String()
 				}
 
@@ -545,20 +568,12 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			})
 		}
 		if len(st.FuncArgsBuf) > 0 {
-			idxs := make([]int, 0, len(st.FuncArgsBuf))
-			for idx := range st.FuncArgsBuf {
-				idxs = append(idxs, idx)
-			}
-			for i := 0; i < len(idxs); i++ {
-				for j := i + 1; j < len(idxs); j++ {
-					if idxs[j] < idxs[i] {
-						idxs[i], idxs[j] = idxs[j], idxs[i]
-					}
+			for idx, b := range st.FuncArgsBuf {
+				if b == nil {
+					continue
 				}
-			}
-			for _, idx := range idxs {
 				args := ""
-				if b := st.FuncArgsBuf[idx]; b != nil {
+				if b.Len() > 0 {
 					args = b.String()
 				}
 				outputs = append(outputs, OutputItem{
