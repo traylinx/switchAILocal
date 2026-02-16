@@ -112,7 +112,7 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	writeHeaders(builder, info.Headers)
 	builder.WriteString("\nBody:\n")
 	if len(info.Body) > 0 {
-		builder.WriteString(string(bytes.Clone(info.Body)))
+		builder.Write(info.Body)
 	} else {
 		builder.WriteString("<empty>")
 	}
@@ -232,7 +232,7 @@ func (s *LoggingStore) AppendResponseChunk(chunk []byte) {
 	if attempt.bodyHasContent {
 		attempt.response.WriteString("\n\n")
 	}
-	attempt.response.WriteString(string(bytes.TrimSpace(bytes.Clone(chunk))))
+	attempt.response.Write(bytes.TrimSpace(chunk))
 	attempt.bodyHasContent = true
 }
 
@@ -342,7 +342,7 @@ func appendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 	if ginCtx == nil {
 		return
 	}
-	data := bytes.TrimSpace(bytes.Clone(chunk))
+	data := bytes.TrimSpace(chunk)
 	if len(data) == 0 { // Re-check after trimming
 		return
 	}
@@ -362,7 +362,7 @@ func appendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 	if attempt.bodyHasContent {
 		attempt.response.WriteString("\n\n")
 	}
-	attempt.response.WriteString(string(data))
+	attempt.response.Write(data)
 	attempt.bodyHasContent = true
 }
 
