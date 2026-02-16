@@ -17,7 +17,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/klauspost/compress v1.18.3
 	github.com/leanovate/gopter v0.2.11
-	github.com/mattn/go-sqlite3 v1.14.33
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/sirupsen/logrus v1.9.4
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966
