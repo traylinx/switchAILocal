@@ -463,16 +463,22 @@ var (
 	// It matches "key": "value" patterns where key is one of the sensitive terms.
 	// It handles escaped quotes within the value string.
 	sensitiveJSONKeys = regexp.MustCompile(`(?i)"(api_?key|apikey|token|secret|password|authorization)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
+	// sensitiveFormKeys matches key=value patterns for sensitive terms.
+	// It captures up to the next ampersand or end of string.
+	// Used for form-url-encoded data or query params in bodies.
+	sensitiveFormKeys = regexp.MustCompile(`(?i)(api_?key|apikey|token|secret|password|authorization)=([^&]*)`)
 )
 
-// MaskSensitiveJSONBody masks sensitive fields in a JSON body.
-// It uses regex to identify and mask values of sensitive keys while preserving the JSON structure.
-func MaskSensitiveJSONBody(body []byte) []byte {
+// MaskSensitiveBody masks sensitive fields in a body (JSON or Form).
+// It uses regex to identify and mask values of sensitive keys while preserving structure.
+func MaskSensitiveBody(body []byte) []byte {
 	if len(body) == 0 {
 		return body
 	}
-	// We use ReplaceAllFunc to handle each match individually
-	return sensitiveJSONKeys.ReplaceAllFunc(body, func(match []byte) []byte {
+
+	// 1. Mask JSON fields
+	body = sensitiveJSONKeys.ReplaceAllFunc(body, func(match []byte) []byte {
 		// match contains the full "key": "value" string
 		submatches := sensitiveJSONKeys.FindSubmatchIndex(match)
 		if len(submatches) < 6 {
@@ -510,4 +516,52 @@ func MaskSensitiveJSONBody(body []byte) []byte {
 
 		return result.Bytes()
 	})
+
+	// 2. Mask Form fields
+	body = sensitiveFormKeys.ReplaceAllFunc(body, func(match []byte) []byte {
+		// match contains the full key=value string
+		submatches := sensitiveFormKeys.FindSubmatchIndex(match)
+		if len(submatches) < 6 {
+			return match
+		}
+
+		// submatches indices:
+		// [0, 1] - full match
+		// [2, 3] - key group
+		// [4, 5] - value group
+
+		keyStart := submatches[2]
+		keyEnd := submatches[3]
+		valStart := submatches[4]
+		valEnd := submatches[5]
+
+		key := string(match[keyStart:keyEnd])
+		val := string(match[valStart:valEnd])
+
+		// Determine masking strategy based on key
+		var maskedVal string
+		lowerKey := strings.ToLower(key)
+		if strings.Contains(lowerKey, "password") || strings.Contains(lowerKey, "secret") {
+			maskedVal = "******"
+		} else {
+			maskedVal = HideAPIKey(val)
+		}
+
+		// Construct the replacement
+		// We replace the value part within the match
+		var result bytes.Buffer
+		result.Write(match[:valStart])
+		result.WriteString(maskedVal)
+		result.Write(match[valEnd:])
+
+		return result.Bytes()
+	})
+
+	return body
+}
+
+// Deprecated: Use MaskSensitiveBody instead.
+// MaskSensitiveJSONBody is kept for backward compatibility if any external callers exist.
+func MaskSensitiveJSONBody(body []byte) []byte {
+	return MaskSensitiveBody(body)
 }
