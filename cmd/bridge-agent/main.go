@@ -92,9 +92,12 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve binary path
-	binary := req.Binary
+	var binary string
+	found := false
+
 	if path, err := exec.LookPath(base); err == nil {
 		binary = path
+		found = true
 	} else {
 		// Try common locations if not in PATH (especially for LaunchAgents)
 		home, _ := os.UserHomeDir()
@@ -109,13 +112,21 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 				matches, _ := filepath.Glob(p)
 				if len(matches) > 0 {
 					binary = matches[0]
+					found = true
 					break
 				}
 			} else if _, err := os.Stat(p); err == nil {
 				binary = p
+				found = true
 				break
 			}
 		}
+	}
+
+	if !found {
+		log.Printf("Security Block: Binary not found in trusted paths: %s", base)
+		http.Error(w, "Forbidden: Binary not found in trusted paths", http.StatusBadRequest)
+		return
 	}
 
 	log.Printf("Executing on Host: %s %v", binary, req.Args)
