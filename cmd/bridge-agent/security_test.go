@@ -73,6 +73,7 @@ func TestSecurity_ArbitraryBinaryExecutionBlocked(t *testing.T) {
 		if !strings.Contains(w.Body.String(), "Binary not found") && !strings.Contains(w.Body.String(), "Forbidden") {
 			// It might return "Binary not in whitelist" if my logic is wrong, but here base is "gemini" so whitelist passes.
 			// It should fail on path resolution.
+			t.Errorf("Expected 'Binary not found' or 'Forbidden' in response, got: %s", w.Body.String())
 		}
 	}
 }
