@@ -1053,10 +1053,10 @@ func doMemoryReset(cfg *config.Config, opts *MemoryOptions) {
 	// Create automatic backup before reset
 	timestamp := time.Now().Format("20060102-150405")
 	backupPath := fmt.Sprintf("memory-backup-before-reset-%s.tar.gz", timestamp)
-	
+
 	fmt.Println("Creating automatic backup before reset...")
 	fmt.Printf("Backup file: %s\n", backupPath)
-	
+
 	// Create backup
 	if err := createMemoryBackup(cfg, backupPath); err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Error: Failed to create backup: %v\n", err)
@@ -1064,7 +1064,7 @@ func doMemoryReset(cfg *config.Config, opts *MemoryOptions) {
 		fmt.Fprintf(os.Stderr, "\n💡 Tip: Ensure you have write permissions and sufficient disk space.\n")
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("✓ Backup created successfully: %s\n\n", backupPath)
 	fmt.Println("Proceeding with reset...")
 

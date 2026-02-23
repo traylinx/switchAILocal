@@ -693,10 +693,10 @@ func TestConcurrentAccess(t *testing.T) {
 	defer store.Close()
 
 	apiKeyHash := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	
+
 	// Run concurrent operations
 	done := make(chan bool, 10)
-	
+
 	// Concurrent reads
 	for i := 0; i < 5; i++ {
 		go func() {
@@ -709,7 +709,7 @@ func TestConcurrentAccess(t *testing.T) {
 			}
 		}()
 	}
-	
+
 	// Concurrent writes
 	for i := 0; i < 5; i++ {
 		go func(id int) {
@@ -726,7 +726,7 @@ func TestConcurrentAccess(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	// Wait for all goroutines to complete
 	for i := 0; i < 10; i++ {
 		<-done
