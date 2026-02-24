@@ -92,7 +92,7 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve binary path
-	binary := req.Binary
+	var binary string
 	if path, err := exec.LookPath(base); err == nil {
 		binary = path
 	} else {
@@ -116,6 +116,12 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+
+	if binary == "" {
+		log.Printf("Security Block: Binary not found in trusted locations: %s", base)
+		http.Error(w, "Forbidden: Binary not found in trusted locations", http.StatusBadRequest)
+		return
 	}
 
 	log.Printf("Executing on Host: %s %v", binary, req.Args)
