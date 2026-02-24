@@ -11,6 +11,10 @@ import (
 )
 
 func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
 	// Create discoverer with temp cache dir
 	tempDir := t.TempDir()
 	disc, err := NewDiscoverer(tempDir)
