@@ -84,9 +84,10 @@ var KnownTools = []ToolDefinition{
 		SupportsJSON:        true,
 		SupportsStream:      true,
 		SupportsAttachments: false, // Claude Code manages context internally
-		AutoApproveFlag:     "--dangerously-skip-permissions",
-		YoloFlag:            "--dangerously-skip-permissions",
-		SessionFlag:         "--resume",
+		AutoApproveFlag:         "--dangerously-skip-permissions",
+		YoloFlag:                "--dangerously-skip-permissions",
+		SessionFlag:             "--resume",
+		PositionalArgsSeparator: "--",
 	},
 	{
 		Name:                "OpenAI Codex CLI",
