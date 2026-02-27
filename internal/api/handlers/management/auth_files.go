@@ -550,7 +550,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
