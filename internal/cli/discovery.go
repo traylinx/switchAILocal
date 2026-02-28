@@ -87,6 +87,7 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "--dangerously-skip-permissions",
 		YoloFlag:            "--dangerously-skip-permissions",
 		SessionFlag:         "--resume",
+		PositionalArgsSeparator: "--",
 	},
 	{
 		Name:                "OpenAI Codex CLI",
