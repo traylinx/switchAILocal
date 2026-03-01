@@ -19,6 +19,6 @@ func BenchmarkEmitEvent(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = st.emit("response.output_text.delta", &evt)
+		_ = st.emit("response.output_text.delta", evt)
 	}
 }
