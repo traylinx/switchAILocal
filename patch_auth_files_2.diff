@@ -1,0 +1,14 @@
+--- internal/api/handlers/management/auth_files.go
++++ internal/api/handlers/management/auth_files.go
+@@ -583,6 +583,11 @@
+
+ // Delete auth files: single by name or all
+ func (h *Handler) DeleteAuthFile(c *gin.Context) {
++	name := c.Query("name")
++	if name != "" && strings.ContainsAny(name, "/\\") {
++		c.JSON(400, gin.H{"error": "invalid name"})
++		return
++	}
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return

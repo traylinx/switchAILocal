@@ -1,0 +1,11 @@
+--- internal/api/handlers/management/auth_files.go
++++ internal/api/handlers/management/auth_files.go
+@@ -554,7 +554,7 @@
+		c.JSON(200, gin.H{"status": "ok"})
+		return
+	}
+-	name := c.Query("name")
++	name = c.Query("name")
+	if name == "" || strings.ContainsAny(name, "/\\") {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
