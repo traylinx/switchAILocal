@@ -1,0 +1,13 @@
+--- internal/discovery/discoverer_test.go
++++ internal/discovery/discoverer_test.go
+@@ -52,6 +52,10 @@
+			// Claude uses static fallback, not cached via fetcher
+			continue
+		}
++		if provider == "codex" {
++			// Skip codex as upstream removed hardcoded model definitions
++			continue
++		}
+		cached := disc.GetCachedModels(provider)
+		if len(cached) == 0 {
+			t.Errorf("Expected cached models for %s", provider)
