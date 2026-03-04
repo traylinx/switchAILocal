@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-04 - Streaming Response Buffer Pooling
+**Learning:** `FileStreamingLogWriter.WriteChunkAsync` copied every single chunk slice onto a buffered channel in the streaming hotpath, leading to thousands of allocations per streaming request under heavy load. The solution involves swapping out a `[]byte` channel for a `*[]byte` channel backed by a `sync.Pool`.
+**Action:** Always identify points where high-throughput streams cross goroutine boundaries (channels). Utilizing a `sync.Pool` with `*[]byte` instead of just `[]byte` lets slices grow properly when calling `make` or `append` underneath while maintaining the slice capacity across references.

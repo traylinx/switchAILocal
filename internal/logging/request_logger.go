@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,14 @@ var (
 	invalidFilenameChars = regexp.MustCompile(`[<>:"|?*\s]`)
 	// consecutiveHyphens matches multiple consecutive hyphens to collapse them.
 	consecutiveHyphens = regexp.MustCompile(`-+`)
+
+	// logChunkPool provides reusable byte slices to avoid allocations during streaming logs.
+	logChunkPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 4096)
+			return &b
+		},
+	}
 )
 
 // RequestLogger defines the interface for logging HTTP requests and responses.
@@ -336,7 +345,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		requestBodyPath:  requestBodyPath,
 		responseBodyPath: responseBodyPath,
 		responseBodyFile: responseBodyFile,
-		chunkChan:        make(chan []byte, 100), // Buffered channel for async writes
+		chunkChan:        make(chan *[]byte, 100), // Buffered channel for async writes
 		closeChan:        make(chan struct{}),
 		errorChan:        make(chan error, 1),
 	}
@@ -849,7 +858,7 @@ type FileStreamingLogWriter struct {
 	responseBodyFile *os.File
 
 	// chunkChan is a channel for receiving response chunks to spool.
-	chunkChan chan []byte
+	chunkChan chan *[]byte
 
 	// closeChan is a channel for signaling when the writer is closed.
 	closeChan chan struct{}
@@ -878,19 +887,25 @@ type FileStreamingLogWriter struct {
 // Parameters:
 //   - chunk: The response chunk to write
 func (w *FileStreamingLogWriter) WriteChunkAsync(chunk []byte) {
-	if w.chunkChan == nil {
+	if w.chunkChan == nil || len(chunk) == 0 {
 		return
 	}
 
-	// Make a copy of the chunk to avoid data races
-	chunkCopy := make([]byte, len(chunk))
-	copy(chunkCopy, chunk)
+	// Get a pooled buffer to avoid allocations
+	chunkPtr := logChunkPool.Get().(*[]byte)
+	if cap(*chunkPtr) < len(chunk) {
+		*chunkPtr = make([]byte, len(chunk))
+	} else {
+		*chunkPtr = (*chunkPtr)[:len(chunk)]
+	}
+	copy(*chunkPtr, chunk)
 
 	// Non-blocking send
 	select {
-	case w.chunkChan <- chunkCopy:
+	case w.chunkChan <- chunkPtr:
 	default:
-		// Channel is full, skip this chunk to avoid blocking
+		// Channel is full, recycle the buffer and skip to avoid blocking
+		logChunkPool.Put(chunkPtr)
 	}
 }
 
@@ -1007,17 +1022,19 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 		bufferedWriter = bufio.NewWriter(w.responseBodyFile)
 	}
 
-	for chunk := range w.chunkChan {
+	for chunkPtr := range w.chunkChan {
 		if w.responseBodyFile == nil {
+			logChunkPool.Put(chunkPtr)
 			continue
 		}
 
 		var errWrite error
 		if bufferedWriter != nil {
-			_, errWrite = bufferedWriter.Write(chunk)
+			_, errWrite = bufferedWriter.Write(*chunkPtr)
 		} else {
-			_, errWrite = w.responseBodyFile.Write(chunk)
+			_, errWrite = w.responseBodyFile.Write(*chunkPtr)
 		}
+		logChunkPool.Put(chunkPtr)
 
 		if errWrite != nil {
 			select {
