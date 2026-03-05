@@ -96,7 +96,7 @@ func TestGetSharedLibraryPath(t *testing.T) {
 	// This may or may not find a library depending on the system
 	// Just verify the function doesn't panic
 	path := locator.GetSharedLibraryPath()
-	
+
 	// If a path is returned, it should be a valid file
 	if path != "" {
 		_, err := os.Stat(path)

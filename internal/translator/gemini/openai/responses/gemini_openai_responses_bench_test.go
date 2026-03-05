@@ -5,7 +5,7 @@ import (
 )
 
 func BenchmarkEmitEvent(b *testing.B) {
-	evt := OutputTextDelta{
+	evt := &OutputTextDelta{
 		Type:           "response.output_text.delta",
 		SequenceNumber: 123,
 		ItemID:         "msg_123",
@@ -20,5 +20,15 @@ func BenchmarkEmitEvent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = st.emit("response.output_text.delta", evt)
+	}
+}
+
+func BenchmarkConvertGeminiResponseToOpenAIResponses_Stream(b *testing.B) {
+	rawJSON := []byte(`{"candidates": [{"content": {"parts": [{"text": "Hello world"}]}}]}`)
+	var state any
+	ConvertGeminiResponseToOpenAIResponses(nil, "", nil, nil, rawJSON, &state)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ConvertGeminiResponseToOpenAIResponses(nil, "", nil, nil, rawJSON, &state)
 	}
 }

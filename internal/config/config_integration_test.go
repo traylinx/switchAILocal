@@ -11,21 +11,21 @@ func TestMemoryConfigDefaults(t *testing.T) {
 	// Create a minimal config file
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Memory defaults
 	if cfg.Memory.Enabled {
 		t.Error("Memory should be disabled by default")
@@ -48,21 +48,21 @@ port: 8080
 func TestSteeringConfigDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Steering defaults
 	if cfg.Steering.Enabled {
 		t.Error("Steering should be disabled by default")
@@ -79,21 +79,21 @@ port: 8080
 func TestHooksConfigDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Hooks defaults
 	if cfg.Hooks.Enabled {
 		t.Error("Hooks should be disabled by default")
@@ -110,7 +110,7 @@ port: 8080
 func TestMemoryConfigParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
@@ -121,16 +121,16 @@ memory:
   max-log-size-mb: 50
   compression: false
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Memory configuration was parsed
 	if !cfg.Memory.Enabled {
 		t.Error("Memory should be enabled")
@@ -153,7 +153,7 @@ memory:
 func TestSteeringConfigParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
@@ -162,16 +162,16 @@ steering:
   rules-dir: "/custom/steering/rules"
   hot-reload: false
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Steering configuration was parsed
 	if !cfg.Steering.Enabled {
 		t.Error("Steering should be enabled")
@@ -188,7 +188,7 @@ steering:
 func TestHooksConfigParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	configContent := `
 host: "127.0.0.1"
 port: 8080
@@ -197,16 +197,16 @@ hooks:
   hooks-dir: "/custom/hooks/path"
   hot-reload: false
 `
-	
+
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	
+
 	cfg, err := LoadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Verify Hooks configuration was parsed
 	if !cfg.Hooks.Enabled {
 		t.Error("Hooks should be enabled")
@@ -312,12 +312,12 @@ func TestSanitizeMemory(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{Memory: tt.input}
 			cfg.SanitizeMemory()
-			
+
 			if cfg.Memory.BaseDir != tt.expected.BaseDir {
 				t.Errorf("BaseDir: expected '%s', got '%s'", tt.expected.BaseDir, cfg.Memory.BaseDir)
 			}
@@ -382,12 +382,12 @@ func TestSanitizeSteering(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{Steering: tt.input}
 			cfg.SanitizeSteering()
-			
+
 			if cfg.Steering.RulesDir != tt.expected.RulesDir {
 				t.Errorf("RulesDir: expected '%s', got '%s'", tt.expected.RulesDir, cfg.Steering.RulesDir)
 			}
@@ -432,12 +432,12 @@ func TestSanitizeHooks(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{Hooks: tt.input}
 			cfg.SanitizeHooks()
-			
+
 			if cfg.Hooks.HooksDir != tt.expected.HooksDir {
 				t.Errorf("HooksDir: expected '%s', got '%s'", tt.expected.HooksDir, cfg.Hooks.HooksDir)
 			}

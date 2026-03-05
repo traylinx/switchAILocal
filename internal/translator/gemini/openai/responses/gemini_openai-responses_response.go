@@ -44,7 +44,13 @@ type geminiToResponsesState struct {
 	// streaming event buffer reuse
 	EventBuf *bytes.Buffer
 	EventEnc *json.Encoder
+
+	// Reusable structs to avoid allocations
+	DeltaEvt *OutputTextDelta
 }
+
+// emptyLogprobs is reused to avoid repetitive heap allocations for zero-element slices.
+var emptyLogprobs = []any{}
 
 // responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
 var responseIDCounter uint64
@@ -105,7 +111,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		full := st.ReasoningBuf.String()
 
 		// response.reasoning_summary_text.done
-		textDone := ResponseReasoningSummaryTextDone{
+		textDone := &ResponseReasoningSummaryTextDone{
 			Type:           "response.reasoning_summary_text.done",
 			SequenceNumber: nextSeq(),
 			ItemID:         st.ReasoningItemID,
@@ -116,7 +122,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		out = append(out, st.emit(textDone.Type, textDone))
 
 		// response.reasoning_summary_part.done
-		partDone := ResponseReasoningSummaryPartDone{
+		partDone := &ResponseReasoningSummaryPartDone{
 			Type:           "response.reasoning_summary_part.done",
 			SequenceNumber: nextSeq(),
 			ItemID:         st.ReasoningItemID,
@@ -130,7 +136,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		out = append(out, st.emit(partDone.Type, partDone))
 
 		// response.output_item.done
-		itemDone := ResponseOutputItemDone{
+		itemDone := &ResponseOutputItemDone{
 			Type:           "response.output_item.done",
 			SequenceNumber: nextSeq(),
 			OutputIndex:    st.ReasoningIndex,
@@ -162,7 +168,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			st.CreatedAt = time.Now().Unix()
 		}
 
-		created := ResponseCreated{
+		created := &ResponseCreated{
 			Type:           "response.created",
 			SequenceNumber: nextSeq(),
 			Response: ResponseInfo{
@@ -171,12 +177,12 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				CreatedAt:  st.CreatedAt,
 				Status:     "in_progress",
 				Background: false,
-				Output:     &[]any{},
+				Output:     &emptyLogprobs,
 			},
 		}
 		out = append(out, st.emit(created.Type, created))
 
-		inprog := ResponseInProgress{
+		inprog := &ResponseInProgress{
 			Type:           "response.in_progress",
 			SequenceNumber: nextSeq(),
 			Response: ResponseInfo{
@@ -206,7 +212,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					st.NextIndex++
 					st.ReasoningItemID = fmt.Sprintf("rs_%s_%d", st.ResponseID, st.ReasoningIndex)
 
-					item := OutputItemAdded{
+					item := &OutputItemAdded{
 						Type:           "response.output_item.added",
 						SequenceNumber: nextSeq(),
 						OutputIndex:    st.ReasoningIndex,
@@ -219,7 +225,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					}
 					out = append(out, st.emit(item.Type, item))
 
-					partAdded := ReasoningSummaryPartAdded{
+					partAdded := &ReasoningSummaryPartAdded{
 						Type:           "response.reasoning_summary_part.added",
 						SequenceNumber: nextSeq(),
 						ItemID:         st.ReasoningItemID,
@@ -235,7 +241,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				if t := part.Get("text"); t.Exists() && t.String() != "" {
 					st.ReasoningBuf.WriteString(t.String())
 
-					msg := ReasoningSummaryTextDelta{
+					msg := &ReasoningSummaryTextDelta{
 						Type:           "response.reasoning_summary_text.delta",
 						SequenceNumber: nextSeq(),
 						ItemID:         st.ReasoningItemID,
@@ -257,7 +263,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					st.NextIndex++
 					st.CurrentMsgID = fmt.Sprintf("msg_%s_0", st.ResponseID)
 
-					item := OutputItemAdded{
+					item := &OutputItemAdded{
 						Type:           "response.output_item.added",
 						SequenceNumber: nextSeq(),
 						OutputIndex:    st.MsgIndex,
@@ -271,7 +277,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					}
 					out = append(out, st.emit(item.Type, item))
 
-					partAdded := ContentPartAdded{
+					partAdded := &ContentPartAdded{
 						Type:           "response.content_part.added",
 						SequenceNumber: nextSeq(),
 						ItemID:         st.CurrentMsgID,
@@ -279,8 +285,8 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 						ContentIndex:   0,
 						Part: ContentPart{
 							Type:        "output_text",
-							Annotations: []any{},
-							Logprobs:    []any{},
+							Annotations: emptyLogprobs,
+							Logprobs:    emptyLogprobs,
 							Text:        "",
 						},
 					}
@@ -288,16 +294,18 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}
 				st.TextBuf.WriteString(t.String())
 
-				msg := OutputTextDelta{
-					Type:           "response.output_text.delta",
-					SequenceNumber: nextSeq(),
-					ItemID:         st.CurrentMsgID,
-					OutputIndex:    st.MsgIndex,
-					ContentIndex:   0,
-					Delta:          t.String(),
-					Logprobs:       []any{},
+				if st.DeltaEvt == nil {
+					st.DeltaEvt = &OutputTextDelta{
+						Type:         "response.output_text.delta",
+						ContentIndex: 0,
+						Logprobs:     emptyLogprobs,
+					}
 				}
-				out = append(out, st.emit(msg.Type, msg))
+				st.DeltaEvt.SequenceNumber = nextSeq()
+				st.DeltaEvt.ItemID = st.CurrentMsgID
+				st.DeltaEvt.OutputIndex = st.MsgIndex
+				st.DeltaEvt.Delta = t.String()
+				out = append(out, st.emit(st.DeltaEvt.Type, st.DeltaEvt))
 				return true
 			}
 
@@ -315,7 +323,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}
 				st.FuncNames[idx] = name
 
-				item := OutputItemAdded{
+				item := &OutputItemAdded{
 					Type:           "response.output_item.added",
 					SequenceNumber: nextSeq(),
 					OutputIndex:    idx,
@@ -334,7 +342,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					argsJSON := args.Raw
 					st.FuncArgsBuf[idx].WriteString(argsJSON)
 
-					ad := FunctionCallArgumentsDelta{
+					ad := &FunctionCallArgumentsDelta{
 						Type:           "response.function_call_arguments.delta",
 						SequenceNumber: nextSeq(),
 						ItemID:         fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
@@ -355,18 +363,18 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 	if fr := root.Get("candidates.0.finishReason"); fr.Exists() && fr.String() != "" {
 		finalizeReasoning()
 		if st.MsgOpened {
-			done := ResponseOutputTextDone{
+			done := &ResponseOutputTextDone{
 				Type:           "response.output_text.done",
 				SequenceNumber: nextSeq(),
 				ItemID:         st.CurrentMsgID,
 				OutputIndex:    st.MsgIndex,
 				ContentIndex:   0,
 				Text:           "",
-				Logprobs:       []any{},
+				Logprobs:       emptyLogprobs,
 			}
 			out = append(out, st.emit(done.Type, done))
 
-			partDone := ResponseContentPartDone{
+			partDone := &ResponseContentPartDone{
 				Type:           "response.content_part.done",
 				SequenceNumber: nextSeq(),
 				ItemID:         st.CurrentMsgID,
@@ -374,14 +382,14 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				ContentIndex:   0,
 				Part: ContentPart{
 					Type:        "output_text",
-					Annotations: []any{},
-					Logprobs:    []any{},
+					Annotations: emptyLogprobs,
+					Logprobs:    emptyLogprobs,
 					Text:        "",
 				},
 			}
 			out = append(out, st.emit(partDone.Type, partDone))
 
-			final := ResponseOutputItemDone{
+			final := &ResponseOutputItemDone{
 				Type:           "response.output_item.done",
 				SequenceNumber: nextSeq(),
 				OutputIndex:    st.MsgIndex,
@@ -418,7 +426,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 					args = b.String()
 				}
 
-				fcDone := ResponseFunctionCallArgumentsDone{
+				fcDone := &ResponseFunctionCallArgumentsDone{
 					Type:           "response.function_call_arguments.done",
 					SequenceNumber: nextSeq(),
 					ItemID:         fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]),
@@ -427,7 +435,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}
 				out = append(out, st.emit(fcDone.Type, fcDone))
 
-				itemDone := ResponseOutputItemDone{
+				itemDone := &ResponseOutputItemDone{
 					Type:           "response.output_item.done",
 					SequenceNumber: nextSeq(),
 					OutputIndex:    idx,
@@ -445,7 +453,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		}
 
 		// Response Completed
-		completed := ResponseCompleted{
+		completed := &ResponseCompleted{
 			Type:           "response.completed",
 			SequenceNumber: nextSeq(),
 			Response: ResponseInfo{
@@ -540,7 +548,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				ID:      st.CurrentMsgID,
 				Type:    "message",
 				Status:  "completed",
-				Content: []ContentPart{{Type: "output_text", Annotations: []any{}, Logprobs: []any{}, Text: st.TextBuf.String()}},
+				Content: []ContentPart{{Type: "output_text", Annotations: emptyLogprobs, Logprobs: emptyLogprobs, Text: st.TextBuf.String()}},
 				Role:    "assistant",
 			})
 		}
@@ -787,8 +795,8 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 			Role:   "assistant",
 			Content: []ContentPart{{
 				Type:        "output_text",
-				Annotations: []any{},
-				Logprobs:    []any{},
+				Annotations: emptyLogprobs,
+				Logprobs:    emptyLogprobs,
 				Text:        messageText.String(),
 			}},
 		}
