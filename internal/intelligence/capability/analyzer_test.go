@@ -38,10 +38,10 @@ func TestDetectCoding(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name         string
-		modelID      string
-		displayName  string
-		expectCoding bool
+		name           string
+		modelID        string
+		displayName    string
+		expectCoding   bool
 	}{
 		{"GPT-4 with code", "gpt-4-code", "GPT-4 Code", true},
 		{"Codex model", "codex-001", "Codex", true},
@@ -78,10 +78,10 @@ func TestDetectReasoning(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name            string
-		modelID         string
-		displayName     string
-		expectReasoning bool
+		name             string
+		modelID          string
+		displayName      string
+		expectReasoning  bool
 	}{
 		{"O1 model", "o1-preview", "O1 Preview", true},
 		{"O3 model", "o3-mini", "O3 Mini", true},
@@ -117,10 +117,10 @@ func TestDetectVision(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name         string
-		modelID      string
-		displayName  string
-		expectVision bool
+		name          string
+		modelID       string
+		displayName   string
+		expectVision  bool
 	}{
 		{"GPT-4o", "gpt-4o", "GPT-4o", true},
 		{"GPT-4 Turbo", "gpt-4-turbo", "GPT-4 Turbo", true},
@@ -192,9 +192,9 @@ func TestInferLatency(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name          string
-		modelID       string
-		expectLatency string
+		name            string
+		modelID         string
+		expectLatency   string
 	}{
 		{"Fast mini model", "gpt-4o-mini", "fast"},
 		{"Fast turbo model", "gpt-3.5-turbo", "fast"},
@@ -228,10 +228,10 @@ func TestInferCostTier(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name       string
-		modelID    string
-		provider   string
-		expectCost string
+		name        string
+		modelID     string
+		provider    string
+		expectCost  string
 	}{
 		{"Local model", "llama-3", "ollama", "free"},
 		{"Expensive opus", "claude-opus", "anthropic", "high"},
@@ -265,9 +265,9 @@ func TestInferContextWindow(t *testing.T) {
 	analyzer := NewAnalyzer()
 
 	testCases := []struct {
-		name         string
-		modelID      string
-		expectWindow int
+		name          string
+		modelID       string
+		expectWindow  int
 	}{
 		{"128k model", "gpt-4-128k", 128000},
 		{"200k model", "claude-200k", 200000},

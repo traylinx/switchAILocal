@@ -21,10 +21,10 @@ func TestInternalDoctor_Diagnose_PatternMatch(t *testing.T) {
 	doctor := NewInternalDoctor(cfg)
 
 	tests := []struct {
-		name        string
-		snapshot    *types.DiagnosticSnapshot
-		wantType    types.FailureType
-		wantMatched bool
+		name         string
+		snapshot     *types.DiagnosticSnapshot
+		wantType     types.FailureType
+		wantMatched  bool
 	}{
 		{
 			name: "permission prompt detected",

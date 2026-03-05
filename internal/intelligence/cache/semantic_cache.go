@@ -259,13 +259,13 @@ func (c *SemanticCache) GetMetrics() CacheMetrics {
 func (c *SemanticCache) GetMetricsAsMap() map[string]interface{} {
 	metrics := c.GetMetrics()
 	return map[string]interface{}{
-		"hits":            metrics.Hits,
-		"misses":          metrics.Misses,
-		"evictions":       metrics.Evictions,
-		"size":            metrics.Size,
-		"avg_hit_latency": metrics.AvgHitLatency.Milliseconds(),
-		"avg_lookup":      metrics.AvgLookup.Milliseconds(),
-		"hit_rate":        c.GetHitRate(),
+		"hits":             metrics.Hits,
+		"misses":           metrics.Misses,
+		"evictions":        metrics.Evictions,
+		"size":             metrics.Size,
+		"avg_hit_latency":  metrics.AvgHitLatency.Milliseconds(),
+		"avg_lookup":       metrics.AvgLookup.Milliseconds(),
+		"hit_rate":         c.GetHitRate(),
 	}
 }
 

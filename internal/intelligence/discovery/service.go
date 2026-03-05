@@ -46,10 +46,10 @@ type ProviderStatus struct {
 
 // DiscoveryRegistry represents the complete discovery output.
 type DiscoveryRegistry struct {
-	Providers   []*ProviderStatus  `json:"providers"`
-	Models      []*DiscoveredModel `json:"models"`
-	GeneratedAt time.Time          `json:"generated_at"`
-	TotalModels int                `json:"total_models"`
+	Providers    []*ProviderStatus   `json:"providers"`
+	Models       []*DiscoveredModel  `json:"models"`
+	GeneratedAt  time.Time           `json:"generated_at"`
+	TotalModels  int                 `json:"total_models"`
 }
 
 // Service wraps the existing discovery.Discoverer and provides

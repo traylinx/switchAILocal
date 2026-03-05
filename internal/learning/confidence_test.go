@@ -59,13 +59,13 @@ func TestCalculatePreferenceConfidence_SampleSizePenalty(t *testing.T) {
 		samples  int
 		expected float64 // Approximate expected penalty factor
 	}{
-		{1, 0.15},  // log(2)/log(101) ≈ 0.15
-		{5, 0.39},  // log(6)/log(101) ≈ 0.39
-		{10, 0.52}, // log(11)/log(101) ≈ 0.52
-		{20, 0.66}, // log(21)/log(101) ≈ 0.66
-		{50, 0.85}, // log(51)/log(101) ≈ 0.85
-		{100, 1.0}, // log(101)/log(101) = 1.0
-		{200, 1.0}, // No penalty for 100+
+		{1, 0.15},   // log(2)/log(101) ≈ 0.15
+		{5, 0.39},   // log(6)/log(101) ≈ 0.39
+		{10, 0.52},  // log(11)/log(101) ≈ 0.52
+		{20, 0.66},  // log(21)/log(101) ≈ 0.66
+		{50, 0.85},  // log(51)/log(101) ≈ 0.85
+		{100, 1.0},  // log(101)/log(101) = 1.0
+		{200, 1.0},  // No penalty for 100+
 	}
 
 	for _, tc := range testCases {
@@ -135,36 +135,36 @@ func TestAdjustRuntimeConfidence_ClampingHigh(t *testing.T) {
 func TestAdjustRuntimeConfidence_WeightingFormula(t *testing.T) {
 	// Test the exact weighting from design document
 	testCases := []struct {
-		name          string
-		base          float64
+		name         string
+		base         float64
 		hasPreference bool
-		providerBias  float64
-		isTimeMatch   bool
-		expected      float64
+		providerBias float64
+		isTimeMatch  bool
+		expected     float64
 	}{
 		{
-			name:          "typical_good_case",
-			base:          0.75,
+			name:         "typical_good_case",
+			base:         0.75,
 			hasPreference: true,
-			providerBias:  0.3,
-			isTimeMatch:   true,
-			expected:      0.75 + 0.15 + 0.03 + 0.1, // 1.03 -> clamped to 1.0
+			providerBias: 0.3,
+			isTimeMatch:  true,
+			expected:     0.75 + 0.15 + 0.03 + 0.1, // 1.03 -> clamped to 1.0
 		},
 		{
-			name:          "typical_poor_case",
-			base:          0.4,
+			name:         "typical_poor_case",
+			base:         0.4,
 			hasPreference: false,
-			providerBias:  -0.6,
-			isTimeMatch:   false,
-			expected:      0.4 + 0.0 + (-0.06) + 0.0, // 0.34
+			providerBias: -0.6,
+			isTimeMatch:  false,
+			expected:     0.4 + 0.0 + (-0.06) + 0.0, // 0.34
 		},
 		{
-			name:          "mixed_case",
-			base:          0.6,
+			name:         "mixed_case",
+			base:         0.6,
 			hasPreference: true,
-			providerBias:  -0.2,
-			isTimeMatch:   false,
-			expected:      0.6 + 0.15 + (-0.02) + 0.0, // 0.73
+			providerBias: -0.2,
+			isTimeMatch:  false,
+			expected:     0.6 + 0.15 + (-0.02) + 0.0, // 0.73
 		},
 	}
 

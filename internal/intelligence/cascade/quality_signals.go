@@ -61,12 +61,12 @@ type QualitySignalDetector struct {
 func NewQualitySignalDetector() *QualitySignalDetector {
 	return &QualitySignalDetector{
 		abruptEndingPatterns: []*regexp.Regexp{
-			regexp.MustCompile(`\.\.\.$`),                           // Ends with ...
-			regexp.MustCompile(`(?i)(?:and|but|or|so|then)\s*$`),    // Ends with conjunction
-			regexp.MustCompile(`(?i)(?:the|a|an|this|that)\s*$`),    // Ends with article
-			regexp.MustCompile(`(?i)(?:to|for|with|from|in)\s*$`),   // Ends with preposition
-			regexp.MustCompile(`(?i)(?:is|are|was|were|be)\s*$`),    // Ends with verb
-			regexp.MustCompile(`(?i)(?:I|we|you|they|it)\s*$`),      // Ends with pronoun
+			regexp.MustCompile(`\.\.\.$`),                          // Ends with ...
+			regexp.MustCompile(`(?i)(?:and|but|or|so|then)\s*$`),   // Ends with conjunction
+			regexp.MustCompile(`(?i)(?:the|a|an|this|that)\s*$`),   // Ends with article
+			regexp.MustCompile(`(?i)(?:to|for|with|from|in)\s*$`),  // Ends with preposition
+			regexp.MustCompile(`(?i)(?:is|are|was|were|be)\s*$`),   // Ends with verb
+			regexp.MustCompile(`(?i)(?:I|we|you|they|it)\s*$`),     // Ends with pronoun
 			regexp.MustCompile(`(?i)(?:can|will|would|should)\s*$`), // Ends with modal
 		},
 		truncationPatterns: []*regexp.Regexp{
@@ -85,8 +85,8 @@ func NewQualitySignalDetector() *QualitySignalDetector {
 		codeBlockPattern:    regexp.MustCompile("```"),
 		incompleteCodePatterns: []*regexp.Regexp{
 			regexp.MustCompile(`(?m)^\s*(?:def|func|function|class|if|for|while|switch)\s+[^{]*$`), // Unclosed block
-			regexp.MustCompile(`(?m)\{\s*$`),              // Opening brace at end
-			regexp.MustCompile(`(?m)^\s*//\s*\.\.\.\s*$`), // Comment with ...
+			regexp.MustCompile(`(?m)\{\s*$`),                                                       // Opening brace at end
+			regexp.MustCompile(`(?m)^\s*//\s*\.\.\.\s*$`),                                          // Comment with ...
 		},
 	}
 }

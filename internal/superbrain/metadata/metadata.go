@@ -13,15 +13,15 @@ import (
 // Aggregator manages the collection of healing actions and metadata for a request.
 // It provides thread-safe methods for recording actions and building the final metadata.
 type Aggregator struct {
-	mu               sync.RWMutex
-	requestID        string
-	originalProvider string
-	finalProvider    string
-	startTime        time.Time
-	actions          []types.HealingAction
-	contextOptimized bool
-	highDensityMap   *types.HighDensityMap
-	diagnosisHistory []*types.Diagnosis
+	mu                 sync.RWMutex
+	requestID          string
+	originalProvider   string
+	finalProvider      string
+	startTime          time.Time
+	actions            []types.HealingAction
+	contextOptimized   bool
+	highDensityMap     *types.HighDensityMap
+	diagnosisHistory   []*types.Diagnosis
 }
 
 // NewAggregator creates a new metadata aggregator for a request.

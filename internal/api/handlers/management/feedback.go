@@ -30,11 +30,11 @@ type FeedbackRequest struct {
 
 // FeedbackStatsResponse represents aggregated feedback statistics.
 type FeedbackStatsResponse struct {
-	TotalRecords     int64            `json:"total_records"`
-	SuccessRate      float64          `json:"success_rate"`
-	TierDistribution map[string]int64 `json:"tier_distribution"`
-	AvgLatencyMs     float64          `json:"avg_latency_ms"`
-	CascadeRate      float64          `json:"cascade_rate"`
+	TotalRecords     int64              `json:"total_records"`
+	SuccessRate      float64            `json:"success_rate"`
+	TierDistribution map[string]int64   `json:"tier_distribution"`
+	AvgLatencyMs     float64            `json:"avg_latency_ms"`
+	CascadeRate      float64            `json:"cascade_rate"`
 }
 
 // FeedbackHandler handles the /v0/management/feedback endpoint.

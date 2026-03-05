@@ -249,6 +249,7 @@ type MemoryConfig struct {
 	Compression bool `yaml:"compression" json:"compression"`
 }
 
+
 // AmpModelMapping defines a model name mapping for Amp CLI requests.
 // When Amp requests a model that isn't available locally, this mapping
 // allows routing to an alternative model that IS available.
@@ -908,6 +909,7 @@ func (cfg *Config) SanitizeHooks() {
 	// Hot-reload defaults to true when hooks are enabled
 	// No additional validation needed for boolean
 }
+
 
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)

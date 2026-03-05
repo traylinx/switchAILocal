@@ -247,12 +247,12 @@ func (se *SuperbrainCLIExecutor) executeWithObservation(ctx context.Context, aut
 	// Log any errors but don't take action
 	if err != nil {
 		log.WithFields(log.Fields{
-			"request_id":    requestID,
-			"provider":      se.base.Provider,
-			"error":         err.Error(),
-			"mode":          "observe",
-			"silence_ms":    owCtx.GetSilenceDuration().Milliseconds(),
-			"restart_count": owCtx.RestartCount,
+			"request_id":     requestID,
+			"provider":       se.base.Provider,
+			"error":          err.Error(),
+			"mode":           "observe",
+			"silence_ms":     owCtx.GetSilenceDuration().Milliseconds(),
+			"restart_count":  owCtx.RestartCount,
 		}).Warn("Execution failed (observe mode - no action taken)")
 	}
 
