@@ -219,3 +219,8 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-06 - Sentinel: Path Traversal Gap in Gateway Operations
+**Vulnerability:** Weak path traversal checks in the `auth_files.go` gateway handling (`UploadAuthFile`, `DeleteAuthFile`).
+**Learning:** Checking strictly for `os.PathSeparator` (e.g., `/` on Linux) leaves the server vulnerable to traversal payloads containing alternate separators like `\` if the request is maliciously crafted by a Windows-based client or intermediary. Furthermore, `c.FormFile("file").Filename` must explicitly be verified before `filepath.Base()` since `filepath.Base` does not safely normalize arbitrary client input for security contexts across platforms.
+**Prevention:** Always use `strings.ContainsAny(name, "/\\")` whenever extracting a raw filename string from user HTTP requests prior to writing or deleting localized filesystem data.
