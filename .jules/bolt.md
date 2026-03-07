@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-07 - Add sync.Pool for FileStreamingLogWriter response chunk writes
+**Learning:** `FileStreamingLogWriter.WriteChunkAsync` in `internal/logging/request_logger.go` was previously duplicating and allocating a new `[]byte` slice for every single streaming chunk via `make([]byte, len(chunk))` before writing to a `[]byte` channel. Since this path is hit for every single token/chunk in streaming requests, this causes high GC pressure.
+**Action:** Implemented a global `sync.Pool` allocating generic `*[]byte` buffers initialized to `4096` capacity. The slice capacity is resized up if needed, then re-sliced down to the exact chunk length. `FileStreamingLogWriter.chunkChan` was updated to `chan *[]byte`, so pointers are passed. Crucially, ownership transfers cleanly and the buffer is returned to the pool (`chunkPool.Put()`) inside `asyncWriter` after the file/buffered write finishes, or within `WriteChunkAsync` if the channel is full. This reduced allocations from 1 alloc/op to 0 alloc/op.

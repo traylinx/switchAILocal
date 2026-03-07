@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -336,7 +337,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		requestBodyPath:  requestBodyPath,
 		responseBodyPath: responseBodyPath,
 		responseBodyFile: responseBodyFile,
-		chunkChan:        make(chan []byte, 100), // Buffered channel for async writes
+		chunkChan:        make(chan *[]byte, 100), // Buffered channel for async writes
 		closeChan:        make(chan struct{}),
 		errorChan:        make(chan error, 1),
 	}
@@ -849,7 +850,7 @@ type FileStreamingLogWriter struct {
 	responseBodyFile *os.File
 
 	// chunkChan is a channel for receiving response chunks to spool.
-	chunkChan chan []byte
+	chunkChan chan *[]byte
 
 	// closeChan is a channel for signaling when the writer is closed.
 	closeChan chan struct{}
@@ -873,6 +874,14 @@ type FileStreamingLogWriter struct {
 	apiResponse []byte
 }
 
+var chunkPool = sync.Pool{
+	New: func() interface{} {
+		// Start with a reasonable buffer size for chunks
+		b := make([]byte, 0, 4096)
+		return &b
+	},
+}
+
 // WriteChunkAsync writes a response chunk asynchronously (non-blocking).
 //
 // Parameters:
@@ -882,15 +891,25 @@ func (w *FileStreamingLogWriter) WriteChunkAsync(chunk []byte) {
 		return
 	}
 
-	// Make a copy of the chunk to avoid data races
-	chunkCopy := make([]byte, len(chunk))
-	copy(chunkCopy, chunk)
+	// Get a buffer from the pool and copy data
+	bufPtr := chunkPool.Get().(*[]byte)
+
+	// Ensure buffer has enough capacity
+	if cap(*bufPtr) < len(chunk) {
+		*bufPtr = make([]byte, len(chunk))
+	} else {
+		// Slice it to the exact length of the incoming chunk
+		*bufPtr = (*bufPtr)[:len(chunk)]
+	}
+
+	copy(*bufPtr, chunk)
 
 	// Non-blocking send
 	select {
-	case w.chunkChan <- chunkCopy:
+	case w.chunkChan <- bufPtr:
 	default:
-		// Channel is full, skip this chunk to avoid blocking
+		// Channel is full, skip this chunk to avoid blocking and return buffer to pool
+		chunkPool.Put(bufPtr)
 	}
 }
 
@@ -1007,17 +1026,21 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 		bufferedWriter = bufio.NewWriter(w.responseBodyFile)
 	}
 
-	for chunk := range w.chunkChan {
+	for chunkPtr := range w.chunkChan {
 		if w.responseBodyFile == nil {
+			chunkPool.Put(chunkPtr)
 			continue
 		}
 
 		var errWrite error
 		if bufferedWriter != nil {
-			_, errWrite = bufferedWriter.Write(chunk)
+			_, errWrite = bufferedWriter.Write(*chunkPtr)
 		} else {
-			_, errWrite = w.responseBodyFile.Write(chunk)
+			_, errWrite = w.responseBodyFile.Write(*chunkPtr)
 		}
+
+		// Return the buffer to the pool after writing
+		chunkPool.Put(chunkPtr)
 
 		if errWrite != nil {
 			select {
