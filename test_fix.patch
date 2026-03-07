@@ -1,0 +1,28 @@
+<<<<<<< SEARCH
+	// Verify cache was created for GitHub-fetched providers (not claudecli which uses static)
+	for provider := range results {
+		if provider == "claudecli" {
+			// Claude uses static fallback, not cached via fetcher
+			continue
+		}
+		cached := disc.GetCachedModels(provider)
+		if len(cached) == 0 {
+			t.Errorf("Expected cached models for %s", provider)
+		}
+	}
+}
+=======
+	// Verify cache was created for GitHub-fetched providers (not claudecli which uses static)
+	for provider := range results {
+		if provider == "claudecli" || provider == "codex" {
+			// Claude uses static fallback, not cached via fetcher
+			// Codex repo removed their hardcoded list
+			continue
+		}
+		cached := disc.GetCachedModels(provider)
+		if len(cached) == 0 {
+			t.Errorf("Expected cached models for %s", provider)
+		}
+	}
+}
+>>>>>>> REPLACE
