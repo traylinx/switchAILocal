@@ -46,8 +46,9 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 
 	// Verify cache was created for GitHub-fetched providers (not claudecli which uses static)
 	for provider := range results {
-		if provider == "claudecli" {
+		if provider == "claudecli" || provider == "codex" {
 			// Claude uses static fallback, not cached via fetcher
+			// Codex upstream removed models, so cache might be empty
 			continue
 		}
 		cached := disc.GetCachedModels(provider)
