@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-08 - Reduce 50MB allocation in Claude SSE non-stream parsing
+**Learning:** `bufio.Scanner` with a massive buffer size (`52_428_800` bytes) allocates that memory for *every* request, creating significant memory pressure and GC overhead in the API gateway. Slicing the `rawJSON` directly using a manual loop with `bytes.IndexByte` achieves the same line-splitting logic with zero allocations.
+**Action:** Always prefer direct slice manipulation via `bytes.IndexByte` over `bufio.Scanner` when parsing byte slices already loaded in memory to eliminate unnecessary buffer allocations.
