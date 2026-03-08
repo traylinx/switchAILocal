@@ -51,15 +51,17 @@ func (s *OAuthServer) Start() error {
 	if s.running {
 		return fmt.Errorf("iflow oauth server already running")
 	}
-	if !s.isPortAvailable() {
-		return fmt.Errorf("port %d is already in use", s.port)
+	addr := fmt.Sprintf(":%d", s.port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth2callback", s.handleCallback)
 
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.port),
+		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -68,12 +70,11 @@ func (s *OAuthServer) Start() error {
 	s.running = true
 
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			s.errChan <- err
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
 	return nil
 }
 
@@ -136,12 +137,3 @@ func (s *OAuthServer) sendResult(res *OAuthResult) {
 	}
 }
 
-func (s *OAuthServer) isPortAvailable() bool {
-	addr := fmt.Sprintf(":%d", s.port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false
-	}
-	_ = listener.Close()
-	return true
-}
