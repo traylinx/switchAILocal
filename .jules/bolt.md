@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-09 - Replace bufio.Scanner with manual bytes.IndexByte to eliminate 50MB buffer allocation
+**Learning:** `bufio.Scanner` defaults to dropping very long lines. When customized to handle long lines via `scanner.Buffer(buf, maxSize)`, it requires allocating that maximum capacity buffer up front (e.g., `make([]byte, 52_428_800)` for 50MB). In a high-throughput API gateway, this massive per-request allocation destroys garbage collection performance and uses extreme memory even for small requests. Using a simple `bytes.IndexByte(data, '\n')` loop achieves the exact same line-splitting logic safely in-place on the existing byte slice without a single memory allocation.
+**Action:** When parsing large or potentially unbounded data streams entirely loaded into memory (`[]byte`), avoid `bufio.Scanner` with max buffer overrides. Use manual slicing with `bytes.IndexByte` and slice manipulation (`data = data[idx+1:]`) to achieve zero-allocation splitting.
