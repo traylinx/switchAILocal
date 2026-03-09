@@ -1,6 +1,10 @@
 package management
 
 import (
+	"strings"
+	"context"
+	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -88,3 +92,132 @@ func TestDownloadAuthFile_PathTraversal(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	// Need to initialize auth manager so it bypasses the "manager unavailable" check
+	h := NewHandler(cfg, "", coreauth.NewManager(&mockStore{}, nil, nil))
+
+	r := gin.New()
+	r.POST("/upload", h.UploadAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid File",
+			queryName:      "valid.json",
+			expectedStatus: http.StatusInternalServerError, // Returns 500 when it attempts to write and parse file, means it bypassed validation
+		},
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected for invalid name
+		},
+		{
+			name:           "Path Traversal with Backslash (Windows style)",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected for invalid name
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("POST", "/upload?name="+tc.queryName, strings.NewReader(""))
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+		})
+	}
+}
+
+func TestDeleteAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	h := NewHandler(cfg, "", coreauth.NewManager(&mockStore{}, nil, nil))
+
+	r := gin.New()
+	r.DELETE("/delete", h.DeleteAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid File",
+			queryName:      "valid.json",
+			expectedStatus: http.StatusNotFound, // Since it fails to find the valid file on disk (it was not created), this proves it passed the 400 validation
+		},
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected for invalid name
+		},
+		{
+			name:           "Path Traversal with Backslash (Windows style)",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected for invalid name
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("DELETE", "/delete?name="+tc.queryName, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+		})
+	}
+}
+
+type mockStore struct {
+	auths []*coreauth.Auth
+}
+
+func (m *mockStore) List(ctx context.Context) ([]*coreauth.Auth, error) {
+	return m.auths, nil
+}
+
+func (m *mockStore) GetByID(ctx context.Context, id string) (*coreauth.Auth, bool, error) {
+	for _, a := range m.auths {
+		if a.ID == id {
+			return a, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (m *mockStore) Save(ctx context.Context, a *coreauth.Auth) (string, error) { return "", nil }
+func (m *mockStore) Delete(ctx context.Context, id string) error { return nil }
+func (m *mockStore) Initialize(ctx context.Context) error { return nil }
+func (m *mockStore) Count(ctx context.Context) (int, error) { return len(m.auths), nil }
+func (m *mockStore) Update(ctx context.Context, a *coreauth.Auth) (*coreauth.Auth, error) { return a, nil }
+func (m *mockStore) GetDisabled(ctx context.Context) ([]*coreauth.Auth, error) { return nil, nil }

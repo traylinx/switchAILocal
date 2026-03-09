@@ -522,6 +522,10 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	if file, err := c.FormFile("file"); err == nil && file != nil {
+		if strings.ContainsAny(file.Filename, "/\\") {
+			c.JSON(400, gin.H{"error": "invalid filename"})
+			return
+		}
 		name := filepath.Base(file.Filename)
 		if !strings.HasSuffix(strings.ToLower(name), ".json") {
 			c.JSON(400, gin.H{"error": "file must be .json"})
@@ -550,7 +554,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -621,7 +625,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
