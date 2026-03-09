@@ -50,6 +50,10 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 			// Claude uses static fallback, not cached via fetcher
 			continue
 		}
+		if provider == "codex" {
+			// Upstream removed hardcoded definitions
+			continue
+		}
 		cached := disc.GetCachedModels(provider)
 		if len(cached) == 0 {
 			t.Errorf("Expected cached models for %s", provider)
