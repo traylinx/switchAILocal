@@ -516,12 +516,24 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 
 // Upload auth file: multipart or raw JSON with ?name=
 func (h *Handler) UploadAuthFile(c *gin.Context) {
+	// Sentinel: Path traversal check should happen early, before other errors like missing authManager
+	name := c.Query("name")
+	if name != "" && strings.ContainsAny(name, "/\\") {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
 	ctx := c.Request.Context()
 	if file, err := c.FormFile("file"); err == nil && file != nil {
+		// Sentinel: Check multipart filename for path traversal too
+		if strings.ContainsAny(file.Filename, "/\\") {
+			c.JSON(400, gin.H{"error": "invalid filename in multipart form"})
+			return
+		}
 		name := filepath.Base(file.Filename)
 		if !strings.HasSuffix(strings.ToLower(name), ".json") {
 			c.JSON(400, gin.H{"error": "file must be .json"})
@@ -549,8 +561,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 		return
 	}
-	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -582,6 +593,13 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 
 // Delete auth files: single by name or all
 func (h *Handler) DeleteAuthFile(c *gin.Context) {
+	// Sentinel: Path traversal check should happen early, before other errors like missing authManager
+	name := c.Query("name")
+	if name != "" && strings.ContainsAny(name, "/\\") {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -620,8 +638,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "deleted": deleted})
 		return
 	}
-	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}

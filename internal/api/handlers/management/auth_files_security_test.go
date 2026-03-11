@@ -51,6 +51,9 @@ func TestDownloadAuthFile_PathTraversal(t *testing.T) {
 	r := gin.New()
 	r.GET("/download", h.DownloadAuthFile)
 
+	r.POST("/upload", h.UploadAuthFile)
+	r.DELETE("/delete", h.DeleteAuthFile)
+
 	tests := []struct {
 		name           string
 		queryName      string
@@ -79,12 +82,29 @@ func TestDownloadAuthFile_PathTraversal(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run("GET_"+tc.name, func(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/download?name="+tc.queryName, nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
-
 			assert.Equal(t, tc.expectedStatus, w.Code)
 		})
+
+		// For Upload and Delete, we just want to ensure path traversal is rejected.
+		// If it's a valid path, it might fail later due to missing auth manager (503), but it shouldn't be 400.
+		if tc.expectedStatus == http.StatusBadRequest {
+			t.Run("POST_"+tc.name, func(t *testing.T) {
+				req, _ := http.NewRequest("POST", "/upload?name="+tc.queryName, nil)
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				assert.Equal(t, tc.expectedStatus, w.Code)
+			})
+
+			t.Run("DELETE_"+tc.name, func(t *testing.T) {
+				req, _ := http.NewRequest("DELETE", "/delete?name="+tc.queryName, nil)
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				assert.Equal(t, tc.expectedStatus, w.Code)
+			})
+		}
 	}
 }
