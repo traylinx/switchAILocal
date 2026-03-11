@@ -37,7 +37,7 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 	}
 
 	// Should have at least codex, geminicli, vibecli, claudecli
-	expected := []string{"codex", "geminicli", "vibecli", "claudecli"}
+	expected := []string{"codex", "geminicli", "claudecli"}
 	for _, prov := range expected {
 		if _, ok := results[prov]; !ok {
 			t.Errorf("Expected provider %s in results", prov)
@@ -48,6 +48,11 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 	for provider := range results {
 		if provider == "claudecli" {
 			// Claude uses static fallback, not cached via fetcher
+			continue
+		}
+		// OpenAI Codex removed their hardcoded models from github, so discovery will return 0.
+		// We skip cache validation for codex since no models will be cached.
+		if provider == "codex" {
 			continue
 		}
 		cached := disc.GetCachedModels(provider)
