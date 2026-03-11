@@ -121,9 +121,9 @@ func TestIntelligenceManagementRoutes(t *testing.T) {
 	// Authentication will fail (401/403) but that's expected - we're just checking the routes exist
 
 	testCases := []struct {
-		name       string
-		method     string
-		path       string
+		name   string
+		method string
+		path   string
 	}{
 		{
 			name:   "GET memory stats",

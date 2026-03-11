@@ -31,7 +31,7 @@ func TestDetectFileReferences(t *testing.T) {
 	t.Run("detects relative paths", func(t *testing.T) {
 		content := "Please analyze ./src/main.go and ./README.md"
 		refs := fa.DetectFileReferences(content)
-		
+
 		paths := make(map[string]bool)
 		for _, ref := range refs {
 			paths[ref.Path] = true
@@ -225,7 +225,7 @@ func TestFileReference(t *testing.T) {
 
 	t.Run("analyzes existing file", func(t *testing.T) {
 		refs := fa.DetectFileReferences("Check sample.txt")
-		
+
 		var found *FileReference
 		for i := range refs {
 			if refs[i].Path == "sample.txt" {
@@ -253,7 +253,7 @@ func TestFileReference(t *testing.T) {
 
 	t.Run("handles non-existent file", func(t *testing.T) {
 		refs := fa.DetectFileReferences("Check nonexistent.go")
-		
+
 		var found *FileReference
 		for i := range refs {
 			if refs[i].Path == "nonexistent.go" {
