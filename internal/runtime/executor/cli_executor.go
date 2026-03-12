@@ -715,6 +715,16 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 		}
 	}
 
+	// Auto-inject YOLO mode for geminicli when running as subprocess
+	// Without this, the gemini CLI restricts tool execution in its workspace sandbox
+	if e.Provider == "geminicli" && !e.hasTTY() {
+		yoloFlag := "-y"
+		if !e.containsFlag(flags, yoloFlag) && !e.containsFlag(e.Args, yoloFlag) {
+			flags = append(flags, yoloFlag)
+			log.Infof("Auto-injected %s for geminicli (no TTY detected)", yoloFlag)
+		}
+	}
+
 	// Build command args: [Control Flags] -> [Default Args] -> [Format Args] -> [Separator] -> [Prompt]
 	// 1. Control flags first (sandbox, auto-approve, session)
 	finalArgs := append([]string{}, flags...)
