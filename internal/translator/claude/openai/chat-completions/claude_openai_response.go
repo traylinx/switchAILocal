@@ -275,16 +275,6 @@ func mapAnthropicStopReasonToOpenAI(anthropicReason string) string {
 // Returns:
 //   - string: An OpenAI-compatible JSON response containing all message content and metadata
 func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) string {
-	chunks := make([][]byte, 0)
-
-	lines := bytes.Split(rawJSON, []byte("\n"))
-	for _, line := range lines {
-		if !bytes.HasPrefix(line, dataTag) {
-			continue
-		}
-		chunks = append(chunks, bytes.TrimSpace(line[5:]))
-	}
-
 	// Base OpenAI non-streaming response template
 	out := `{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`
 
@@ -298,7 +288,24 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 	var reasoningParts []string
 	toolCallsAccumulator := make(map[int]*ToolCallAccumulator)
 
-	for _, chunk := range chunks {
+	// Use manual byte loop to find chunks, avoiding splitting the entire response
+	remaining := rawJSON
+	for len(remaining) > 0 {
+		var line []byte
+		idx := bytes.IndexByte(remaining, '\n')
+		if idx == -1 {
+			line = remaining
+			remaining = nil
+		} else {
+			line = remaining[:idx]
+			remaining = remaining[idx+1:]
+		}
+
+		if !bytes.HasPrefix(line, dataTag) {
+			continue
+		}
+
+		chunk := bytes.TrimSpace(line[5:])
 		root := gjson.ParseBytes(chunk)
 		eventType := root.Get("type").String()
 
