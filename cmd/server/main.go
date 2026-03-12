@@ -590,6 +590,20 @@ func main() {
 	}
 	managementasset.SetCurrentConfig(cfg)
 
+	// Create billboard directory if enabled
+	if cfg.Billboard.Enabled && cfg.Billboard.BaseDir != "" {
+		if billboardDir, errExpand := util.ExpandPath(cfg.Billboard.BaseDir); errExpand != nil {
+			log.Warnf("failed to expand billboard directory path: %v", errExpand)
+		} else {
+			if errMkdir := os.MkdirAll(billboardDir, 0700); errMkdir != nil {
+				log.Warnf("failed to create billboard directory %s: %v", billboardDir, errMkdir)
+			} else {
+				cfg.Billboard.BaseDir = billboardDir
+				log.Infof("Billboard directory ready: %s", billboardDir)
+			}
+		}
+	}
+
 	// Create login options to be used in authentication flows.
 	options := &cmd.LoginOptions{
 		NoBrowser: noBrowser,

@@ -91,6 +91,10 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 				for _, tool := range tools {
 					// 1. Register Executor
 					exec := executor.NewLocalCLIExecutor(tool)
+					// Wire billboard directory for CLI requests
+					if cfg.Billboard.Enabled && cfg.Billboard.BaseDir != "" {
+						exec.BillboardDir = cfg.Billboard.BaseDir
+					}
 					s.CoreManager().RegisterExecutor(exec)
 
 					// 2. Register System Auth Record

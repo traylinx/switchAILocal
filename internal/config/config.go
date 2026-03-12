@@ -123,6 +123,9 @@ type Config struct {
 	// Hooks configures the event-driven automation system.
 	Hooks HooksConfig `yaml:"hooks" json:"hooks"`
 
+	// Billboard configures the shared working directory for CLI provider requests.
+	Billboard BillboardConfig `yaml:"billboard" json:"billboard"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
@@ -249,6 +252,17 @@ type MemoryConfig struct {
 	Compression bool `yaml:"compression" json:"compression"`
 }
 
+// BillboardConfig configures the shared working directory for CLI provider requests.
+// When enabled, a system prompt is injected into CLI requests instructing the model
+// to use a standard billboard folder for file operations when no specific path is provided.
+type BillboardConfig struct {
+	// Enabled toggles billboard system prompt injection for CLI providers.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// BaseDir is the shared billboard directory path.
+	// Default: "~/.switchailocal/billboard"
+	BaseDir string `yaml:"base-dir" json:"base-dir"`
+}
 
 // AmpModelMapping defines a model name mapping for Amp CLI requests.
 // When Amp requests a model that isn't available locally, this mapping
@@ -608,6 +622,10 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Hooks.Enabled = false // Disabled by default (opt-in)
 	cfg.Hooks.HooksDir = ".switchailocal/hooks"
 	cfg.Hooks.HotReload = true
+
+	// Set Billboard defaults
+	cfg.Billboard.Enabled = false // Disabled by default (opt-in)
+	cfg.Billboard.BaseDir = "~/.switchailocal/billboard"
 
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {

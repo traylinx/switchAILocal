@@ -334,3 +334,13 @@ superbrain:
 #     - "*-preview"
 #   ollama:
 #     - "llama2"
+
+# =============================================================================
+# 10. BILLBOARD (SHARED WORKING DIRECTORY)
+# =============================================================================
+
+# When enabled, CLI provider requests (geminicli) receive a system prompt instructing
+# the model to use this shared folder for file operations when no specific path is given.
+billboard:
+  enabled: false
+  base-dir: "~/.switchailocal/billboard"

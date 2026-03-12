@@ -98,6 +98,7 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, auth *switchailocalauth
 	basePayload = util.StripThinkingConfigIfUnsupported(req.Model, basePayload)
 	basePayload = fixGeminiCLIImageAspectRatio(req.Model, basePayload)
 	basePayload = applyPayloadConfigWithRoot(e.cfg, req.Model, "gemini", "request", basePayload)
+	basePayload = applyBillboardSystemPrompt(e.cfg, basePayload)
 
 	action := "generateContent"
 	if req.Metadata != nil {
@@ -243,6 +244,7 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 	basePayload = util.StripThinkingConfigIfUnsupported(req.Model, basePayload)
 	basePayload = fixGeminiCLIImageAspectRatio(req.Model, basePayload)
 	basePayload = applyPayloadConfigWithRoot(e.cfg, req.Model, "gemini", "request", basePayload)
+	basePayload = applyBillboardSystemPrompt(e.cfg, basePayload)
 
 	projectID := resolveGeminiProjectID(auth)
 
@@ -865,4 +867,35 @@ func parseRetryDelay(errorBody []byte) (*time.Duration, error) {
 	}
 
 	return nil, fmt.Errorf("no RetryInfo found")
+}
+
+// applyBillboardSystemPrompt injects a billboard folder system prompt for CLI requests.
+// When billboard is enabled, it appends an instruction to the system_instruction
+// telling the model to use the billboard folder for file operations when no specific path is provided.
+func applyBillboardSystemPrompt(cfg *config.Config, payload []byte) []byte {
+	if cfg == nil || !cfg.Billboard.Enabled || cfg.Billboard.BaseDir == "" {
+		return payload
+	}
+
+	billboardPrompt := fmt.Sprintf(
+		"IMPORTANT: When the user's query references files or folders without specifying an absolute path, "+
+			"or asks you to create, read, write, or manage files without a specific location, "+
+			"use the following default working directory for all file operations: %s "+
+			"This is the shared billboard folder. Always use this path unless the user explicitly provides a different path.",
+		cfg.Billboard.BaseDir,
+	)
+
+	// Check if system_instruction already exists
+	existing := gjson.GetBytes(payload, "system_instruction.parts")
+	if existing.Exists() && existing.IsArray() {
+		// Append to existing system_instruction parts
+		idx := len(existing.Array())
+		payload, _ = sjson.SetBytes(payload, fmt.Sprintf("system_instruction.parts.%d.text", idx), billboardPrompt)
+	} else {
+		// Create new system_instruction
+		payload, _ = sjson.SetBytes(payload, "system_instruction.role", "user")
+		payload, _ = sjson.SetBytes(payload, "system_instruction.parts.0.text", billboardPrompt)
+	}
+
+	return payload
 }

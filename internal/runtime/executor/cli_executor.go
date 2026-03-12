@@ -43,6 +43,10 @@ type LocalCLIExecutor struct {
 	YoloFlag            string
 	SessionFlag         string
 
+	// Billboard shared working directory for CLI requests.
+	// When non-empty, a system instruction is prepended to the prompt.
+	BillboardDir string
+
 	// Security fields
 	PositionalArgsSeparator string
 }
@@ -88,6 +92,9 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to extract prompt: %w", err)
 	}
 
+	// Inject billboard system prompt for CLI requests
+	prompt = e.applyBillboardPrompt(prompt)
+
 	modelName := extractModelName(req)
 
 	// Extract CLI options from extra_body FIRST
@@ -105,6 +112,11 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	}
 
 	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
+
+	// Set working directory to billboard folder to avoid scanning project files
+	if e.BillboardDir != "" {
+		cmd.Dir = e.BillboardDir
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -278,6 +290,9 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 		return nil, fmt.Errorf("failed to extract prompt: %w", err)
 	}
 
+	// Inject billboard system prompt for CLI requests
+	prompt = e.applyBillboardPrompt(prompt)
+
 	modelName := extractModelName(req)
 
 	// Extract CLI options from extra_body FIRST
@@ -290,6 +305,11 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	}
 
 	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
+
+	// Set working directory to billboard folder to avoid scanning project files
+	if e.BillboardDir != "" {
+		cmd.Dir = e.BillboardDir
+	}
 
 	if e.UseStdin {
 		attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
@@ -803,4 +823,23 @@ func (e *LocalCLIExecutor) buildAttachmentPrefix(cliOpts *CLIOptions) (string, e
 		attachmentPrefix += e.AttachmentPrefix + path + " "
 	}
 	return attachmentPrefix, nil
+}
+
+// applyBillboardPrompt prepends a billboard system instruction to the prompt when configured.
+// This tells the CLI model to use the shared billboard folder for file operations
+// when no specific path is provided by the user.
+func (e *LocalCLIExecutor) applyBillboardPrompt(prompt string) string {
+	if e.BillboardDir == "" {
+		return prompt
+	}
+
+	billboardInstruction := fmt.Sprintf(
+		"[System]: IMPORTANT: When the user's query references files or folders without specifying an absolute path, "+
+			"or asks you to create, read, write, or manage files without a specific location, "+
+			"use the following default working directory for all file operations: %s "+
+			"This is the shared billboard folder. Always use this path unless the user explicitly provides a different path.\n\n",
+		e.BillboardDir,
+	)
+
+	return billboardInstruction + prompt
 }
