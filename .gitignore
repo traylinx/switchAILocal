@@ -42,6 +42,13 @@ config.yaml
 /auths/*
 !/auths/.gitkeep
 
+# Sensitive runtime data - NEVER commit to open source repo
+# Local state directories (memory, usage, analytics, billboard)
+.switchailocal/
+billboard/
+# Memory and usage logs
+*.jsonl
+
 # Logs
 logs/
 *.log
