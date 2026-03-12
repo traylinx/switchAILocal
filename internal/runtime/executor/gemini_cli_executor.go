@@ -878,10 +878,11 @@ func applyBillboardSystemPrompt(cfg *config.Config, payload []byte) []byte {
 	}
 
 	billboardPrompt := fmt.Sprintf(
-		"IMPORTANT: When the user's query references files or folders without specifying an absolute path, "+
-			"or asks you to create, read, write, or manage files without a specific location, "+
-			"use the following default working directory for all file operations: %s "+
-			"This is the shared billboard folder. Always use this path unless the user explicitly provides a different path.",
+		"IMPORTANT: The directory %s is your default working directory (the 'billboard' folder). "+
+			"When the user asks you to create or read files without specifying a path, you should default to this folder. "+
+			"HOWEVER, THIS IS NOT A STRICT SANDBOX. You are FULLY AUTHORIZED to read, write, and execute scripts or tools in ANY other absolute path "+
+			"(such as ~/HARVEY/skills/ directories) if the user or your system instructions request it. "+
+			"Do not restrict your execution to the billboard folder if another path is needed or implied by a skill.",
 		cfg.Billboard.BaseDir,
 	)
 
