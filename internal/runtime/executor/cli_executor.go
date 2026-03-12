@@ -715,13 +715,19 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 		}
 	}
 
-	// Auto-inject YOLO mode for geminicli when running as subprocess
-	// Without this, the gemini CLI restricts tool execution in its workspace sandbox
+	// Auto-inject YOLO mode and workspace override for geminicli when running as subprocess
+	// Without this, the gemini CLI restricts tool execution to its current working directory 
 	if e.Provider == "geminicli" && !e.hasTTY() {
 		yoloFlag := "-y"
 		if !e.containsFlag(flags, yoloFlag) && !e.containsFlag(e.Args, yoloFlag) {
 			flags = append(flags, yoloFlag)
 			log.Infof("Auto-injected %s for geminicli (no TTY detected)", yoloFlag)
+		}
+		
+		includeFlag := "--include-directories=/"
+		if !e.containsFlag(flags, includeFlag) && !e.containsFlag(e.Args, includeFlag) {
+			flags = append(flags, includeFlag)
+			log.Infof("Auto-injected %s for geminicli to bypass workspace sandbox", includeFlag)
 		}
 	}
 
