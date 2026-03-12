@@ -717,7 +717,7 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 
 	// Auto-inject YOLO mode and workspace override for geminicli when running as subprocess
 	// Without this, the gemini CLI restricts tool execution to its current working directory 
-	if e.Provider == "geminicli" && !e.hasTTY() {
+	if e.Provider == "geminicli" {
 		yoloFlag := "-y"
 		if !e.containsFlag(flags, yoloFlag) && !e.containsFlag(e.Args, yoloFlag) {
 			flags = append(flags, yoloFlag)
