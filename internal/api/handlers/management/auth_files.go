@@ -516,17 +516,12 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 
 // Upload auth file: multipart or raw JSON with ?name=
 func (h *Handler) UploadAuthFile(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
 	ctx := c.Request.Context()
 	if file, err := c.FormFile("file"); err == nil && file != nil {
-		// Sentinel: Explicitly validate the filename from multipart form data to prevent path traversal
-		if strings.ContainsAny(file.Filename, "/\\") {
-			c.JSON(400, gin.H{"error": "invalid file name"})
-			return
-		}
-		if h.authManager == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
-			return
-		}
 		name := filepath.Base(file.Filename)
 		if !strings.HasSuffix(strings.ToLower(name), ".json") {
 			c.JSON(400, gin.H{"error": "file must be .json"})
@@ -555,13 +550,9 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	// Sentinel: Explicit validation using strings.ContainsAny for cross-platform coverage early in request lifecycle
+	// Sentinel: Ensure consistent cross-platform path traversal protection
 	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
-		return
-	}
-	if h.authManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
 	if !strings.HasSuffix(strings.ToLower(name), ".json") {
@@ -592,12 +583,12 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 
 // Delete auth files: single by name or all
 func (h *Handler) DeleteAuthFile(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
 	ctx := c.Request.Context()
 	if all := c.Query("all"); all == "true" || all == "1" || all == "*" {
-		if h.authManager == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
-			return
-		}
 		entries, err := os.ReadDir(h.cfg.AuthDir)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
@@ -631,13 +622,9 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	// Sentinel: Ensure consistent cross-platform path traversal protection for delete endpoint
+	// Sentinel: Ensure consistent cross-platform path traversal protection
 	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
-		return
-	}
-	if h.authManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
 	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
