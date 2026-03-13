@@ -30,7 +30,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			prompt:     "-dangerous-flag",
 			cliOpts:    nil,
 			formatArgs: nil,
-			wantArgs:   []string{"--", "-dangerous-flag"},
+			wantArgs:   []string{"--no-interactive", "-y", "--include-directories=/", "--", "-dangerous-flag"},
 		},
 		{
 			name: "Gemini CLI - Separator with valid prompt",
@@ -42,7 +42,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			prompt:     "hello world",
 			cliOpts:    nil,
 			formatArgs: nil,
-			wantArgs:   []string{"--", "hello world"},
+			wantArgs:   []string{"--no-interactive", "-y", "--include-directories=/", "--", "hello world"},
 		},
 		{
 			name: "Vibe CLI - No Separator (Default)",
@@ -78,7 +78,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			},
 			formatArgs: []string{"--json"},
 			// Expected order: [Control Flags] -> [Default Args] -> [Format Args] -> [Separator] -> [Prompt]
-			wantArgs: []string{"-s", "--json", "--", "@test.txt analyze this"},
+			wantArgs: []string{"-s", "--no-interactive", "-y", "--include-directories=/", "--json", "--", "@test.txt analyze this"},
 		},
 		{
 			name: "Gemini CLI - Separator with user flags",
@@ -93,7 +93,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 				Flags: CLIFlags{Sandbox: true},
 			},
 			formatArgs: nil,
-			wantArgs:   []string{"-s", "--", "hello"},
+			wantArgs:   []string{"-s", "--no-interactive", "-y", "--include-directories=/", "--", "hello"},
 		},
 	}
 
