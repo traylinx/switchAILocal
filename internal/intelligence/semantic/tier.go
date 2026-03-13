@@ -49,6 +49,7 @@ type MatchResult struct {
 	LatencyMs int64 `json:"latency_ms"`
 }
 
+
 // EmbeddingEngine defines the interface for computing embeddings.
 // This allows the semantic tier to work with the embedding engine.
 type EmbeddingEngine interface {
@@ -81,8 +82,8 @@ type Tier struct {
 	mu sync.RWMutex
 
 	// metrics for tracking
-	matchCount     int64
-	hitCount       int64
+	matchCount    int64
+	hitCount      int64
 	totalLatencyMs int64
 }
 
@@ -252,6 +253,7 @@ func (t *Tier) MatchIntent(query string) (*MatchResult, error) {
 	}, nil
 }
 
+
 // GetIntents returns all loaded intents.
 //
 // Returns:
@@ -313,13 +315,13 @@ func (t *Tier) GetMetrics() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"match_count":    t.matchCount,
-		"hit_count":      t.hitCount,
-		"hit_rate":       hitRate,
-		"avg_latency_ms": avgLatency,
-		"intent_count":   len(t.intents),
-		"threshold":      t.threshold,
-		"enabled":        t.enabled,
+		"match_count":      t.matchCount,
+		"hit_count":        t.hitCount,
+		"hit_rate":         hitRate,
+		"avg_latency_ms":   avgLatency,
+		"intent_count":     len(t.intents),
+		"threshold":        t.threshold,
+		"enabled":          t.enabled,
 	}
 }
 
@@ -341,6 +343,7 @@ func (t *Tier) Shutdown() error {
 
 	return nil
 }
+
 
 // MatchIntentInterface matches an intent and returns the result as an interface type.
 // This is used by the intelligence service to avoid circular imports.

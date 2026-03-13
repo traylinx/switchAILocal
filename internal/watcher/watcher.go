@@ -33,29 +33,29 @@ type authDirProvider interface {
 
 // Watcher manages file watching for configuration and authentication files
 type Watcher struct {
-	configPath               string
-	authDir                  string
-	config                   *config.Config
-	clientsMutex             sync.RWMutex
-	configReloadMu           sync.Mutex
-	configReloadTimer        *time.Timer
-	reloadCallback           func(*config.Config)
+	configPath        string
+	authDir           string
+	config            *config.Config
+	clientsMutex      sync.RWMutex
+	configReloadMu    sync.Mutex
+	configReloadTimer *time.Timer
+	reloadCallback    func(*config.Config)
 	superbrainReloadCallback func(*config.SuperbrainConfig)
-	watcher                  *fsnotify.Watcher
-	lastAuthHashes           map[string]string
-	lastRemoveTimes          map[string]time.Time
-	lastConfigHash           string
-	authQueue                chan<- AuthUpdate
-	currentAuths             map[string]*coreauth.Auth
-	runtimeAuths             map[string]*coreauth.Auth
-	dispatchMu               sync.Mutex
-	dispatchCond             *sync.Cond
-	pendingUpdates           map[string]AuthUpdate
-	pendingOrder             []string
-	dispatchCancel           context.CancelFunc
-	storePersister           storePersister
-	mirroredAuthDir          string
-	oldConfigYaml            []byte
+	watcher           *fsnotify.Watcher
+	lastAuthHashes    map[string]string
+	lastRemoveTimes   map[string]time.Time
+	lastConfigHash    string
+	authQueue         chan<- AuthUpdate
+	currentAuths      map[string]*coreauth.Auth
+	runtimeAuths      map[string]*coreauth.Auth
+	dispatchMu        sync.Mutex
+	dispatchCond      *sync.Cond
+	pendingUpdates    map[string]AuthUpdate
+	pendingOrder      []string
+	dispatchCancel    context.CancelFunc
+	storePersister    storePersister
+	mirroredAuthDir   string
+	oldConfigYaml     []byte
 }
 
 // AuthUpdateAction represents the type of change detected in auth sources.

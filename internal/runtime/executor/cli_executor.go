@@ -720,7 +720,7 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 	if e.Provider == "geminicli" {
 		yoloFlag := "-y"
 		if !e.containsFlag(flags, yoloFlag) && !e.containsFlag(e.Args, yoloFlag) {
-			flags = append(flags, "--no-interactive")
+                        flags = append(flags, "--no-interactive")
 			flags = append(flags, yoloFlag)
 			log.Infof("Auto-injected %s for geminicli (no TTY detected)", yoloFlag)
 		}

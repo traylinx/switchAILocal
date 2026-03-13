@@ -182,6 +182,7 @@ func (fa *FileAnalyzer) analyzeReference(path string) FileReference {
 	return ref
 }
 
+
 // scanDirectory recursively scans a directory and estimates total tokens.
 // Returns the total estimated tokens and file count.
 func (fa *FileAnalyzer) scanDirectory(dirPath string) (int, int) {

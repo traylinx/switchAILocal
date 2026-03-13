@@ -364,7 +364,7 @@ func (rh *RestartHistory) ToHealingActions() []types.HealingAction {
 
 	for _, attempt := range rh.Attempts {
 		action := types.HealingAction{
-			ActionType: "restart_with_flags",
+			ActionType:  "restart_with_flags",
 			Description: fmt.Sprintf("Restart attempt %d/%d with flags: %s",
 				attempt.AttemptNumber, rh.TotalRestarts,
 				strings.Join(attempt.Strategy.CorrectiveFlags, " ")),

@@ -928,6 +928,7 @@ func (cfg *Config) SanitizeHooks() {
 	// No additional validation needed for boolean
 }
 
+
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)
 	trimmed = strings.Trim(trimmed, "/")

@@ -26,8 +26,8 @@ import (
 // It provides three routing tiers: Reflex (fast rules), Semantic (intent matching),
 // and Cognitive (LLM classification), with learned preferences from memory.
 type CortexRouter struct {
-	config         *config.IntelligenceConfig
-	memoryManager  memory.MemoryManager
+	config        *config.IntelligenceConfig
+	memoryManager memory.MemoryManager
 	learningEngine *learning.LearningEngine
 
 	// Services from intelligence service

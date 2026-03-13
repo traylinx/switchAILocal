@@ -127,7 +127,7 @@ func TestLearningIntegration_ConfidenceAdjustment(t *testing.T) {
 
 	// Test 2: Confidence adjustment with negative bias
 	decision.SelectedModel = "openai:gpt-4"
-	decision.Intent = "general"                                       // No learned preference
+	decision.Intent = "general" // No learned preference
 	decision.Timestamp = time.Date(2024, 1, 1, 23, 0, 0, 0, time.UTC) // 11 PM - off hours
 
 	adjustedConfidence = router.adjustConfidenceWithMemory(decision)
@@ -160,13 +160,13 @@ func TestLearningIntegration_TimePatternMatching(t *testing.T) {
 		hour     int
 		expected bool
 	}{
-		{"coding", 14, true},     // 2 PM - work hours
-		{"coding", 2, false},     // 2 AM - off hours
-		{"chat", 20, true},       // 8 PM - evening
-		{"chat", 10, false},      // 10 AM - work hours
-		{"reasoning", 12, true},  // 12 PM - focused hours
+		{"coding", 14, true},   // 2 PM - work hours
+		{"coding", 2, false},   // 2 AM - off hours
+		{"chat", 20, true},     // 8 PM - evening
+		{"chat", 10, false},    // 10 AM - work hours
+		{"reasoning", 12, true}, // 12 PM - focused hours
 		{"reasoning", 22, false}, // 10 PM - late
-		{"unknown", 14, false},   // Unknown intent
+		{"unknown", 14, false},  // Unknown intent
 	}
 
 	for _, tc := range testCases {

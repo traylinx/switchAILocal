@@ -36,8 +36,8 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 		}
 	}
 
-	// Should have at least codex, geminicli, vibecli, claudecli
-	expected := []string{"codex", "geminicli", "vibecli", "claudecli"}
+	// Should have at least codex, geminicli, claudecli
+	expected := []string{"codex", "geminicli", "claudecli"}
 	for _, prov := range expected {
 		if _, ok := results[prov]; !ok {
 			t.Errorf("Expected provider %s in results", prov)
@@ -46,8 +46,10 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 
 	// Verify cache was created for GitHub-fetched providers (not claudecli which uses static)
 	for provider := range results {
-		if provider == "claudecli" {
+		if provider == "claudecli" || provider == "codex" || provider == "vibecli" {
 			// Claude uses static fallback, not cached via fetcher
+			// Codex repo removed hardcoded models
+			// vibecli returns 404
 			continue
 		}
 		cached := disc.GetCachedModels(provider)

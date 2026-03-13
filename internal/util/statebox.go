@@ -18,10 +18,10 @@ import (
 // It provides centralized path resolution for all mutable application data,
 // ensuring consistent handling of environment variables and preventing ghost directories.
 type StateBox struct {
-	rootPath      string
-	readOnly      bool
-	legacyAuthDir string // For backward compatibility with auth-dir config
-	mu            sync.RWMutex
+	rootPath       string
+	readOnly       bool
+	legacyAuthDir  string // For backward compatibility with auth-dir config
+	mu             sync.RWMutex
 }
 
 // NewStateBox creates a new StateBox instance.
