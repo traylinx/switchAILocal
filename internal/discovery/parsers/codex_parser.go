@@ -99,3 +99,25 @@ func (p *CodexParser) Parse(content []byte) ([]*registry.ModelInfo, error) {
 
 	return models, nil
 }
+
+// StaticModels returns a hardcoded list of codex models.
+func (p *CodexParser) StaticModels() []*registry.ModelInfo {
+	return []*registry.ModelInfo{
+		{
+			ID:          "gpt-4o-codex",
+			Object:      "model",
+			OwnedBy:     "openai",
+			Type:        "codex",
+			DisplayName: "gpt-4o-codex",
+			Created:     time.Now().Unix(),
+		},
+		{
+			ID:          "o1-codex",
+			Object:      "model",
+			OwnedBy:     "openai",
+			Type:        "codex",
+			DisplayName: "o1-codex",
+			Created:     time.Now().Unix(),
+		},
+	}
+}

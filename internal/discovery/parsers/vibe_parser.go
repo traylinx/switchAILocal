@@ -90,3 +90,25 @@ func (p *VibeParser) Parse(content []byte) ([]*registry.ModelInfo, error) {
 
 	return models, nil
 }
+
+// StaticModels returns a hardcoded list of mistral vibe models.
+func (p *VibeParser) StaticModels() []*registry.ModelInfo {
+	return []*registry.ModelInfo{
+		{
+			ID:          "pixtral-large-latest",
+			Object:      "model",
+			OwnedBy:     "mistral",
+			Type:        "vibe",
+			DisplayName: "pixtral-large-latest",
+			Created:     time.Now().Unix(),
+		},
+		{
+			ID:          "mistral-large-latest",
+			Object:      "model",
+			OwnedBy:     "mistral",
+			Type:        "vibe",
+			DisplayName: "mistral-large-latest",
+			Created:     time.Now().Unix(),
+		},
+	}
+}

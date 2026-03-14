@@ -39,20 +39,8 @@ const GracePeriodDays = 7
 // GitHubSources contains the verified GitHub URLs for CLI model discovery.
 var GitHubSources = []SourceConfig{
 	{
-		ProviderID: constant.Codex,
-		URL:        "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/src/models_manager/model_presets.rs",
-		SourceType: "github",
-		TTLSeconds: DefaultGitHubTTL,
-	},
-	{
 		ProviderID: constant.GeminiCLI,
 		URL:        "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts",
-		SourceType: "github",
-		TTLSeconds: DefaultGitHubTTL,
-	},
-	{
-		ProviderID: constant.VibeCLI,
-		URL:        "https://raw.githubusercontent.com/mistralai/mistral-vibe/main/vibe/core/config.py",
 		SourceType: "github",
 		TTLSeconds: DefaultGitHubTTL,
 	},
@@ -78,12 +66,8 @@ func NewDiscoverer(cacheDir string) (*Discoverer, error) {
 	for i, src := range GitHubSources {
 		sources[i] = src
 		switch src.ProviderID {
-		case "codex":
-			sources[i].Parser = parsers.NewCodexParser()
 		case constant.GeminiCLI:
 			sources[i].Parser = parsers.NewGeminiParser()
-		case constant.VibeCLI:
-			sources[i].Parser = parsers.NewVibeParser()
 		}
 	}
 
@@ -145,6 +129,14 @@ func (d *Discoverer) DiscoverAll(ctx context.Context) (map[string][]*registry.Mo
 	// Add Claude models using static fallback
 	claudeParser := parsers.NewClaudeParser()
 	results[constant.ClaudeCLI] = claudeParser.StaticModels()
+
+	// Add Codex models using static fallback
+	codexParser := parsers.NewCodexParser()
+	results[constant.Codex] = codexParser.StaticModels()
+
+	// Add Mistral Vibe models using static fallback
+	vibeParser := parsers.NewVibeParser()
+	results[constant.VibeCLI] = vibeParser.StaticModels()
 
 	return results, nil
 }

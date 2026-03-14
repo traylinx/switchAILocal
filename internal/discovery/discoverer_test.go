@@ -44,15 +44,14 @@ func TestDiscoverer_DiscoverAll_Integration(t *testing.T) {
 		}
 	}
 
-	// Verify cache was created for GitHub-fetched providers (not claudecli which uses static)
+	// Verify cache was created for GitHub-fetched providers
 	for provider := range results {
-		if provider == "claudecli" {
-			// Claude uses static fallback, not cached via fetcher
-			continue
-		}
-		cached := disc.GetCachedModels(provider)
-		if len(cached) == 0 {
-			t.Errorf("Expected cached models for %s", provider)
+		// Only geminicli uses GitHub fetcher right now. The others use static fallback.
+		if provider == "geminicli" {
+			cached := disc.GetCachedModels(provider)
+			if len(cached) == 0 {
+				t.Errorf("Expected cached models for %s", provider)
+			}
 		}
 	}
 }
