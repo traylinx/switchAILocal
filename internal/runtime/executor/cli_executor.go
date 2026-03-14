@@ -361,8 +361,12 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	}
 
 	// Apply CLI execution timeout to prevent indefinite blocking
+	// (e.g. when upstream CLIs retry 429s with exponential backoff)
 	execCtx, execCancel := context.WithTimeout(ctx, defaultCLITimeout)
-	defer execCancel()
+	// NOTE: Do NOT defer execCancel() here — ExecuteStream returns a channel
+	// and the subprocess runs in a goroutine. Deferring cancel here would
+	// kill the context as soon as this function returns, before the goroutine
+	// can read any output. Instead, execCancel is called in the goroutine cleanup.
 
 	cmd := exec.CommandContext(execCtx, e.BinaryPath, finalArgs...)
 
@@ -377,6 +381,7 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	if e.UseStdin {
 		attachmentPrefix, err := e.buildAttachmentPrefix(cliOpts)
 		if err != nil {
+			execCancel()
 			return nil, err
 		}
 		cmd.Stdin = strings.NewReader(attachmentPrefix + prompt)
@@ -384,18 +389,21 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		execCancel()
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	log.Debugf("Executing CLI (streaming): %s %v", e.BinaryPath, finalArgs)
 
 	if err := cmd.Start(); err != nil {
+		execCancel()
 		return nil, fmt.Errorf("failed to start CLI: %w", err)
 	}
 
 	ch := make(chan switchailocalexecutor.StreamChunk)
 	go func() {
 		defer close(ch)
+		defer execCancel()
 		defer func() {
 			// Ensure process is killed and waited for cleanup
 			if cmd.Process != nil {
@@ -793,10 +801,15 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 			if idx := strings.Index(cliModel, ":"); idx >= 0 {
 				cliModel = cliModel[idx+1:]
 			}
-			modelFlag := "--model=" + cliModel
-			if !e.containsFlag(flags, "--model") && !e.containsFlag(e.Args, "--model") && !e.containsFlag(flags, "-m") && !e.containsFlag(e.Args, "-m") {
-				flags = append(flags, modelFlag)
-				log.Infof("Auto-injected %s for geminicli", modelFlag)
+			// Only inject --model if the stripped model name is non-empty.
+			// When model is "geminicli:" (bare provider prefix), the CLI
+			// should use its own default model.
+			if cliModel != "" {
+				modelFlag := "--model=" + cliModel
+				if !e.containsFlag(flags, "--model") && !e.containsFlag(e.Args, "--model") && !e.containsFlag(flags, "-m") && !e.containsFlag(e.Args, "-m") {
+					flags = append(flags, modelFlag)
+					log.Infof("Auto-injected %s for geminicli", modelFlag)
+				}
 			}
 		}
 		// Scope --include-directories to the working directory (billboard or sandbox)
