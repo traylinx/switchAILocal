@@ -99,7 +99,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotArgs, err := tt.executor.buildFinalArgs(tt.prompt, tt.cliOpts, tt.formatArgs)
+			gotArgs, err := tt.executor.buildFinalArgs(tt.prompt, tt.cliOpts, tt.formatArgs, "")
 
 			if tt.wantErrorContains != "" {
 				if err == nil {

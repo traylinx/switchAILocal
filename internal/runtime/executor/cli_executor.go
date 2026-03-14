@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/cli"
@@ -23,6 +25,48 @@ import (
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
 )
+
+// defaultCLITimeout is the maximum time a CLI subprocess is allowed to run.
+// This prevents indefinite blocking when CLIs retry upstream errors with backoff.
+const defaultCLITimeout = 5 * time.Minute
+
+// cliSandboxDir is the default empty directory used as CWD for CLI subprocess execution.
+// Using an empty folder prevents CLIs from scanning project files and wasting tokens.
+const cliSandboxDir = ".switchailocal/cli-sandbox"
+
+var (
+	cliSandboxPath string
+	cliSandboxOnce sync.Once
+)
+
+// ensureCLISandbox creates and returns the path to a dedicated empty directory
+// for CLI subprocess execution. The directory is created once per process lifetime.
+func ensureCLISandbox() string {
+	cliSandboxOnce.Do(func() {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Warnf("Failed to get home directory for CLI sandbox: %v", err)
+			return
+		}
+		cliSandboxPath = filepath.Join(home, cliSandboxDir)
+		if err := os.MkdirAll(cliSandboxPath, 0700); err != nil {
+			log.Warnf("Failed to create CLI sandbox directory %s: %v", cliSandboxPath, err)
+			cliSandboxPath = ""
+		}
+	})
+	return cliSandboxPath
+}
+
+
+// CLIExecutionError carries an HTTP status code through the executor → handler chain.
+// The handler layer checks for the StatusCode() interface to set the HTTP response status.
+type CLIExecutionError struct {
+	Status  int
+	Message string
+}
+
+func (e *CLIExecutionError) Error() string   { return e.Message }
+func (e *CLIExecutionError) StatusCode() int { return e.Status }
 
 // LocalCLIExecutor executes prompts by calling a local binary.
 type LocalCLIExecutor struct {
@@ -101,7 +145,7 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	cliOpts, _ := extractCLIOptions(req.Payload)
 
 	// Build arguments using helper
-	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.JSONFormatArgs)
+	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.JSONFormatArgs, modelName)
 	if err != nil {
 		return switchailocalexecutor.Response{}, err
 	}
@@ -111,11 +155,20 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 		return e.executeRemote(ctx, remoteHost, e.BinaryPath, finalArgs, modelName)
 	}
 
-	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
+	// Apply CLI execution timeout to prevent indefinite blocking
+	// (e.g. when upstream CLIs retry 429s with exponential backoff)
+	execCtx, execCancel := context.WithTimeout(ctx, defaultCLITimeout)
+	defer execCancel()
 
-	// Set working directory to billboard folder to avoid scanning project files
+	cmd := exec.CommandContext(execCtx, e.BinaryPath, finalArgs...)
+
+	// Set working directory to an empty folder to minimize token usage.
+	// CLIs scan the CWD for context — using an empty sandbox avoids wasting tokens.
+	// Billboard dir takes priority; fallback to a dedicated empty sandbox.
 	if e.BillboardDir != "" {
 		cmd.Dir = e.BillboardDir
+	} else {
+		cmd.Dir = ensureCLISandbox()
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -133,7 +186,15 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 	log.Debugf("Executing CLI: %s %v", e.BinaryPath, finalArgs)
 
 	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
+		stderrStr := stderr.String()
+
+		// Classify the error from stderr content to return proper HTTP status
+		if status, cleanMsg := classifyCLIError(stderrStr, err); status != 0 {
+			log.Warnf("CLI %s classified error: status=%d msg=%s", e.Provider, status, cleanMsg)
+			return switchailocalexecutor.Response{}, &CLIExecutionError{Status: status, Message: cleanMsg}
+		}
+
+		errMsg := strings.TrimSpace(stderrStr)
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
@@ -156,14 +217,9 @@ func (e *LocalCLIExecutor) Execute(ctx context.Context, auth *sdkauth.Auth, req 
 			return switchailocalexecutor.Response{}, fmt.Errorf("local CLI missing valid auth: %s. %s", errMsg, hint)
 		}
 
-		// Phase 0 Quick Fix: Extract last 10 lines of stderr for debugging
-		// This helps diagnose silent hangs and other CLI issues
-		stderrHint := extractErrorHint(stderr.String())
-		if stderrHint != "" {
-			return switchailocalexecutor.Response{}, fmt.Errorf("CLI execution failed: %s. %s", errMsg, stderrHint)
-		}
-
-		return switchailocalexecutor.Response{}, fmt.Errorf("CLI execution failed: %s", errMsg)
+		// Truncate verbose stderr to last 5 lines for readable error messages
+		truncated := truncateStderr(stderrStr, 5)
+		return switchailocalexecutor.Response{}, fmt.Errorf("CLI execution failed: %s", truncated)
 	}
 
 	rawOutput := stdout.String()
@@ -299,16 +355,23 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 	cliOpts, _ := extractCLIOptions(req.Payload)
 
 	// Build arguments using helper
-	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.StreamFormatArgs)
+	finalArgs, err := e.buildFinalArgs(prompt, cliOpts, e.StreamFormatArgs, modelName)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, e.BinaryPath, finalArgs...)
+	// Apply CLI execution timeout to prevent indefinite blocking
+	execCtx, execCancel := context.WithTimeout(ctx, defaultCLITimeout)
+	defer execCancel()
 
-	// Set working directory to billboard folder to avoid scanning project files
+	cmd := exec.CommandContext(execCtx, e.BinaryPath, finalArgs...)
+
+	// Set working directory to an empty folder to minimize token usage.
+	// CLIs scan the CWD for context — using an empty sandbox avoids wasting tokens.
 	if e.BillboardDir != "" {
 		cmd.Dir = e.BillboardDir
+	} else {
+		cmd.Dir = ensureCLISandbox()
 	}
 
 	if e.UseStdin {
@@ -682,7 +745,7 @@ func (e *LocalCLIExecutor) containsFlag(args []string, flag string) bool {
 }
 
 // buildFinalArgs constructs the command arguments list.
-func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, formatArgs []string) ([]string, error) {
+func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, formatArgs []string, modelName string) ([]string, error) {
 	// Build control flags from options
 	var flags []string
 	if cliOpts != nil {
@@ -715,20 +778,40 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 		}
 	}
 
-	// Auto-inject YOLO mode and workspace override for geminicli when running as subprocess
-	// Without this, the gemini CLI restricts tool execution to its current working directory 
+	// Auto-inject YOLO mode and scoped workspace for geminicli when running as subprocess
 	if e.Provider == "geminicli" {
 		yoloFlag := "-y"
 		if !e.containsFlag(flags, yoloFlag) && !e.containsFlag(e.Args, yoloFlag) {
-                        flags = append(flags, "--no-interactive")
 			flags = append(flags, yoloFlag)
 			log.Infof("Auto-injected %s for geminicli (no TTY detected)", yoloFlag)
 		}
-		
-		includeFlag := "--include-directories=/"
-		if !e.containsFlag(flags, includeFlag) && !e.containsFlag(e.Args, includeFlag) {
-			flags = append(flags, includeFlag)
-			log.Infof("Auto-injected %s for geminicli to bypass workspace sandbox", includeFlag)
+		// Forward the requested model to the CLI so it doesn't use its default
+		// (e.g., gemini-3.1-pro-preview) which may differ from what was requested.
+		if modelName != "" && modelName != "unknown" {
+			// Strip the provider prefix (e.g., "geminicli:gemini-3-flash-preview" → "gemini-3-flash-preview")
+			cliModel := modelName
+			if idx := strings.Index(cliModel, ":"); idx >= 0 {
+				cliModel = cliModel[idx+1:]
+			}
+			modelFlag := "--model=" + cliModel
+			if !e.containsFlag(flags, "--model") && !e.containsFlag(e.Args, "--model") && !e.containsFlag(flags, "-m") && !e.containsFlag(e.Args, "-m") {
+				flags = append(flags, modelFlag)
+				log.Infof("Auto-injected %s for geminicli", modelFlag)
+			}
+		}
+		// Scope --include-directories to the working directory (billboard or sandbox)
+		// instead of "/" to avoid scanning the entire filesystem and wasting tokens.
+		// The gemini CLI needs this flag to function in non-interactive subprocess mode.
+		includeDir := e.BillboardDir
+		if includeDir == "" {
+			includeDir = ensureCLISandbox()
+		}
+		if includeDir != "" {
+			includeFlag := "--include-directories=" + includeDir
+			if !e.containsFlag(flags, "--include-directories") && !e.containsFlag(e.Args, "--include-directories") {
+				flags = append(flags, includeFlag)
+				log.Infof("Auto-injected %s for geminicli (scoped workspace)", includeFlag)
+			}
 		}
 	}
 
@@ -769,8 +852,67 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 	return finalArgs, nil
 }
 
+// classifyCLIError inspects stderr content and the process error to determine
+// the appropriate HTTP status code and a clean error message.
+// Returns (0, "") if the error cannot be classified.
+func classifyCLIError(stderr string, procErr error) (httpStatus int, cleanMessage string) {
+	lower := strings.ToLower(stderr)
+	errStr := ""
+	if procErr != nil {
+		errStr = strings.ToLower(procErr.Error())
+	}
+
+	switch {
+	// Rate limit / capacity exhausted (429)
+	case strings.Contains(lower, "resource_exhausted") ||
+		strings.Contains(lower, "no capacity available") ||
+		strings.Contains(lower, "rate_limit") ||
+		strings.Contains(lower, "ratelimitexceeded") ||
+		strings.Contains(lower, "model_capacity_exhausted") ||
+		strings.Contains(lower, "too many requests"):
+		return http.StatusTooManyRequests, "Upstream rate limit or capacity exhausted. The model has no available capacity. Try again later or use a different model."
+
+	// Authentication errors (401)
+	case strings.Contains(lower, "401") && strings.Contains(lower, "unauthorized"),
+		strings.Contains(lower, "unauthenticated"):
+		return http.StatusUnauthorized, "Upstream authentication failed. Check CLI tool credentials."
+
+	// Timeout / deadline exceeded (504)
+	case strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "signal: killed") ||
+		strings.Contains(lower, "context deadline exceeded"):
+		return http.StatusGatewayTimeout, "CLI execution timed out. The upstream model may be overloaded."
+
+	default:
+		return 0, ""
+	}
+}
+
+// truncateStderr returns the last N non-empty lines of stderr for readable error messages.
+// This replaces the old extractErrorHint which dumped up to 10 lines.
+func truncateStderr(stderr string, maxLines int) string {
+	if stderr == "" {
+		return ""
+	}
+
+	lines := strings.Split(stderr, "\n")
+	var lastLines []string
+	for i := len(lines) - 1; i >= 0 && len(lastLines) < maxLines; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed != "" {
+			lastLines = append([]string{trimmed}, lastLines...)
+		}
+	}
+
+	if len(lastLines) == 0 {
+		return ""
+	}
+
+	return strings.Join(lastLines, "\n")
+}
+
 // extractErrorHint extracts the last 10 lines of stderr and provides a helpful hint.
-// This is part of Phase 0 Quick Fix to help diagnose CLI issues, particularly silent hangs.
+// Deprecated: Use classifyCLIError + truncateStderr instead. Kept for backward compatibility.
 func extractErrorHint(stderr string) string {
 	if stderr == "" {
 		return ""

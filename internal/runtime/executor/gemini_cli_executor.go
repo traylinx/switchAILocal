@@ -39,6 +39,9 @@ import (
 const (
 	codeAssistEndpoint = "https://cloudcode-pa.googleapis.com"
 	codeAssistVersion  = "v1internal"
+	// geminiCLIHTTPTimeout prevents upstream HTTP calls from hanging indefinitely
+	// when Google's Cloud Code Assist API is slow or rate-limiting.
+	geminiCLIHTTPTimeout = 5 * time.Minute
 )
 
 var (
@@ -113,7 +116,7 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, auth *switchailocalauth
 		models = append([]string{req.Model}, models...)
 	}
 
-	httpClient := newHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient := newHTTPClient(ctx, e.cfg, auth, geminiCLIHTTPTimeout)
 	respCtx := context.WithValue(ctx, altKey, opts.Alt)
 
 	var authID, authLabel, authType, authValue string
@@ -253,7 +256,7 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 		models = append([]string{req.Model}, models...)
 	}
 
-	httpClient := newHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient := newHTTPClient(ctx, e.cfg, auth, geminiCLIHTTPTimeout)
 	respCtx := context.WithValue(ctx, altKey, opts.Alt)
 
 	var authID, authLabel, authType, authValue string
@@ -426,7 +429,7 @@ func (e *GeminiCLIExecutor) CountTokens(ctx context.Context, auth *switchailocal
 		models = append([]string{req.Model}, models...)
 	}
 
-	httpClient := newHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient := newHTTPClient(ctx, e.cfg, auth, geminiCLIHTTPTimeout)
 	respCtx := context.WithValue(ctx, altKey, opts.Alt)
 
 	var authID, authLabel, authType, authValue string

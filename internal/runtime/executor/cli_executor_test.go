@@ -5,6 +5,7 @@
 package executor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,5 +472,166 @@ func TestLocalCLIExecutor_BuildAttachmentPrefix_Security(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestClassifyCLIError tests the error classification logic for CLI stderr output.
+func TestClassifyCLIError(t *testing.T) {
+	tests := []struct {
+		name       string
+		stderr     string
+		procErr    error
+		wantStatus int
+		wantMsg    string
+	}{
+		{
+			name:       "RESOURCE_EXHAUSTED from Gemini CLI",
+			stderr:     `GaxiosError: [{"error":{"code":429,"message":"No capacity available for model gemini-3.1-pro-preview on the server","status":"RESOURCE_EXHAUSTED"}}]`,
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 429,
+			wantMsg:    "Upstream rate limit or capacity exhausted",
+		},
+		{
+			name:       "No capacity available message",
+			stderr:     "No capacity available for model gemini-3.1-pro on the server",
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 429,
+			wantMsg:    "Upstream rate limit or capacity exhausted",
+		},
+		{
+			name:       "Too Many Requests status text",
+			stderr:     `status: 429, statusText: "Too Many Requests"`,
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 429,
+			wantMsg:    "Try again later",
+		},
+		{
+			name:       "MODEL_CAPACITY_EXHAUSTED reason",
+			stderr:     `"reason": "MODEL_CAPACITY_EXHAUSTED"`,
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 429,
+			wantMsg:    "capacity exhausted",
+		},
+		{
+			name:       "Context deadline exceeded",
+			stderr:     "",
+			procErr:    fmt.Errorf("context deadline exceeded"),
+			wantStatus: 504,
+			wantMsg:    "timed out",
+		},
+		{
+			name:       "Signal killed (timeout)",
+			stderr:     "",
+			procErr:    fmt.Errorf("signal: killed"),
+			wantStatus: 504,
+			wantMsg:    "timed out",
+		},
+		{
+			name:       "Unknown error returns 0",
+			stderr:     "some random error output",
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 0,
+			wantMsg:    "",
+		},
+		{
+			name:       "Empty stderr returns 0",
+			stderr:     "",
+			procErr:    fmt.Errorf("exit status 1"),
+			wantStatus: 0,
+			wantMsg:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, msg := classifyCLIError(tt.stderr, tt.procErr)
+			if status != tt.wantStatus {
+				t.Errorf("classifyCLIError() status = %d, want %d", status, tt.wantStatus)
+			}
+			if tt.wantMsg != "" && !strings.Contains(strings.ToLower(msg), strings.ToLower(tt.wantMsg)) {
+				t.Errorf("classifyCLIError() msg = %q, want to contain %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// TestTruncateStderr tests stderr truncation to last N lines.
+func TestTruncateStderr(t *testing.T) {
+	tests := []struct {
+		name      string
+		stderr    string
+		maxLines  int
+		wantLines int
+		wantEmpty bool
+	}{
+		{
+			name:      "empty stderr",
+			stderr:    "",
+			maxLines:  5,
+			wantEmpty: true,
+		},
+		{
+			name:      "fewer lines than max",
+			stderr:    "line 1\nline 2\nline 3",
+			maxLines:  5,
+			wantLines: 3,
+		},
+		{
+			name:      "exactly max lines",
+			stderr:    "line 1\nline 2\nline 3\nline 4\nline 5",
+			maxLines:  5,
+			wantLines: 5,
+		},
+		{
+			name:      "more lines than max keeps last N",
+			stderr:    "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7",
+			maxLines:  3,
+			wantLines: 3,
+		},
+		{
+			name:      "empty lines are filtered",
+			stderr:    "line 1\n\n\nline 2\n\nline 3\n",
+			maxLines:  5,
+			wantLines: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateStderr(tt.stderr, tt.maxLines)
+			if tt.wantEmpty {
+				if result != "" {
+					t.Errorf("truncateStderr() = %q, want empty", result)
+				}
+				return
+			}
+			lines := strings.Split(result, "\n")
+			if len(lines) != tt.wantLines {
+				t.Errorf("truncateStderr() returned %d lines, want %d. Output: %q", len(lines), tt.wantLines, result)
+			}
+		})
+	}
+
+	// Verify last N lines are kept (not first N)
+	result := truncateStderr("first\nsecond\nthird\nfourth\nfifth", 2)
+	if !strings.Contains(result, "fourth") || !strings.Contains(result, "fifth") {
+		t.Errorf("truncateStderr should keep last lines, got: %q", result)
+	}
+}
+
+// TestCLIExecutionError_StatusCode verifies the StatusCode() interface.
+func TestCLIExecutionError_StatusCode(t *testing.T) {
+	err := &CLIExecutionError{Status: 429, Message: "rate limited"}
+	if err.StatusCode() != 429 {
+		t.Errorf("StatusCode() = %d, want 429", err.StatusCode())
+	}
+	if err.Error() != "rate limited" {
+		t.Errorf("Error() = %q, want %q", err.Error(), "rate limited")
+	}
+
+	// Verify it satisfies the interface used by the handler
+	var statusErr interface{ StatusCode() int } = err
+	if statusErr.StatusCode() != 429 {
+		t.Errorf("interface StatusCode() = %d, want 429", statusErr.StatusCode())
 	}
 }
