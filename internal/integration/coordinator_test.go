@@ -204,7 +204,7 @@ func TestServiceCoordinator_WithMemoryEnabled(t *testing.T) {
 
 func TestServiceCoordinator_WithHeartbeatEnabled(t *testing.T) {
 	t.Skip("Skipping heartbeat test - requires provider checkers to be registered")
-	
+
 	tmpDir := t.TempDir()
 
 	cfg := &IntegrationConfig{
@@ -247,7 +247,7 @@ func TestServiceCoordinator_WithHeartbeatEnabled(t *testing.T) {
 	// Start and stop
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := coordinator.Start(ctx); err != nil {
 		t.Fatalf("Failed to start coordinator: %v", err)
 	}

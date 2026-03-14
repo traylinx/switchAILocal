@@ -62,46 +62,48 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		template, _ = sjson.Set(template, "message.model", rootResult.Get("response.model").String())
 		template, _ = sjson.Set(template, "message.id", rootResult.Get("response.id").String())
 
-		output = "event: message_start\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		// ⚡ Bolt: Using direct string concatenation instead of fmt.Sprintf("data: %s\n\n", template)
+		// to eliminate reflection overhead and minimize per-chunk allocations in streaming responses.
+		output += "event: message_start\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.reasoning_summary_part.added" {
 		template = `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
-		output = "event: content_block_start\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_start\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.reasoning_summary_text.delta" {
 		template = `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 		template, _ = sjson.Set(template, "delta.thinking", rootResult.Get("delta").String())
 
-		output = "event: content_block_delta\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_delta\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.reasoning_summary_part.done" {
 		template = `{"type":"content_block_stop","index":0}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
-		output = "event: content_block_stop\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_stop\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.content_part.added" {
 		template = `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
-		output = "event: content_block_start\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_start\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.output_text.delta" {
 		template = `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 		template, _ = sjson.Set(template, "delta.text", rootResult.Get("delta").String())
 
-		output = "event: content_block_delta\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_delta\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.content_part.done" {
 		template = `{"type":"content_block_stop","index":0}`
 		template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
-		output = "event: content_block_stop\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: content_block_stop\n"
+		output += "data: " + template + "\n\n"
 	} else if typeStr == "response.completed" {
 		template = `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}`
 		p := (*param).(*bool)
@@ -113,8 +115,8 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		template, _ = sjson.Set(template, "usage.input_tokens", rootResult.Get("response.usage.input_tokens").Int())
 		template, _ = sjson.Set(template, "usage.output_tokens", rootResult.Get("response.usage.output_tokens").Int())
 
-		output = "event: message_delta\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "event: message_delta\n"
+		output += "data: " + template + "\n\n"
 		output += "event: message_stop\n"
 		output += `data: {"type":"message_stop"}`
 		output += "\n\n"
@@ -137,14 +139,14 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 				template, _ = sjson.Set(template, "content_block.name", name)
 			}
 
-			output = "event: content_block_start\n"
-			output += fmt.Sprintf("data: %s\n\n", template)
+			output += "event: content_block_start\n"
+			output += "data: " + template + "\n\n"
 
 			template = `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
 			template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
 			output += "event: content_block_delta\n"
-			output += fmt.Sprintf("data: %s\n\n", template)
+			output += "data: " + template + "\n\n"
 		}
 	} else if typeStr == "response.output_item.done" {
 		itemResult := rootResult.Get("item")
@@ -153,8 +155,8 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 			template = `{"type":"content_block_stop","index":0}`
 			template, _ = sjson.Set(template, "index", rootResult.Get("output_index").Int())
 
-			output = "event: content_block_stop\n"
-			output += fmt.Sprintf("data: %s\n\n", template)
+			output += "event: content_block_stop\n"
+			output += "data: " + template + "\n\n"
 		}
 	} else if typeStr == "response.function_call_arguments.delta" {
 		template = `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
@@ -162,7 +164,7 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		template, _ = sjson.Set(template, "delta.partial_json", rootResult.Get("delta").String())
 
 		output += "event: content_block_delta\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		output += "data: " + template + "\n\n"
 	}
 
 	return []string{output}

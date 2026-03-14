@@ -270,15 +270,15 @@ func TestLocalCLIExecutor_ContainsFlag(t *testing.T) {
 // Note: In test environments, this will typically return false
 func TestLocalCLIExecutor_HasTTY(t *testing.T) {
 	e := &LocalCLIExecutor{}
-	
+
 	// In most test environments, there's no TTY
 	// This test just ensures the method doesn't panic
 	hasTTY := e.hasTTY()
-	
+
 	// We can't assert a specific value since it depends on the test environment
 	// But we can verify it returns a boolean
 	t.Logf("hasTTY() returned: %v", hasTTY)
-	
+
 	// The method should not panic and should return a boolean
 	if hasTTY {
 		t.Log("TTY detected in test environment (unusual but valid)")
