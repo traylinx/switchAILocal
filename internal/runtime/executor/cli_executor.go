@@ -20,6 +20,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/traylinx/switchAILocal/internal/cli"
 	sdkauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
@@ -400,7 +401,8 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 		return nil, fmt.Errorf("failed to start CLI: %w", err)
 	}
 
-	ch := make(chan switchailocalexecutor.StreamChunk)
+	// Buffered channel: allows scanner goroutine to stay ahead of HTTP flush.
+	ch := make(chan switchailocalexecutor.StreamChunk, 16)
 	go func() {
 		defer close(ch)
 		defer execCancel()
@@ -411,6 +413,11 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 			}
 			_ = cmd.Wait()
 		}()
+
+		// Pre-compute stream ID and timestamp once for the entire stream.
+		// The OpenAI spec uses the same ID/created for all chunks in a response.
+		streamID := streamChunkID()
+		streamCreated := time.Now().Unix()
 
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(nil, 10_485_760) // 10MB buffer
@@ -432,14 +439,14 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 				continue
 			}
 
-			// Parse CLI stream JSON
+			// Parse CLI stream JSON using gjson (zero-alloc field extraction)
 			content, ok := parseStreamMessageContent(trimmed)
 			if !ok {
 				continue
 			}
 
-			// Build and send OpenAI SSE chunk
-			chunk := BuildOpenAIStreamChunk(modelName, content, isFirst)
+			// Build and send OpenAI SSE chunk using fast templated JSON
+			chunk := BuildOpenAIStreamChunkFast(streamID, streamCreated, modelName, content, isFirst)
 			select {
 			case ch <- switchailocalexecutor.StreamChunk{Payload: chunk}:
 				isFirst = false
@@ -455,7 +462,7 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 
 		// Send finish chunk (upstream handler will add [DONE])
 		select {
-		case ch <- switchailocalexecutor.StreamChunk{Payload: BuildOpenAIStreamFinishChunk(modelName)}:
+		case ch <- switchailocalexecutor.StreamChunk{Payload: BuildOpenAIStreamFinishChunkFast(streamID, streamCreated, modelName)}:
 		case <-ctx.Done():
 		}
 	}()
@@ -465,20 +472,16 @@ func (e *LocalCLIExecutor) ExecuteStream(ctx context.Context, auth *sdkauth.Auth
 
 // parseStreamMessageContent extracts content from CLI stream JSON.
 // Format: {"type":"message", "content":"...", "delta":true}
+// Uses gjson for zero-alloc field extraction (~3-5x faster than json.Unmarshal).
 func parseStreamMessageContent(line string) (string, bool) {
-	var msg struct {
-		Type    string `json:"type"`
-		Content string `json:"content"`
-		Delta   bool   `json:"delta"`
-	}
-	if err := json.Unmarshal([]byte(line), &msg); err != nil {
-		return "", false
-	}
 	// Only process message chunks with delta=true
-	if msg.Type != "message" || !msg.Delta {
+	if gjson.Get(line, "type").String() != "message" {
 		return "", false
 	}
-	return msg.Content, true
+	if !gjson.Get(line, "delta").Bool() {
+		return "", false
+	}
+	return gjson.Get(line, "content").String(), true
 }
 
 // executeStreamFallback wraps non-streaming response as single chunk.

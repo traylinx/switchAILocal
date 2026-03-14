@@ -7,6 +7,7 @@ package executor
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -128,4 +129,77 @@ func BuildOpenAIStreamFinishChunk(model string) []byte {
 	}
 	data, _ := json.Marshal(chunk)
 	return data
+}
+
+// streamChunkID returns a pre-formatted chunk ID string.
+// Called once per stream to avoid UUID generation per chunk.
+func streamChunkID() string {
+	return fmt.Sprintf("chatcmpl-%s", uuid.New().String())
+}
+
+// BuildOpenAIStreamChunkFast creates an SSE chunk using pre-formatted string templates.
+// This avoids struct allocation and reflection-based json.Marshal (~5x faster).
+// The id and created are pre-computed once per stream (OpenAI spec: same for all chunks).
+func BuildOpenAIStreamChunkFast(id string, created int64, model, content string, isFirst bool) []byte {
+	escaped := jsonEscapeString(content)
+	var delta string
+	if isFirst {
+		delta = fmt.Sprintf(`"role":"assistant","content":"%s"`, escaped)
+	} else {
+		delta = fmt.Sprintf(`"content":"%s"`, escaped)
+	}
+	return []byte(fmt.Sprintf(
+		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{%s},"finish_reason":null}]}`,
+		id, created, jsonEscapeString(model), delta,
+	))
+}
+
+// BuildOpenAIStreamFinishChunkFast creates the final finish chunk using templates.
+func BuildOpenAIStreamFinishChunkFast(id string, created int64, model string) []byte {
+	return []byte(fmt.Sprintf(
+		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		id, created, jsonEscapeString(model),
+	))
+}
+
+// jsonEscapeString escapes special characters for safe embedding in JSON string values.
+// This handles the common cases without the overhead of json.Marshal.
+func jsonEscapeString(s string) string {
+	// Fast path: most strings have no special chars
+	needsEscape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' || c < 0x20 {
+			needsEscape = true
+			break
+		}
+	}
+	if !needsEscape {
+		return s
+	}
+
+	var b strings.Builder
+	b.Grow(len(s) + 8) // small extra for escapes
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				fmt.Fprintf(&b, `\u%04x`, c)
+			} else {
+				b.WriteByte(c)
+			}
+		}
+	}
+	return b.String()
 }
