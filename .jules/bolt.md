@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2024-03-24 - Zero-Allocation String Concatenation in Streaming Translators
+**Learning:** `fmt.Sprintf` incurs unnecessary runtime parsing, reflection, and allocation overhead. In hot code paths like streaming response translators where the prefix and suffix are static (e.g. `data: ` and `\n\n`), using the `+` operator for string concatenation is optimized by the compiler into a single memory allocation.
+**Action:** When creating text-based protocols like SSE (Server-Sent Events), avoid `fmt.Sprintf` for simple string insertions and rely on direct string concatenation (`+`) instead to minimize memory bloat.
