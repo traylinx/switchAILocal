@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-03-17 - Fix Cross-Platform Path Traversal in File Upload/Delete Handlers
+**Vulnerability:** `UploadAuthFile` and `DeleteAuthFile` management handlers only checked `strings.Contains(name, string(os.PathSeparator))` to prevent path traversal when accepting a user-supplied filename.
+**Learning:** `os.PathSeparator` on a Linux server is `/`. It does not detect Windows-style traversal payloads like `..\..\secrets.json`. Because the file was saved securely utilizing `filepath.Join()`, an attacker passing Windows style path traversal payloads to `name` query parameter could manage to escape the authorization directory bounds and arbitrarily overwrite or delete files on a host system.
+**Prevention:** Explicitly validate query parameters representing file paths using `strings.ContainsAny(name, "/\\")` to reject both forward and backward slashes, ensuring consistent cross-platform protection.

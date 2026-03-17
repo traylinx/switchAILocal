@@ -88,3 +88,100 @@ func TestDownloadAuthFile_PathTraversal(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	h := NewHandler(cfg, "", nil)
+	// mock authManager to avoid panic in UploadAuthFile
+	// Actually, the vulnerability check is before authManager usage if name is invalid
+	// But it might need authManager for valid ones. Let's not test valid uploads fully here, just the rejection.
+
+	r := gin.New()
+	r.POST("/upload", h.UploadAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Path Traversal with Backslash (Windows style)",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("POST", "/upload?name="+tc.queryName, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+		})
+	}
+}
+
+func TestDeleteAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	h := NewHandler(cfg, "", nil)
+
+	r := gin.New()
+	r.DELETE("/delete", h.DeleteAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Path Traversal with Backslash (Windows style)",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("DELETE", "/delete?name="+tc.queryName, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+		})
+	}
+}
