@@ -284,4 +284,3 @@ func TestSecureWrite_NilStateBox(t *testing.T) {
 		t.Errorf("Expected content %s, got %s", testData, content)
 	}
 }
-

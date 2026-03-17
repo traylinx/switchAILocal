@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-03-17 - Pass pointers to emit() instead of values
+**Learning:** `ConvertGeminiResponseToOpenAIResponses` had 19 calls to `st.emit(event string, v any)`. Because `v` is an interface (`any`), passing concrete structs by value caused the Go runtime to allocate memory on the heap for each interface boxing operation, resulting in ~1-2 allocations per chunk during high-throughput event streaming.
+**Action:** Always pass concrete structs as pointers when assigning them to `interface{}`/`any` parameters in hot paths, such as streaming SSE emitters, to eliminate implicit heap allocations.
