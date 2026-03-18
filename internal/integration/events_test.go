@@ -537,7 +537,7 @@ func TestHeartbeatEventBridgeIgnoresSystemEvents(t *testing.T) {
 // TestIntegrationWithHeartbeatMonitor tests the full integration with a heartbeat monitor.
 func TestIntegrationWithHeartbeatMonitor(t *testing.T) {
 	t.Skip("Skipping integration test due to deadlock in heartbeat monitor Start() - this is a known issue in the heartbeat monitor implementation")
-	
+
 	// This test demonstrates the integration works conceptually, but there's a deadlock
 	// in the heartbeat monitor's Start() method when it tries to emit events while holding a lock.
 	// The event handler (heartbeatEventBridge) is called asynchronously but the Start() method

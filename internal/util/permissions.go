@@ -95,7 +95,7 @@ func HardenPermissions(sb *StateBox) error {
 	}
 
 	rootPath := sb.RootPath()
-	
+
 	// Check if root path exists
 	if _, err := os.Stat(rootPath); os.IsNotExist(err) {
 		log.Warnf("permission hardening: State Box root does not exist: %s", rootPath)
@@ -132,11 +132,11 @@ func HardenPermissions(sb *StateBox) error {
 		if currentMode != requiredMode {
 			// Attempt to correct permissions
 			if chmodErr := os.Chmod(path, requiredMode); chmodErr != nil {
-				log.Warnf("permission hardening: failed to chmod %s from %04o to %04o: %v", 
+				log.Warnf("permission hardening: failed to chmod %s from %04o to %04o: %v",
 					path, currentMode, requiredMode, chmodErr)
 				errorCount++
 			} else {
-				log.Infof("security audit: corrected permissions for %s from %04o to %04o", 
+				log.Infof("security audit: corrected permissions for %s from %04o to %04o",
 					path, currentMode, requiredMode)
 				correctionCount++
 			}
