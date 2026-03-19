@@ -139,7 +139,7 @@ func (rhs *RoutingHistoryStore) GetHistory(apiKeyHash string, limit int) ([]*Rou
 	// Read all matching decisions
 	var decisions []*RoutingDecision
 	scanner := bufio.NewScanner(file)
-	
+
 	// Increase buffer size for large lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
@@ -202,7 +202,7 @@ func (rhs *RoutingHistoryStore) GetAllHistory(limit int) ([]*RoutingDecision, er
 	// Read all decisions
 	var decisions []*RoutingDecision
 	scanner := bufio.NewScanner(file)
-	
+
 	// Increase buffer size for large lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
@@ -248,7 +248,7 @@ func (rhs *RoutingHistoryStore) writeWorker() {
 		case op := <-rhs.writeQueue:
 			// Process write operation
 			err := rhs.writeDecision(op.decision)
-			
+
 			// Send result back to caller
 			select {
 			case op.errChan <- err:
@@ -358,7 +358,7 @@ func (rhs *RoutingHistoryStore) Count() (int, error) {
 
 	count := 0
 	scanner := bufio.NewScanner(file)
-	
+
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 

@@ -67,13 +67,13 @@ func TestConvertGeminiResponseToOpenAIResponses(t *testing.T) {
 		t.Fatal("Expected events for second chunk, got none")
 	}
 
-    foundDone := false
-    for _, event := range events2 {
-        if strings.Contains(event, "response.output_text.done") {
-            foundDone = true
-        }
-    }
-    if !foundDone {
-        t.Error("Did not find response.output_text.done event")
-    }
+	foundDone := false
+	for _, event := range events2 {
+		if strings.Contains(event, "response.output_text.done") {
+			foundDone = true
+		}
+	}
+	if !foundDone {
+		t.Error("Did not find response.output_text.done event")
+	}
 }
