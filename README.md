@@ -6,6 +6,7 @@
   <p><em>One local endpoint. All your AI providers.</em></p>
 
   <p>
+    <a href="https://switchailocal.traylinx.com/introduction"><strong>Official Documentation</strong></a> •
     <a href="#quick-start">Quick Start</a> •
     <a href="docs/user/installation.md">Installation</a> •
     <a href="docs/user/providers.md">Setup Providers</a> •
@@ -415,6 +416,8 @@ intelligence:
 ---
 
 ## Documentation
+
+📚 **[Read the Official switchAILocal Documentation](https://switchailocal.traylinx.com/introduction)**
 
 ### For Users
 
