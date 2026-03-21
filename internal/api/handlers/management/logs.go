@@ -319,7 +319,7 @@ func (h *Handler) DownloadRequestErrorLog(c *gin.Context) {
 	}
 
 	name := strings.TrimSpace(c.Param("name"))
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid log file name"})
 		return
 	}
