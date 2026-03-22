@@ -10,7 +10,6 @@
 package gemini
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -287,18 +286,25 @@ func ConvertClaudeResponseToGeminiNonStream(_ context.Context, modelName string,
 	// Set model version
 	template, _ = sjson.Set(template, "modelVersion", modelName)
 
-	streamingEvents := make([][]byte, 0)
-
-	scanner := bufio.NewScanner(bytes.NewReader(rawJSON))
-	buffer := make([]byte, 52_428_800) // 50MB
-	scanner.Buffer(buffer, 52_428_800)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		// log.Debug(string(line))
-		if bytes.HasPrefix(line, dataTag) {
-			jsonData := bytes.TrimSpace(line[5:])
-			streamingEvents = append(streamingEvents, jsonData)
+	var streamingEvents [][]byte
+	data := rawJSON
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx == -1 {
+			line = data
+			data = nil
+		} else {
+			line = data[:idx]
+			data = data[idx+1:]
 		}
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		if !bytes.HasPrefix(line, dataTag) {
+			continue
+		}
+		streamingEvents = append(streamingEvents, bytes.TrimSpace(line[len(dataTag):]))
 	}
 	// log.Debug("streamingEvents: ", streamingEvents)
 	// log.Debug("rawJSON: ", string(rawJSON))

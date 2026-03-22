@@ -275,14 +275,25 @@ func mapAnthropicStopReasonToOpenAI(anthropicReason string) string {
 // Returns:
 //   - string: An OpenAI-compatible JSON response containing all message content and metadata
 func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) string {
-	chunks := make([][]byte, 0)
-
-	lines := bytes.Split(rawJSON, []byte("\n"))
-	for _, line := range lines {
+	var chunks [][]byte
+	data := rawJSON
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx == -1 {
+			line = data
+			data = nil
+		} else {
+			line = data[:idx]
+			data = data[idx+1:]
+		}
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
 		if !bytes.HasPrefix(line, dataTag) {
 			continue
 		}
-		chunks = append(chunks, bytes.TrimSpace(line[5:]))
+		chunks = append(chunks, bytes.TrimSpace(line[len(dataTag):]))
 	}
 
 	// Base OpenAI non-streaming response template

@@ -5,7 +5,6 @@
 package responses
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -432,17 +431,25 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	// Collect SSE data: lines start with "data: "; ignore others
 	var chunks [][]byte
 	{
-		// Use a simple scanner to iterate through raw bytes
-		// Note: extremely large responses may require increasing the buffer
-		scanner := bufio.NewScanner(bytes.NewReader(rawJSON))
-		buf := make([]byte, 52_428_800) // 50MB
-		scanner.Buffer(buf, 52_428_800)
-		for scanner.Scan() {
-			line := scanner.Bytes()
+		// Manual byte loop to avoid massive 50MB scanner buffer allocation per request
+		data := rawJSON
+		for len(data) > 0 {
+			idx := bytes.IndexByte(data, '\n')
+			var line []byte
+			if idx == -1 {
+				line = data
+				data = nil
+			} else {
+				line = data[:idx]
+				data = data[idx+1:]
+			}
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
 			if !bytes.HasPrefix(line, dataTag) {
 				continue
 			}
-			chunks = append(chunks, line[len(dataTag):])
+			chunks = append(chunks, bytes.TrimSpace(line[len(dataTag):]))
 		}
 	}
 
