@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/switchai_icon_logo.png" alt="switchAILocal Logo" width="120"/>
+  <img src="assets/switchai_logo.svg" alt="switchAILocal Logo" width="120"/>
 
   <h1>switchAILocal</h1>
 
