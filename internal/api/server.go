@@ -494,6 +494,11 @@ func (s *Server) setupRoutes() {
 			},
 		})
 	})
+
+	// Health check endpoint
+	s.engine.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 	s.engine.POST("/v1internal:method", geminiCLIHandlers.CLIHandler)
 
 	// OAuth callback endpoints (reuse main server port)
