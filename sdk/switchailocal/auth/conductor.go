@@ -912,11 +912,16 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 					state.NextRetryAfter = next
 					suspendReason = "unauthorized"
 					shouldSuspendModel = true
-				case 402, 403:
+				case 402:
 					next := now.Add(30 * time.Minute)
 					state.NextRetryAfter = next
 					suspendReason = "payment_required"
 					shouldSuspendModel = true
+				case 403:
+					// Cloudflare/Kong uses 403 for WAF blocks/Bot protection.
+					// Treat as a transient timeout (3 seconds) rather than permanent suspension.
+					next := now.Add(3 * time.Second)
+					state.NextRetryAfter = next
 				case 404:
 					next := now.Add(12 * time.Hour)
 					state.NextRetryAfter = next
@@ -1173,9 +1178,12 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 	case 401:
 		auth.StatusMessage = "unauthorized"
 		auth.NextRetryAfter = now.Add(30 * time.Minute)
-	case 402, 403:
+	case 402:
 		auth.StatusMessage = "payment_required"
 		auth.NextRetryAfter = now.Add(30 * time.Minute)
+	case 403:
+		auth.StatusMessage = "transient upstream error (WAF or timeout)"
+		auth.NextRetryAfter = now.Add(3 * time.Second)
 	case 404:
 		auth.StatusMessage = "not_found"
 		auth.NextRetryAfter = now.Add(12 * time.Hour)

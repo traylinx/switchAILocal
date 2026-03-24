@@ -64,6 +64,15 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *swit
 		httpClient.Transport = rt
 	}
 
+	// If no transport was configured, use a default with keep-alives disabled.
+	// Some upstream WAFs (e.g. Kong) rate-limit or block rapid requests on
+	// the same persistent TCP connection. Fresh connections avoid 403 blocks.
+	if httpClient.Transport == nil {
+		httpClient.Transport = &http.Transport{
+			DisableKeepAlives: true,
+		}
+	}
+
 	return httpClient
 }
 

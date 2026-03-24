@@ -66,9 +66,19 @@
 
 ---
 
+## Prerequisites
+
+| Requirement | Minimum  | Notes                                      |
+| ----------- | -------- | ------------------------------------------ |
+| **Go**      | 1.24+    | `./ail.sh setup` can auto-install via brew |
+| **Docker**  | Optional | Only needed for `ail start --docker`       |
+| **macOS**   | Ventura+ | Linux support is experimental              |
+
+---
+
 ## Quick Start
 
-### 1. Clone & Start (The Easy Way)
+### 1. Clone & Setup
 
 We provide a unified Hub Script (`ail.sh`) to manage everything.
 
@@ -76,11 +86,14 @@ We provide a unified Hub Script (`ail.sh`) to manage everything.
 git clone https://github.com/traylinx/switchAILocal.git
 cd switchAILocal
 
-# Start locally (builds automatically)
-./ail.sh start
+# First-time setup (builds binaries, installs bridge service, registers CLI)
+./ail.sh setup
+
+# Then start the server (from anywhere, after setup)
+ail start
 
 # OR start with Docker (add --build to force rebuild)
-./ail.sh start --docker --build
+ail start --docker --build
 ```
 
 ### 2. Connect Your Providers
@@ -140,8 +153,6 @@ Then use without the `cli` suffix: `gemini:`, `claude:`
 ```
 
 The server runs on `http://localhost:18080`.
-
-The server starts on `http://localhost:18080`.
 
 ---
 
@@ -435,8 +446,12 @@ intelligence:
 ### Build from Source
 
 ```bash
-# Build the main server
+# Recommended: use the setup script
+./ail.sh setup
+
+# OR build manually
 go build -o switchAILocal ./cmd/server
+go build -o bridge-agent ./cmd/bridge-agent
 
 # Build the Management UI (optional)
 ./ail_ui.sh
