@@ -1,5 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <rect width="22" height="14" x="1" y="5" rx="7" fill="#A855F7" />
-  <circle cx="17" cy="12" r="6" fill="white" />
-  <path d="M14.5 10.5a2.5 2.5 0 0 1 5 0V9m0 1.5h-1.5M19.5 13.5a2.5 2.5 0 0 1-5 0V15m0-1.5h1.5" stroke="#A855F7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Solid Lila Background Pill -->
+  <rect width="24" height="16" x="0" y="4" rx="8" fill="#8B5CF6" />
+  <!-- Elongated Knob with 2px margin -->
+  <rect width="12" height="12" x="10" y="6" rx="6" fill="white" />
+  
+  <!-- Routing Node Graph -->
+  <path d="M16 14.5V12L14 10.5M16 12l2-1.5" stroke="#8B5CF6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="14" cy="10.5" r="1.2" fill="#8B5CF6" />
+  <circle cx="18" cy="10.5" r="1.2" fill="#8B5CF6" />
+  <circle cx="16" cy="14.5" r="1.2" fill="#8B5CF6" />
 </svg>
