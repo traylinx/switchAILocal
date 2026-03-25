@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2024-03-25 - Fix Path Traversal in Upload/Delete Auth File
+**Vulnerability:** The `UploadAuthFile` and `DeleteAuthFile` handlers used `strings.Contains(name, string(os.PathSeparator))` to validate user-supplied filenames. On Linux, `os.PathSeparator` is `/`. This allowed an attacker to bypass the validation using Windows-style backslashes `\` or URL-encoded variations, leading to cross-platform path traversal.
+**Learning:** Checking against a platform-specific `os.PathSeparator` is insufficient for validating input from an HTTP request because the payload can originate from any platform or use alternate path separators. Go's `filepath.Join` will normalize the path and may process `\` as a valid traversal character depending on the host OS or subsequent file operations. Input validation should occur before checking for dependencies like `authManager`.
+**Prevention:** To prevent cross-platform path traversal vulnerabilities, explicitly validate query parameters using `strings.ContainsAny(name, "/\\")` rather than `os.PathSeparator`. Ensure input validation happens early in the request lifecycle.
