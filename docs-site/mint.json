@@ -6,7 +6,6 @@
     "light": "/logo/switchailocal_light.png"
   },
   "favicon": "/favicon.png",
-  "theme": "mint",
   "colors": {
     "primary": "#EC4899",
     "light": "#FBCFE8",
