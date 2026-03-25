@@ -1,7 +1,6 @@
 {
   "$schema": "https://mintlify.com/schema.json",
   "name": "switchAILocal",
-  "theme": "prism",
   "logo": {
     "dark": "/logo/switchailocal_dark.png",
     "light": "/logo/switchailocal_light.png"
@@ -16,161 +15,155 @@
       "to": "#8B5CF6"
     }
   },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/traylinx/switchAILocal"
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/traylinx/switchAILocal"
     }
+  ],
+  "topbarCtaButton": {
+    "type": "github",
+    "url": "https://github.com/traylinx/switchAILocal"
   },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/traylinx/switchAILocal"
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "api"
+    },
+    {
+      "name": "SDK & Integration",
+      "url": "sdk"
+    },
+    {
+      "name": "CLI Reference",
+      "url": "cli"
     }
-  },
-  "navigation": {
-    "tabs": [
-      {
-        "tab": "Documentation",
-        "groups": [
-          {
-            "group": "Get Started",
-            "pages": [
-              "introduction",
-              "quickstart",
-              "installation"
-            ]
-          },
-          {
-            "group": "Core Concepts",
-            "pages": [
-              "concepts/architecture",
-              "concepts/providers",
-              "concepts/routing",
-              "concepts/authentication"
-            ]
-          },
-          {
-            "group": "Configuration",
-            "pages": [
-              "configuration/overview",
-              "configuration/server",
-              "configuration/providers",
-              "configuration/security"
-            ]
-          },
-          {
-            "group": "Intelligent Systems",
-            "pages": [
-              "intelligent-systems/cortex-router",
-              "intelligent-systems/superbrain",
-              "intelligent-systems/memory",
-              "intelligent-systems/heartbeat"
-            ]
-          },
-          {
-            "group": "Advanced Features",
-            "pages": [
-              "advanced/payload-injection",
-              "advanced/lua-plugins",
-              "advanced/failover",
-              "advanced/state-box"
-            ]
-          },
-          {
-            "group": "Guides",
-            "pages": [
-              "guides/setup-providers",
-              "guides/docker-deployment",
-              "guides/management-dashboard",
-              "guides/troubleshooting"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API Reference",
-        "groups": [
-          {
-            "group": "Overview",
-            "pages": [
-              "api/overview",
-              "api/authentication"
-            ]
-          },
-          {
-            "group": "Endpoints",
-            "pages": [
-              "api/chat-completions",
-              "api/models",
-              "api/embeddings",
-              "api/websocket"
-            ]
-          },
-          {
-            "group": "Provider Formats",
-            "pages": [
-              "api/provider-prefixes",
-              "api/auto-routing",
-              "api/cli-attachments"
-            ]
-          },
-          {
-            "group": "Management API",
-            "pages": [
-              "api/management/overview",
-              "api/management/config",
-              "api/management/providers"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "SDK & Integration",
-        "groups": [
-          {
-            "group": "Client SDKs",
-            "pages": [
-              "sdk/python",
-              "sdk/nodejs",
-              "sdk/go"
-            ]
-          },
-          {
-            "group": "Embedding SDK",
-            "pages": [
-              "sdk/embedding/overview",
-              "sdk/embedding/usage",
-              "sdk/embedding/custom-providers"
-            ]
-          },
-          {
-            "group": "Examples",
-            "pages": [
-              "examples/basic-usage",
-              "examples/streaming",
-              "examples/multi-provider",
-              "examples/intelligent-routing"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "CLI Reference",
-        "groups": [
-          {
-            "group": "Commands",
-            "pages": [
-              "cli/server",
-              "cli/login",
-              "cli/memory",
-              "cli/heartbeat",
-              "cli/steering",
-              "cli/hooks",
-              "cli/learning"
-            ]
-          }
-        ]
-      }
-    ]
+  ],
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "installation"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "concepts/architecture",
+        "concepts/providers",
+        "concepts/routing",
+        "concepts/authentication"
+      ]
+    },
+    {
+      "group": "Configuration",
+      "pages": [
+        "configuration/overview",
+        "configuration/server",
+        "configuration/providers",
+        "configuration/security"
+      ]
+    },
+    {
+      "group": "Intelligent Systems",
+      "pages": [
+        "intelligent-systems/cortex-router",
+        "intelligent-systems/superbrain",
+        "intelligent-systems/memory",
+        "intelligent-systems/heartbeat"
+      ]
+    },
+    {
+      "group": "Advanced Features",
+      "pages": [
+        "advanced/payload-injection",
+        "advanced/lua-plugins",
+        "advanced/failover",
+        "advanced/state-box"
+      ]
+    },
+    {
+      "group": "Guides",
+      "pages": [
+        "guides/setup-providers",
+        "guides/docker-deployment",
+        "guides/management-dashboard",
+        "guides/troubleshooting"
+      ]
+    },
+    {
+      "group": "Overview",
+      "pages": [
+        "api/overview",
+        "api/authentication"
+      ]
+    },
+    {
+      "group": "Endpoints",
+      "pages": [
+        "api/chat-completions",
+        "api/models",
+        "api/embeddings",
+        "api/websocket"
+      ]
+    },
+    {
+      "group": "Provider Formats",
+      "pages": [
+        "api/provider-prefixes",
+        "api/auto-routing",
+        "api/cli-attachments"
+      ]
+    },
+    {
+      "group": "Management API",
+      "pages": [
+        "api/management/overview",
+        "api/management/config",
+        "api/management/providers"
+      ]
+    },
+    {
+      "group": "Client SDKs",
+      "pages": [
+        "sdk/python",
+        "sdk/nodejs",
+        "sdk/go"
+      ]
+    },
+    {
+      "group": "Embedding SDK",
+      "pages": [
+        "sdk/embedding/overview",
+        "sdk/embedding/usage",
+        "sdk/embedding/custom-providers"
+      ]
+    },
+    {
+      "group": "Examples",
+      "pages": [
+        "examples/basic-usage",
+        "examples/streaming",
+        "examples/multi-provider",
+        "examples/intelligent-routing"
+      ]
+    },
+    {
+      "group": "Commands",
+      "pages": [
+        "cli/server",
+        "cli/login",
+        "cli/memory",
+        "cli/heartbeat",
+        "cli/steering",
+        "cli/hooks",
+        "cli/learning"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/traylinx/switchAILocal"
   }
 }
