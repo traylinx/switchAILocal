@@ -6,14 +6,11 @@
     "light": "/logo/switchailocal_light.png"
   },
   "favicon": "/favicon.png",
+  "theme": "sequoia",
   "colors": {
-    "primary": "#EC4899",
-    "light": "#FBCFE8",
-    "dark": "#BE185D",
-    "anchors": {
-      "from": "#EC4899",
-      "to": "#8B5CF6"
-    }
+    "primary": "#8800ff",
+    "light": "#8800ff",
+    "dark": "#c084fc"
   },
   "topbarLinks": [
     {
