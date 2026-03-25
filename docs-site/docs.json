@@ -3,9 +3,9 @@
   "name": "switchAILocal",
   "theme": "mint",
   "colors": {
-    "primary": "#EC4899",
-    "light": "#FBCFE8",
-    "dark": "#BE185D"
+    "primary": "#8800ff",
+    "light": "#8800ff",
+    "dark": "#c084fc"
   },
   "navbar": {
     "primary": {
