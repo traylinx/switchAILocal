@@ -1,0 +1,384 @@
+---
+title: "Memory Commands"
+description: "Manage routing history, user preferences, and analytics data"
+---
+
+## Overview
+
+The memory system stores routing decisions, learns user preferences, and provides analytics for intelligent model selection. All data is stored locally with optional compression.
+
+## Commands
+
+### init
+
+Initialize the memory system and create required directory structure.
+
+```bash
+switchAILocal memory init
+```
+
+**Output:**
+```
+Initializing switchAILocal memory system...
+✓ Memory system initialized successfully
+  Base directory: ~/.switchailocal/memory
+  Retention: 90 days
+  Compression: true
+  Max log size: 100 MB
+
+Directory structure created:
+  ~/.switchailocal/memory/
+  ├── routing-history.jsonl
+  ├── provider-quirks.md
+  ├── user-preferences/
+  ├── daily/
+  └── analytics/
+
+Memory system is ready to use!
+```
+
+<Note>
+  Run this command once before using other memory features. The server will also auto-initialize on first use.
+</Note>
+
+### status
+
+Show memory system health, disk usage, and statistics.
+
+```bash
+switchAILocal memory status
+```
+
+**Output:**
+```
+switchAILocal Memory System Status
+==================================
+Status: ✓ Healthy
+Base Directory: ~/.switchailocal/memory
+Enabled: true
+
+Statistics:
+  Total Routing Decisions: 15,847
+  Total Users: 23
+  Total Provider Quirks: 12
+  Disk Usage: 45.3 MB
+  Newest Decision: 2026-03-09T14:32:18Z
+  Oldest Decision: 2026-01-15T09:12:03Z
+
+Configuration:
+  Retention Days: 90
+  Compression Enabled: true
+  Last Cleanup: 2026-03-08T03:00:00Z
+
+Daily Logs:
+  Total Files: 53
+  Total Entries: 15,847
+  Disk Usage: 38.2 MB
+
+Last Analytics Update: 2026-03-09T12:00:00Z
+```
+
+### history
+
+View recent routing decisions with detailed outcome information.
+
+```bash
+switchAILocal memory history [--limit N] [--api-key-hash HASH]
+```
+
+<ParamField path="--limit" type="integer" default="100">
+  Maximum number of routing decisions to display.
+</ParamField>
+
+<ParamField path="--api-key-hash" type="string" optional>
+  Filter decisions by API key hash (specific user).
+</ParamField>
+
+<CodeGroup>
+```bash Recent Decisions
+# Show last 100 decisions
+switchAILocal memory history
+```
+
+```bash Limited Results
+# Show only last 20 decisions
+switchAILocal memory history --limit 20
+```
+
+```bash User-Specific
+# Filter by user API key hash
+switchAILocal memory history --api-key-hash sha256:a1b2c3d4...
+```
+</CodeGroup>
+
+**Output:**
+```
+Recent Routing Decisions (limit: 100)
+=====================================
+
+[1] 2026-03-09T14:32:18Z
+    API Key: sha256:a1b2c3d4...
+    Model: gpt-4 → claude-sonnet-4
+    Intent: code_generation
+    Tier: premium (confidence: 0.92)
+    Latency: 145ms
+    Outcome: ✓ Success: true, Response: 2341ms, Quality: 0.95
+
+[2] 2026-03-09T14:28:03Z
+    API Key: sha256:e5f6g7h8...
+    Model: gpt-3.5-turbo → gemini-pro
+    Intent: chat
+    Tier: standard (confidence: 0.78)
+    Latency: 89ms
+    Outcome: ✓ Success: true, Response: 1102ms, Quality: 0.88
+
+[3] 2026-03-09T14:25:47Z
+    API Key: sha256:a1b2c3d4...
+    Model: claude-3-opus → claude-sonnet-4
+    Intent: analysis
+    Tier: premium (confidence: 0.85)
+    Latency: 112ms
+    Outcome: ✗ Success: false, Error: Rate limit exceeded
+
+Showing 3 of 3 decisions
+```
+
+### preferences
+
+View learned user preferences for model selection.
+
+```bash
+switchAILocal memory preferences --api-key KEY | --api-key-hash HASH
+```
+
+<ParamField path="--api-key" type="string">
+  API key to look up preferences. The key is hashed internally for security.
+</ParamField>
+
+<ParamField path="--api-key-hash" type="string">
+  Pre-computed API key hash (SHA-256 format).
+</ParamField>
+
+<Warning>
+  Either `--api-key` or `--api-key-hash` is required.
+</Warning>
+
+<CodeGroup>
+```bash Using API Key
+switchAILocal memory preferences --api-key sk-test-abc123xyz
+```
+
+```bash Using Hash
+switchAILocal memory preferences --api-key-hash sha256:a1b2c3d4e5f6...
+```
+</CodeGroup>
+
+**Output:**
+```
+User Preferences for API Key: sha256:a1b2c3d4...
+==========================================
+Last Updated: 2026-03-09T12:00:00Z
+
+Model Preferences:
+  code_generation → claude-sonnet-4
+  chat → gemini-pro
+  analysis → gpt-4-turbo
+  creative_writing → claude-opus-4
+
+Provider Bias:
+  anthropic: +0.15
+  google: +0.08
+  openai: -0.05
+  ollama: -0.12
+
+Custom Rules:
+  [1] temperature > 0.8 → claude-opus-4 (priority: 10)
+  [2] max_tokens > 4000 → gpt-4-turbo (priority: 8)
+  [3] tool_use == true → claude-sonnet-4 (priority: 9)
+```
+
+<Info>
+  Preferences are learned automatically based on routing history. Higher confidence and success rates strengthen preferences.
+</Info>
+
+### reset
+
+Permanently delete all memory data. Creates automatic backup before reset.
+
+```bash
+switchAILocal memory reset --confirm
+```
+
+<ParamField path="--confirm" type="boolean" required>
+  Confirmation flag required to prevent accidental data loss.
+</ParamField>
+
+**Without `--confirm`:**
+```
+⚠️  WARNING: This will permanently delete all memory data including:
+  • Routing history
+  • User preferences
+  • Provider quirks
+  • Daily logs
+  • Analytics data
+
+Use --confirm flag to proceed with reset.
+
+💡 Tip: Use 'switchAILocal memory export' to create a backup first.
+```
+
+**With `--confirm`:**
+```
+Creating automatic backup before reset...
+Backup file: memory-backup-before-reset-20260309-143218.tar.gz
+✓ Backup created successfully: memory-backup-before-reset-20260309-143218.tar.gz
+
+Proceeding with reset...
+✓ Memory system reset successfully
+  Removed directory: ~/.switchailocal/memory
+  Backup available: memory-backup-before-reset-20260309-143218.tar.gz
+
+💡 Run 'switchAILocal memory init' to reinitialize the memory system.
+💡 To restore from backup: tar -xzf memory-backup-before-reset-20260309-143218.tar.gz -C ~/
+```
+
+<Warning>
+  This operation cannot be undone. All routing history, preferences, and analytics will be permanently deleted.
+</Warning>
+
+### export
+
+Create a compressed backup of all memory data.
+
+```bash
+switchAILocal memory export [--output FILE]
+```
+
+<ParamField path="--output" type="string" optional>
+  Output filename for the backup archive. Defaults to `switchailocal-memory-YYYYMMDD-HHMMSS.tar.gz`.
+</ParamField>
+
+<CodeGroup>
+```bash Default Export
+# Creates timestamped backup file
+switchAILocal memory export
+```
+
+```bash Custom Filename
+# Specify backup filename
+switchAILocal memory export --output backup-2026-03-09.tar.gz
+```
+
+```bash Scheduled Backup
+# Cron job example (daily at 3 AM)
+0 3 * * * switchAILocal memory export --output ~/backups/memory-$(date +\%Y\%m\%d).tar.gz
+```
+</CodeGroup>
+
+**Output:**
+```
+Exporting memory data to: switchailocal-memory-20260309-143245.tar.gz
+✓ Export completed successfully
+  Archive size: 45.3 MB
+  Contains all memory data from: ~/.switchailocal/memory
+```
+
+**Restore from backup:**
+```bash
+# Extract backup to home directory
+tar -xzf switchailocal-memory-20260309-143245.tar.gz -C ~/
+```
+
+## Configuration
+
+Memory settings are configured in `config.yaml`:
+
+```yaml
+memory:
+  enabled: true
+  retention_days: 90
+  max_log_size_mb: 100
+  compression: true
+  base_dir: "~/.switchailocal/memory"
+```
+
+<ParamField path="enabled" type="boolean" default="true">
+  Enable or disable the memory system.
+</ParamField>
+
+<ParamField path="retention_days" type="integer" default="90">
+  Number of days to keep routing history before automatic cleanup.
+</ParamField>
+
+<ParamField path="max_log_size_mb" type="integer" default="100">
+  Maximum size of log files before rotation (MB).
+</ParamField>
+
+<ParamField path="compression" type="boolean" default="true">
+  Enable gzip compression for daily logs.
+</ParamField>
+
+<ParamField path="base_dir" type="string" default="~/.switchailocal/memory">
+  Base directory for all memory data.
+</ParamField>
+
+## Data Structure
+
+The memory system organizes data as follows:
+
+```
+~/.switchailocal/memory/
+├── routing-history.jsonl       # Main routing decision log (JSONL)
+├── provider-quirks.md          # Known provider-specific behaviors
+├── user-preferences/           # Per-user learned preferences
+│   ├── sha256_abc123.json
+│   └── sha256_def456.json
+├── daily/                      # Compressed daily logs
+│   ├── 2026-03-08.jsonl.gz
+│   ├── 2026-03-09.jsonl.gz
+│   └── ...
+└── analytics/                  # Aggregated analytics
+    ├── provider-stats.json
+    ├── model-performance.json
+    └── user-patterns.json
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Memory system not initialized">
+    ```bash
+    # Initialize the memory system
+    switchAILocal memory init
+    ```
+  </Accordion>
+
+  <Accordion title="Disk space warnings">
+    Check current disk usage:
+    ```bash
+    switchAILocal memory status
+    ```
+    
+    Reduce retention period in config:
+    ```yaml
+    memory:
+      retention_days: 30  # Reduce from 90 to 30 days
+    ```
+  </Accordion>
+
+  <Accordion title="Export fails with permission error">
+    Ensure write permissions:
+    ```bash
+    # Check permissions
+    ls -la ~/.switchailocal/memory
+    
+    # Fix if needed
+    chmod -R 700 ~/.switchailocal/memory
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Commands
+
+- [Learning Commands](/cli/memory) - Analyze and apply learned preferences
+- [Heartbeat Commands](/cli/heartbeat) - Monitor provider performance

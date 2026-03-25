@@ -1,0 +1,593 @@
+---
+title: 'Provider Prefixes'
+description: 'Route requests to specific AI providers using model prefixes'
+---
+
+## Overview
+
+Provider prefixes enable explicit routing to specific AI providers. Use the format `provider:model` to control which backend handles your request.
+
+## Syntax
+
+```
+provider:model-name
+```
+
+Examples:
+- `geminicli:gemini-2.5-pro` - Routes to Gemini CLI
+- `ollama:llama3.2` - Routes to Ollama
+- `claudecli:claude-sonnet-4` - Routes to Claude CLI
+
+## Available Providers
+
+### CLI Providers
+
+Use your paid CLI subscriptions:
+
+<Tabs>
+  <Tab title="Gemini CLI">
+    **Prefix**: `geminicli:`
+    
+    Routes to Google Gemini CLI tool. Requires `gemini` CLI installed and authenticated.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "geminicli:gemini-2.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    **Available Models**:
+    - `geminicli:gemini-2.5-pro`
+    - `geminicli:gemini-2.5-flash`
+    - `geminicli:gemini-3-pro-preview`
+    
+    **Features**:
+    - ✅ File attachments via `extra_body.cli`
+    - ✅ Folder attachments
+    - ✅ Session management
+    - ✅ Sandbox mode
+  </Tab>
+  
+  <Tab title="Claude CLI">
+    **Prefix**: `claudecli:`
+    
+    Routes to Anthropic Claude CLI tool. Requires `claude` CLI installed and authenticated.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "claudecli:claude-sonnet-4",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    **Available Models**:
+    - `claudecli:claude-sonnet-4`
+    - `claudecli:claude-opus-4`
+    - `claudecli:claude-sonnet-3.5`
+    
+    **Features**:
+    - ✅ File attachments
+    - ✅ Auto-approve mode
+    - ✅ Dangerous permissions skip
+  </Tab>
+  
+  <Tab title="Codex">
+    **Prefix**: `codex:`
+    
+    Routes to OpenAI Codex CLI. Requires `codex` CLI installed and authenticated.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "codex:gpt-5",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    **Features**:
+    - ✅ Sandbox execution
+    - ✅ Full auto mode
+    - ✅ Session management
+  </Tab>
+  
+  <Tab title="Vibe CLI">
+    **Prefix**: `vibe:`
+    
+    Routes to Mistral Vibe CLI. Requires `vibe` CLI installed and authenticated.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "vibe:mistral-large",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="OpenCode">
+    **Prefix**: `opencode:`
+    
+    Routes to OpenCode CLI. Requires `opencode` CLI installed and authenticated.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "opencode:claude-4.5-sonnet",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+### Local Providers
+
+Run models on your machine:
+
+<Tabs>
+  <Tab title="Ollama">
+    **Prefix**: `ollama:`
+    
+    Routes to local Ollama server. Requires Ollama running on `localhost:11434`.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "ollama:llama3.2",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    **Available Models**: Any model you've pulled with `ollama pull`
+    
+    **Features**:
+    - ✅ Fully local (no internet required)
+    - ✅ Privacy-preserving
+    - ✅ Custom models
+    - ✅ Embeddings support
+  </Tab>
+  
+  <Tab title="LM Studio">
+    **Prefix**: `lmstudio:`
+    
+    Routes to local LM Studio server. Requires LM Studio running with API server enabled.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "lmstudio:mistral-7b",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+### Cloud API Providers
+
+Use cloud APIs directly:
+
+<Tabs>
+  <Tab title="switchAI">
+    **Prefix**: `switchai:`
+    
+    Routes to Traylinx switchAI unified gateway. Requires `switchai.api-key` configured.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "switchai:auto",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    **Special Models**:
+    - `switchai:auto` - Intelligent model selection
+    - `switchai:deepseek-reasoner` - Reasoning model
+    - `switchai:openai/gpt-oss-120b` - OSS models
+    
+    **Features**:
+    - ✅ Access to 40+ models
+    - ✅ Automatic best model selection
+    - ✅ Built-in failover
+  </Tab>
+  
+  <Tab title="Gemini API">
+    **Prefix**: `gemini:`
+    
+    Routes to Google AI Studio API. Requires `gemini.api-key` configured.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "gemini:gemini-2.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="Claude API">
+    **Prefix**: `claude:`
+    
+    Routes to Anthropic API. Requires `claude.api-key` configured.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "claude:claude-sonnet-4",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="OpenAI API">
+    **Prefix**: `openai:`
+    
+    Routes to OpenAI API. Requires `openai.api-key` configured.
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "openai:gpt-4",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="OpenAI Compatible">
+    **Prefix**: `openai-compat:`
+    
+    Routes to OpenAI-compatible APIs (OpenRouter, etc.). Configure in `config.yaml`.
+    
+    ```yaml config.yaml
+    openai_compatibility:
+      - name: openrouter
+        base_url: https://openrouter.ai/api/v1
+        api_key: your-key
+    ```
+    
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "openai-compat:openrouter/anthropic/claude-3.5-sonnet",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## List Available Providers
+
+```
+GET /v1/providers
+```
+
+Returns all active providers with their status and model count:
+
+```bash
+curl http://localhost:18080/v1/providers \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+### Response Format
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "geminicli",
+      "name": "Gemini CLI",
+      "type": "cli",
+      "mode": "local",
+      "status": "active",
+      "model_count": 5
+    },
+    {
+      "id": "switchai",
+      "name": "switchAI",
+      "type": "api",
+      "mode": "online",
+      "status": "active",
+      "model_count": 41
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "type": "local",
+      "mode": "offline",
+      "status": "active",
+      "model_count": 3
+    }
+  ]
+}
+```
+
+### Filter Providers
+
+```bash
+# Only active providers
+curl "http://localhost:18080/v1/providers?filter=active" \
+  -H "Authorization: Bearer sk-test-123"
+
+# Only inactive providers  
+curl "http://localhost:18080/v1/providers?filter=inactive" \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+## Auto-Routing vs Explicit Routing
+
+### Auto-Routing (No Prefix)
+
+Omit the prefix to let switchAILocal choose the best available provider:
+
+```python
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",  # No prefix
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+**Routing Logic**:
+1. Checks if model is available from any provider
+2. Prefers CLI providers (use your subscriptions)
+3. Falls back to API providers
+4. Uses intelligent routing based on provider health
+
+### Explicit Routing (With Prefix)
+
+Specify the exact provider:
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",  # Explicit prefix
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+**When to Use**:
+- You need a specific provider feature (e.g., CLI attachments)
+- Testing a particular provider
+- Provider-specific behavior required
+- Cost optimization (prefer local/CLI)
+
+## Provider Configuration
+
+### CLI Provider Setup
+
+CLI providers work automatically if the CLI tool is installed and authenticated:
+
+```bash
+# Authenticate CLI tools
+gemini auth login
+claude login
+codex login
+```
+
+No additional configuration needed in `config.yaml`.
+
+### API Provider Setup
+
+Configure API keys in `config.yaml`:
+
+```yaml config.yaml
+# Google AI Studio
+gemini:
+  api-key:
+    - key: "your-gemini-api-key"
+      name: "Production"
+
+# Anthropic
+claude:
+  api-key:
+    - key: "your-claude-api-key"
+      name: "Production"
+
+# switchAI
+switchai:
+  api-key:
+    - key: "your-switchai-api-key"
+      name: "Production"
+```
+
+### Local Provider Setup
+
+#### Ollama
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull models
+ollama pull llama3.2
+ollama pull mistral
+
+# Start server (runs on localhost:11434)
+ollama serve
+```
+
+Ollama is auto-detected when running. No config needed.
+
+#### LM Studio
+
+1. Download and install [LM Studio](https://lmstudio.ai/)
+2. Load a model
+3. Start local server in LM Studio
+4. Configure endpoint in `config.yaml`:
+
+```yaml config.yaml
+openai_compatibility:
+  - name: lmstudio
+    base_url: http://localhost:1234/v1
+    api_key: lm-studio
+```
+
+## Advanced Features
+
+### Load Balancing
+
+Configure multiple accounts for round-robin load balancing:
+
+```yaml config.yaml
+gemini:
+  api-key:
+    - key: "account-1-key"
+      name: "Account 1"
+    - key: "account-2-key"
+      name: "Account 2"
+    - key: "account-3-key"
+      name: "Account 3"
+```
+
+switchAILocal automatically rotates between accounts.
+
+### Failover
+
+Automatic failover to backup providers:
+
+```yaml config.yaml
+failover:
+  enabled: true
+  retry_attempts: 3
+  fallback_providers:
+    - geminicli
+    - gemini
+    - switchai
+```
+
+### Provider Priorities
+
+Set priority order for auto-routing:
+
+```yaml config.yaml
+routing:
+  priority:
+    - geminicli  # Try CLI first (free for subscribers)
+    - ollama     # Then local models (free)
+    - switchai   # Then switchAI
+    - gemini     # Finally API (paid)
+```
+
+## Provider Comparison
+
+| Feature | CLI | Local | API |
+|---------|-----|-------|-----|
+| **Cost** | Free (with subscription) | Free | Pay per token |
+| **Privacy** | Local execution | Fully local | Data sent to cloud |
+| **Speed** | Medium | Fast | Varies |
+| **Attachments** | ✅ | ❌ | ❌ |
+| **Offline** | ❌ | ✅ | ❌ |
+| **Setup** | CLI install | Model download | API key |
+
+## Examples
+
+### Prefer CLI Providers
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+# Try CLI first for cost savings
+models = [
+    "geminicli:gemini-2.5-pro",  # Try CLI
+    "gemini:gemini-2.5-pro",     # Fallback to API
+]
+
+for model in models:
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Hello!"}]
+        )
+        print(f"Success with {model}")
+        break
+    except Exception as e:
+        print(f"Failed with {model}: {e}")
+        continue
+```
+
+### Route by Capability
+
+```python
+def get_best_model(needs_vision=False, needs_tools=False):
+    if needs_vision:
+        return "geminicli:gemini-2.5-pro"  # Best vision support
+    elif needs_tools:
+        return "switchai:auto"  # Best tool support
+    else:
+        return "ollama:llama3.2"  # Fast and free
+
+response = client.chat.completions.create(
+    model=get_best_model(needs_vision=True),
+    messages=[{"role": "user", "content": "Describe this image"}]
+)
+```
+
+## Troubleshooting
+
+### Provider Not Found
+
+**Error**: `Provider 'geminicli' not available`
+
+**Solutions**:
+1. Verify CLI tool is installed: `which gemini`
+2. Check authentication: `gemini auth status`
+3. Test CLI directly: `gemini chat "hello"`
+4. Check server logs for errors
+
+### Model Not Found
+
+**Error**: `Model 'geminicli:invalid-model' not found`
+
+**Solutions**:
+1. List available models: `GET /v1/models`
+2. Check model name spelling
+3. Verify provider supports the model
+4. Try without prefix for auto-routing
+
+### Provider Timeout
+
+**Error**: `Provider 'ollama' timed out`
+
+**Solutions**:
+1. Verify provider is running: `curl http://localhost:11434`
+2. Increase timeout in `config.yaml`:
+   ```yaml
+   timeouts:
+     provider: 60  # Seconds
+   ```
+3. Check provider logs
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auto-Routing" icon="route" href="/api/auto-routing">
+    Learn about intelligent provider selection
+  </Card>
+  <Card title="CLI Attachments" icon="paperclip" href="/api/cli-attachments">
+    Pass files and folders to CLI providers
+  </Card>
+  <Card title="Models" icon="cube" href="/api/models">
+    Discover all available models
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/providers">
+    Configure provider settings
+  </Card>
+</CardGroup>

@@ -1,0 +1,509 @@
+---
+title: Heartbeat & Monitoring
+description: Health checks, system monitoring, and operational commands
+icon: heart-pulse
+---
+
+The Heartbeat system provides health checks, monitoring, and operational commands for managing switchAILocal in production environments.
+
+## Overview
+
+The Heartbeat system includes:
+- **Health Checks**: Continuous monitoring of system health
+- **Steering Commands**: Runtime configuration management
+- **Hooks System**: Custom event handling
+- **Learning Commands**: Model performance analysis
+
+<Warning>
+The Heartbeat, Steering, Hooks, and Learning commands are currently in development. This page documents the planned architecture based on the source code structure.
+</Warning>
+
+## CLI Commands
+
+switchAILocal provides several system management commands:
+
+```bash
+# Memory system (documented separately)
+switchAILocal memory <command>
+
+# Heartbeat monitoring
+switchAILocal heartbeat <command>
+
+# Steering (runtime configuration)
+switchAILocal steering <command>
+
+# Hooks system
+switchAILocal hooks <command>
+
+# Learning system
+switchAILocal learning <command>
+```
+
+## Health Monitoring
+
+### Streaming Configuration
+
+Configure heartbeat intervals for streaming requests in `config.yaml`:
+
+```yaml config.yaml
+streaming:
+  # SSE heartbeat interval (seconds)
+  keepalive-seconds: 15
+  
+  # Number of retries before first byte
+  bootstrap-retries: 2
+```
+
+**Purpose:**
+- **keepalive-seconds**: Send SSE heartbeat comments to prevent connection timeouts
+- **bootstrap-retries**: Retry authentication/connection before streaming starts
+
+### Monitoring Endpoints
+
+Use the management API for health checks:
+
+<Tabs>
+  <Tab title="Metrics">
+    Get comprehensive system metrics:
+    
+    ```bash
+    curl http://localhost:18080/management/metrics
+    ```
+    
+    **Example Response:**
+    ```json
+    {
+      "uptime_seconds": 86400,
+      "requests_total": 15234,
+      "requests_success": 14987,
+      "requests_failed": 247,
+      "avg_latency_ms": 234,
+      "intelligence": {
+        "routing_decisions": 12456,
+        "cache_hit_rate": 0.35,
+        "semantic_tier_usage": 0.30
+      },
+      "superbrain": {
+        "healing_attempts": 142,
+        "healing_success_rate": 0.90
+      },
+      "memory": {
+        "total_decisions": 15234,
+        "disk_usage_bytes": 47431680
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Health Check">
+    Simple health check endpoint:
+    
+    ```bash
+    curl http://localhost:18080/health
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "status": "healthy",
+      "timestamp": "2026-03-09T14:23:45Z",
+      "version": "v2.5.0"
+    }
+    ```
+  </Tab>
+  <Tab title="Provider Status">
+    Check provider availability:
+    
+    ```bash
+    curl http://localhost:18080/management/providers
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "providers": [
+        {
+          "name": "geminicli",
+          "status": "available",
+          "models": 15,
+          "last_check": "2026-03-09T14:23:45Z"
+        },
+        {
+          "name": "claudecli",
+          "status": "available",
+          "models": 8,
+          "last_check": "2026-03-09T14:23:45Z"
+        },
+        {
+          "name": "ollama",
+          "status": "available",
+          "models": 12,
+          "last_check": "2026-03-09T14:23:45Z"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Steering Commands
+
+Steering allows runtime configuration changes without restarting:
+
+### Reload Configuration
+
+```bash
+# Reload config.yaml without restart
+curl -X POST http://localhost:18080/v0/management/steering/reload \
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+```
+
+**Use cases:**
+- Update intelligence matrix
+- Add/remove API keys
+- Adjust Superbrain settings
+- Modify routing strategies
+
+<Warning>
+Some configuration changes (like `port` or `tls`) require a full restart.
+</Warning>
+
+### Dynamic Matrix Updates
+
+Update the intelligence matrix at runtime:
+
+<Steps>
+  <Step title="Edit config.yaml">
+    ```yaml config.yaml
+    intelligence:
+      matrix:
+        coding: "switchai-chat"      # Updated
+        reasoning: "gemini-2.5-pro"  # Updated
+        creative: "switchai-chat"
+    ```
+  </Step>
+  <Step title="Reload configuration">
+    ```bash
+    curl -X POST http://localhost:18080/v0/management/steering/reload \
+      -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+    ```
+  </Step>
+  <Step title="Verify changes">
+    ```bash
+    curl http://localhost:18080/management/metrics | jq '.intelligence.matrix'
+    ```
+  </Step>
+</Steps>
+
+## Hooks System
+
+Hooks allow custom event handling for routing decisions, failures, and other events.
+
+### Hook Types
+
+<Tabs>
+  <Tab title="Pre-Request">
+    Execute before routing decisions:
+    
+    ```lua plugins/hooks/pre-request.lua
+    function on_pre_request(request)
+      -- Modify request before routing
+      if request.user_id == "special_user" then
+        request.priority = "high"
+      end
+      return request
+    end
+    ```
+  </Tab>
+  <Tab title="Post-Request">
+    Execute after request completion:
+    
+    ```lua plugins/hooks/post-request.lua
+    function on_post_request(request, response)
+      -- Log or process response
+      if response.latency_ms > 5000 then
+        log_slow_request(request, response)
+      end
+    end
+    ```
+  </Tab>
+  <Tab title="On-Error">
+    Execute when errors occur:
+    
+    ```lua plugins/hooks/on-error.lua
+    function on_error(request, error)
+      -- Custom error handling
+      if error.type == "rate_limit" then
+        notify_admin(request, error)
+      end
+    end
+    ```
+  </Tab>
+</Tabs>
+
+### Configuration
+
+```yaml config.yaml
+plugin:
+  enabled: true
+  hooks:
+    enabled: true
+    directory: "plugins/hooks"
+    pre-request: true
+    post-request: true
+    on-error: true
+```
+
+## Learning Commands
+
+The Learning system analyzes model performance and optimizes routing:
+
+### Performance Analysis
+
+```bash
+# Analyze model performance over time
+switchAILocal learning analyze --days 30
+
+# Compare models for specific intent
+switchAILocal learning compare --intent coding
+
+# Generate optimization recommendations
+switchAILocal learning recommend
+```
+
+### Configuration
+
+```yaml config.yaml
+intelligence:
+  learning:
+    enabled: true
+    min-samples: 100          # Minimum decisions before analysis
+    confidence-threshold: 0.8 # Minimum confidence for recommendations
+    update-interval: 86400    # Analyze daily (seconds)
+```
+
+## Operational Best Practices
+
+<Steps>
+  <Step title="Monitor Metrics Regularly">
+    Set up automated monitoring:
+    ```bash
+    # Check every 5 minutes
+    */5 * * * * curl -s http://localhost:18080/management/metrics | \
+      jq -r '.requests_failed' | \
+      (read v; [ "$v" -gt 100 ] && alert_team)
+    ```
+  </Step>
+  <Step title="Configure Health Checks">
+    Use the health endpoint for load balancer health checks:
+    ```nginx nginx.conf
+    upstream switchailocal {
+      server localhost:18080;
+      
+      health_check interval=10s
+                   uri=/health
+                   match=ok_status;
+    }
+    ```
+  </Step>
+  <Step title="Enable Audit Logging">
+    Track all management operations:
+    ```yaml config.yaml
+    remote-management:
+      allow-remote: false
+      secret-key: "your-management-key"
+    
+    superbrain:
+      security:
+        audit_log_enabled: true
+        audit_log_path: "./logs/audit.log"
+    ```
+  </Step>
+  <Step title="Set Up Alerts">
+    Monitor critical metrics:
+    - Request failure rate > 5%
+    - Average latency > 5000ms
+    - Disk usage > 90%
+    - Superbrain healing success rate < 80%
+  </Step>
+  <Step title="Regular Backups">
+    Back up configuration and memory data:
+    ```bash
+    # Daily backup script
+    #!/bin/bash
+    DATE=$(date +%Y%m%d)
+    cp config.yaml "backups/config-${DATE}.yaml"
+    switchAILocal memory export --output "backups/memory-${DATE}.tar.gz"
+    ```
+  </Step>
+</Steps>
+
+## Monitoring Stack Integration
+
+### Prometheus
+
+Export metrics to Prometheus:
+
+```yaml docker-compose.yml
+services:
+  switchailocal:
+    image: switchailocal:latest
+    ports:
+      - "18080:18080"
+    environment:
+      - PROMETHEUS_ENABLED=true
+      - PROMETHEUS_PORT=9090
+```
+
+### Grafana Dashboard
+
+Key metrics to monitor:
+
+<Tabs>
+  <Tab title="Request Metrics">
+    - Requests per second
+    - Success rate
+    - Average latency (p50, p95, p99)
+    - Error rate by type
+  </Tab>
+  <Tab title="Intelligence Metrics">
+    - Routing tier distribution
+    - Cache hit rate
+    - Semantic tier usage
+    - Average confidence scores
+  </Tab>
+  <Tab title="Superbrain Metrics">
+    - Healing attempts
+    - Healing success rate
+    - Silence detections
+    - Fallback routing count
+  </Tab>
+  <Tab title="System Metrics">
+    - Memory usage
+    - Disk usage
+    - CPU usage
+    - Open connections
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<Accordion title="High latency on health checks">
+**Symptom:** Health check endpoint taking > 1s to respond
+
+**Possible causes:**
+1. System under heavy load
+2. Database/disk I/O bottleneck
+3. Network connectivity issues
+
+**Solutions:**
+- Reduce concurrent request limit
+- Increase server resources
+- Enable request queuing
+</Accordion>
+
+<Accordion title="Steering reload fails">
+**Error:** `Failed to reload configuration`
+
+**Check:**
+1. Management key is correct
+2. config.yaml syntax is valid
+3. File permissions allow reading config.yaml
+
+**Debug:**
+```bash
+# Validate YAML syntax
+yamlint config.yaml
+
+# Check file permissions
+ls -la config.yaml
+```
+</Accordion>
+
+<Accordion title="Streaming requests timing out">
+**Symptom:** Streaming requests disconnect after 15-30 seconds
+
+**Solution:**
+Increase keepalive interval:
+```yaml config.yaml
+streaming:
+  keepalive-seconds: 30  # Increase from 15
+```
+</Accordion>
+
+## Emergency Procedures
+
+### Service Degradation
+
+If performance degrades:
+
+<Steps>
+  <Step title="Check metrics">
+    ```bash
+    curl http://localhost:18080/management/metrics
+    ```
+  </Step>
+  <Step title="Identify bottleneck">
+    - High latency? Scale horizontally
+    - High error rate? Check provider status
+    - High memory? Reduce retention period
+  </Step>
+  <Step title="Apply quick fixes">
+    ```yaml config.yaml
+    # Disable expensive features temporarily
+    intelligence:
+      cascade:
+        enabled: false  # Disable cascading
+      semantic-cache:
+        max-size: 5000  # Reduce cache size
+    
+    superbrain:
+      mode: "observe"   # Disable healing
+    ```
+  </Step>
+  <Step title="Reload configuration">
+    ```bash
+    curl -X POST http://localhost:18080/v0/management/steering/reload \
+      -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+    ```
+  </Step>
+</Steps>
+
+### Complete Outage
+
+If switchAILocal stops responding:
+
+<Steps>
+  <Step title="Check process status">
+    ```bash
+    ps aux | grep switchAILocal
+    ```
+  </Step>
+  <Step title="Review logs">
+    ```bash
+    tail -100 logs/switchailocal.log
+    ```
+  </Step>
+  <Step title="Restart service">
+    ```bash
+    systemctl restart switchailocal
+    # or
+    docker restart switchailocal
+    ```
+  </Step>
+  <Step title="Verify health">
+    ```bash
+    curl http://localhost:18080/health
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/configuration/overview">
+    Learn about all configuration options
+  </Card>
+  <Card title="Management API" icon="code" href="/api-reference/management">
+    Explore management endpoints
+  </Card>
+</CardGroup>

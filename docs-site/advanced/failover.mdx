@@ -1,0 +1,585 @@
+---
+title: Failover & Load Balancing
+description: Automatic credential rotation, quota handling, and intelligent provider failover
+icon: arrows-rotate
+---
+
+**Failover & Load Balancing** ensures your AI requests succeed even when providers fail, quotas are exceeded, or credentials expire. switchAILocal automatically rotates through credentials, switches providers, and intelligently routes around failures.
+
+## Overview
+
+switchAILocal provides multiple layers of reliability:
+
+- **Credential Rotation**: Round-robin or fill-first across multiple API keys
+- **Quota Management**: Automatic project switching when quotas are exceeded
+- **Retry Logic**: Configurable retries for transient failures
+- **Intelligent Failover**: AI-powered routing to alternative providers (Superbrain)
+
+<Tip>
+For advanced failover with AI-powered provider selection, see [Superbrain](/intelligent-systems/superbrain).
+</Tip>
+
+## Routing Strategies
+
+Control how switchAILocal selects credentials when multiple are available.
+
+### Configuration
+
+```yaml
+routing:
+  strategy: "round-robin"  # or "fill-first"
+```
+
+### Round-Robin (Default)
+
+Distributes requests evenly across all available credentials:
+
+```yaml
+routing:
+  strategy: "round-robin"
+
+gemini-api-key:
+  - api-key: "key-1"
+  - api-key: "key-2"
+  - api-key: "key-3"
+```
+
+**Behavior:**
+- Request 1 → `key-1`
+- Request 2 → `key-2`
+- Request 3 → `key-3`
+- Request 4 → `key-1` (cycles back)
+
+**Use Cases:**
+- Even load distribution across accounts
+- Fair quota consumption
+- Testing multiple credentials
+
+### Fill-First
+
+Uses the first credential until it fails or hits quota, then moves to the next:
+
+```yaml
+routing:
+  strategy: "fill-first"
+
+gemini-api-key:
+  - api-key: "key-1"  # Primary
+  - api-key: "key-2"  # Backup
+  - api-key: "key-3"  # Emergency
+```
+
+**Behavior:**
+- All requests use `key-1`
+- On failure/quota → switch to `key-2`
+- On failure/quota → switch to `key-3`
+- After recovery, stays on current key
+
+**Use Cases:**
+- Primary/backup credential hierarchy
+- Minimize account switching
+- Cost optimization (cheaper accounts first)
+
+<Accordion title="Changing Strategy at Runtime">
+You can change the routing strategy at runtime using the Management API:
+
+```bash
+curl http://localhost:18080/api/config/routing \
+  -X POST \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"strategy": "fill-first"}'
+```
+
+The change takes effect immediately without restart.
+</Accordion>
+
+## Quota Exceeded Handling
+
+Automatic failover when provider quotas are exceeded.
+
+### Configuration
+
+```yaml
+quota-exceeded:
+  switch-project: true          # Move to next credential
+  switch-preview-model: true    # Fallback to preview models
+```
+
+### Project Switching
+
+When a credential hits quota, automatically try the next one:
+
+```yaml
+quota-exceeded:
+  switch-project: true
+
+gemini-api-key:
+  - api-key: "project-a-key"
+  - api-key: "project-b-key"
+  - api-key: "project-c-key"
+```
+
+**Behavior:**
+
+<CodeGroup>
+```text Request Flow
+1. Request sent with project-a-key
+2. Response: 429 Quota Exceeded
+3. Retry with project-b-key
+4. Success!
+```
+
+```text When All Fail
+1. Request sent with project-a-key → 429
+2. Retry with project-b-key → 429
+3. Retry with project-c-key → 429
+4. Return 429 to client with all attempts logged
+```
+</CodeGroup>
+
+### Preview Model Fallback
+
+Automatically downgrade to preview/experimental models when stable models hit quota:
+
+```yaml
+quota-exceeded:
+  switch-preview-model: true
+
+gemini-api-key:
+  - api-key: "AIza..."
+    models:
+      - name: "gemini-2.5-pro"          # Stable
+      - name: "gemini-2.5-pro-preview"  # Preview (fallback)
+```
+
+**Behavior:**
+- Request for `gemini-2.5-pro` hits quota
+- Automatically retry with `gemini-2.5-pro-preview`
+- Client receives response from preview model
+
+<Warning>
+Preview models may have different capabilities, rate limits, or stability. Use with caution in production.
+</Warning>
+
+## Retry Logic
+
+Automatic retries for transient failures.
+
+### Configuration
+
+```yaml
+request-retry: 3  # Number of retries
+```
+
+### Retryable Errors
+
+Requests are automatically retried for these HTTP status codes:
+
+- **403** Forbidden (temporary auth issues)
+- **408** Request Timeout
+- **500** Internal Server Error
+- **502** Bad Gateway
+- **503** Service Unavailable
+- **504** Gateway Timeout
+
+### Behavior
+
+```yaml
+request-retry: 3
+```
+
+<CodeGroup>
+```text Success on Retry
+1. Request → 503 Service Unavailable
+2. Retry 1 → 503 Service Unavailable
+3. Retry 2 → 200 OK ✓
+```
+
+```text All Retries Exhausted
+1. Request → 500 Internal Server Error
+2. Retry 1 → 500 Internal Server Error
+3. Retry 2 → 500 Internal Server Error
+4. Retry 3 → 500 Internal Server Error
+5. Return 500 to client
+```
+</CodeGroup>
+
+### Retry with Credential Rotation
+
+When combined with multiple credentials, retries rotate through them:
+
+```yaml
+request-retry: 2
+routing:
+  strategy: "round-robin"
+
+gemini-api-key:
+  - api-key: "key-1"
+  - api-key: "key-2"
+```
+
+**Behavior:**
+1. Request with `key-1` → 503
+2. Retry 1 with `key-2` → 503
+3. Retry 2 with `key-1` → 200 OK ✓
+
+<Tip>
+Combining retries with credential rotation provides resilience against both transient failures and per-account issues.
+</Tip>
+
+## Streaming Failover
+
+Special handling for streaming requests.
+
+### Configuration
+
+```yaml
+streaming:
+  keepalive-seconds: 15    # SSE heartbeat interval
+  bootstrap-retries: 2      # Retries before first byte
+```
+
+### Bootstrap Retries
+
+For streaming requests, switchAILocal can retry **before sending any data to the client**:
+
+```yaml
+streaming:
+  bootstrap-retries: 2
+```
+
+**Behavior:**
+- Request starts streaming
+- Provider fails **before** first chunk
+- Retry with next credential
+- Client never sees the failure
+
+<Accordion title="Why Bootstrap Retries?">
+Once streaming starts and the first byte is sent to the client, the HTTP response is committed. We can't retry after that point without breaking the client connection.
+
+**Bootstrap retries** let us retry transparently while the client is still waiting for the first chunk.
+</Accordion>
+
+### SSE Keepalive
+
+Prevent connection timeouts during long streaming responses:
+
+```yaml
+streaming:
+  keepalive-seconds: 15
+```
+
+Sends a heartbeat comment every 15 seconds:
+
+```
+data: {"chunk": "..."}
+
+: keepalive
+
+data: {"chunk": "..."}
+```
+
+Disable by setting to `0`:
+
+```yaml
+streaming:
+  keepalive-seconds: 0  # Disabled
+```
+
+## Intelligent Failover (Superbrain)
+
+AI-powered provider selection based on capabilities and success rates.
+
+### Configuration
+
+```yaml
+superbrain:
+  enabled: true
+  mode: "conservative"  # or "autopilot"
+  
+  fallback:
+    enabled: true
+    providers:
+      - "geminicli"   # First choice
+      - "gemini"      # Second choice
+      - "ollama"      # Last resort
+    min_success_rate: 0.5  # Minimum 50% success rate
+```
+
+### How It Works
+
+When a provider fails, Superbrain:
+
+1. **Analyzes the failure** using AI diagnosis
+2. **Selects an alternative provider** based on:
+   - Provider capabilities (context size, streaming, CLI support)
+   - Current availability
+   - Historical success rates
+   - Request requirements
+3. **Adapts the request** for the new provider
+4. **Routes and executes** transparently
+
+### Provider Selection Criteria
+
+<CodeGroup>
+```yaml Capabilities
+# Provider must support:
+- Streaming: if original request was streaming
+- CLI: if original provider was CLI-based
+- Context size: at least as large as original
+```
+
+```yaml Availability
+# Provider must be:
+- Currently responsive
+- Not in backoff period
+- Have credentials configured
+```
+
+```yaml Success Rate
+# Historical performance:
+- Minimum 50% success rate (configurable)
+- Recent success weighted higher
+- Per-provider tracking
+```
+</CodeGroup>
+
+### Example Failover Flow
+
+```yaml
+superbrain:
+  fallback:
+    providers: ["geminicli", "gemini", "ollama"]
+    min_success_rate: 0.5
+```
+
+<CodeGroup>
+```text Scenario: geminicli fails
+1. Request to geminicli → Auth Error
+2. Superbrain diagnoses: "Authentication failure"
+3. Checks fallback providers:
+   - geminicli: ✗ (failed)
+   - gemini: ✓ (available, 85% success rate)
+   - ollama: ✓ (available, 92% success rate)
+4. Selects: gemini (first available in list)
+5. Adapts request for Gemini API format
+6. Routes to gemini → Success!
+```
+
+```text Scenario: All providers unavailable
+1. Request to geminicli → Timeout
+2. Fallback to gemini → Quota Exceeded
+3. Fallback to ollama → Connection Refused
+4. Return error to client with details:
+   - Attempted providers: geminicli, gemini, ollama
+   - Failure reasons: timeout, quota, connection
+   - Healing actions taken: 3 fallback attempts
+```
+</CodeGroup>
+
+### Transparent Metadata
+
+All failover actions are logged in response metadata:
+
+```json
+{
+  "x-switchai-healing-actions": [
+    {
+      "action_type": "fallback_routing",
+      "description": "Routed to gemini after geminicli auth failure",
+      "success": true,
+      "timestamp": "2026-03-09T10:30:00Z",
+      "details": {
+        "original_provider": "geminicli",
+        "fallback_provider": "gemini",
+        "reason": "Authentication failure",
+        "capability_match": 0.95
+      }
+    }
+  ]
+}
+```
+
+<Tip>
+For complete Superbrain documentation, see [Superbrain Intelligence](/intelligent-systems/superbrain).
+</Tip>
+
+## Multi-Provider Configuration
+
+Configure multiple providers for comprehensive failover:
+
+```yaml
+# Primary: Gemini
+gemini-api-key:
+  - api-key: "AIza-primary"
+  - api-key: "AIza-backup"
+
+# Backup: Claude
+claude-api-key:
+  - api-key: "sk-ant-primary"
+
+# Emergency: Local Ollama
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+
+# Routing
+routing:
+  strategy: "round-robin"
+
+quota-exceeded:
+  switch-project: true
+
+request-retry: 3
+
+superbrain:
+  enabled: true
+  fallback:
+    enabled: true
+    providers: ["gemini", "claude", "ollama"]
+    min_success_rate: 0.5
+```
+
+**Result:**
+1. Requests round-robin across Gemini keys
+2. On quota → switch to backup Gemini key
+3. On failure → retry up to 3 times
+4. On persistent failure → Superbrain routes to Claude
+5. On Claude failure → route to local Ollama
+
+## Monitoring & Metrics
+
+### Management Dashboard
+
+View real-time failover metrics:
+
+1. Open http://localhost:18080/dashboard
+2. Navigate to **Provider Health**
+3. View:
+   - Success rates per provider
+   - Quota status
+   - Active credential
+   - Failover events
+
+### API Endpoint
+
+Query provider statistics programmatically:
+
+```bash
+curl http://localhost:18080/api/providers/stats \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+**Response:**
+
+```json
+{
+  "providers": [
+    {
+      "name": "gemini",
+      "success_rate": 0.92,
+      "total_requests": 1523,
+      "failed_requests": 122,
+      "quota_exceeded": 15,
+      "active_credential": "key-1",
+      "available_credentials": 3
+    },
+    {
+      "name": "claude",
+      "success_rate": 0.88,
+      "total_requests": 412,
+      "failed_requests": 49,
+      "quota_exceeded": 0,
+      "active_credential": "key-1",
+      "available_credentials": 1
+    }
+  ]
+}
+```
+
+## Best Practices
+
+### 1. Use Multiple Credentials Per Provider
+
+```yaml
+gemini-api-key:
+  - api-key: "key-1"  # Primary
+  - api-key: "key-2"  # Backup
+  - api-key: "key-3"  # Emergency
+```
+
+### 2. Enable Quota Switching
+
+```yaml
+quota-exceeded:
+  switch-project: true
+```
+
+### 3. Configure Reasonable Retries
+
+```yaml
+request-retry: 3  # Balance between reliability and latency
+```
+
+### 4. Set Up Multi-Provider Failover
+
+```yaml
+superbrain:
+  fallback:
+    providers: ["primary", "backup", "local"]
+```
+
+### 5. Monitor Success Rates
+
+Regularly check provider health:
+
+```bash
+curl http://localhost:18080/api/providers/stats
+```
+
+### 6. Test Failover Scenarios
+
+Simulate failures to verify configuration:
+
+```bash
+# Temporarily disable a credential to test failover
+curl http://localhost:18080/api/credentials/disable \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"provider": "gemini", "key_id": "key-1"}'
+```
+
+## Troubleshooting
+
+### Failover Not Working
+
+**Problem:** Requests fail instead of failing over
+
+**Solutions:**
+- Verify multiple credentials configured: `curl http://localhost:18080/api/providers`
+- Check `quota-exceeded.switch-project: true`
+- Enable debug logging: `debug: true`
+- Verify credentials are valid: Test each manually
+
+### Excessive Retries
+
+**Problem:** Requests take too long due to retries
+
+**Solutions:**
+- Reduce `request-retry` value
+- Decrease `streaming.bootstrap-retries`
+- Check provider health: Remove failing providers
+
+### Wrong Credential Used
+
+**Problem:** Not using expected credential
+
+**Solutions:**
+- Check routing strategy: `round-robin` vs `fill-first`
+- View current selection: Dashboard → Provider Health
+- Force specific credential using `prefix:model` syntax
+
+## See Also
+
+- [Superbrain Intelligence](/intelligent-systems/superbrain) - AI-powered failover
+- [Configuration Reference](/configuration/overview) - Complete config options
+- [Provider Setup](/guides/setup-providers) - Multi-provider configuration

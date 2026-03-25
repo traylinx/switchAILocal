@@ -1,0 +1,601 @@
+---
+title: Superbrain
+description: Autonomous self-healing AI orchestrator with real-time monitoring and failure recovery
+icon: brain-circuit
+---
+
+Superbrain transforms switchAILocal from a passive API gateway into an intelligent, self-healing orchestrator. Instead of treating errors as terminal states, Superbrain actively monitors executions, diagnoses failures using AI, and takes autonomous remediation actions.
+
+## Overview
+
+Superbrain implements an **Observer-Critic** architecture where every execution is monitored by a lightweight supervisor that can:
+
+- **Detect failures in real-time** (within seconds, not minutes)
+- **Diagnose issues using AI** (permission prompts, auth errors, context limits)
+- **Take autonomous healing actions** (stdin injection, process restart, intelligent failover)
+- **Report all actions transparently** (healing metadata in responses)
+
+### Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="Real-Time Monitoring" icon="eye">
+    Detects hung processes and silent failures before hard timeouts
+  </Card>
+  <Card title="AI-Powered Diagnosis" icon="stethoscope">
+    Uses lightweight models to analyze failures and prescribe fixes
+  </Card>
+  <Card title="Autonomous Healing" icon="wand-magic-sparkles">
+    Automatically responds to prompts, restarts with flags, or routes to alternatives
+  </Card>
+  <Card title="Intelligent Failover" icon="route">
+    Routes failed requests to alternative providers based on capabilities
+  </Card>
+  <Card title="Context Optimization" icon="compress">
+    Pre-analyzes large requests and optimizes content to fit model limits
+  </Card>
+  <Card title="Transparent Actions" icon="file-contract">
+    Every autonomous action is logged and included in response metadata
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+### Basic Configuration
+
+Add the `superbrain` section to your `config.yaml`:
+
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "conservative"  # Safe autonomous healing
+  
+  component_flags:
+    overwatch_enabled: true    # Real-time monitoring
+    doctor_enabled: true       # AI diagnosis
+    injector_enabled: true     # Stdin injection
+    recovery_enabled: true     # Process restart
+    fallback_enabled: true     # Intelligent failover
+    sculptor_enabled: true     # Context optimization
+  
+  overwatch:
+    silence_threshold_ms: 30000      # 30 seconds
+    log_buffer_size: 50
+    heartbeat_interval_ms: 1000      # 1 second
+    max_restart_attempts: 2
+  
+  doctor:
+    model: "gemini-flash"            # Lightweight diagnostic model
+    timeout_ms: 5000
+  
+  stdin_injection:
+    mode: "conservative"             # Only safe patterns
+    forbidden_patterns:
+      - "delete"
+      - "remove"
+      - "sudo"
+  
+  fallback:
+    enabled: true
+    providers:
+      - "geminicli"
+      - "gemini"
+      - "ollama"
+    min_success_rate: 0.5
+  
+  context_sculptor:
+    enabled: true
+    token_estimator: "tiktoken"
+    priority_files:
+      - "README.md"
+      - "main.go"
+      - "index.ts"
+  
+  security:
+    audit_log_enabled: true
+    audit_log_path: "./logs/superbrain_audit.log"
+```
+
+## Operational Modes
+
+Superbrain supports five operational modes for gradual rollout:
+
+<Steps>
+  <Step title="disabled">
+    Superbrain is completely disabled. Legacy pass-through mode.
+  </Step>
+  <Step title="observe">
+    Monitor and log only, no autonomous actions. Ideal for initial deployment.
+  </Step>
+  <Step title="diagnose">
+    Diagnose failures and log proposed actions without executing them. Validate diagnosis accuracy.
+  </Step>
+  <Step title="conservative" icon="shield-check">
+    Heal safe patterns only (whitelisted prompts, known recoverable errors). **Recommended for production.**
+  </Step>
+  <Step title="autopilot">
+    Full autonomous healing for all detected issues. Maximum automation after validation.
+  </Step>
+</Steps>
+
+## Core Components
+
+### 1. Overwatch Layer
+
+Real-time monitoring of all CLI executions, tracking output streams and detecting silent hangs.
+
+```yaml config.yaml
+overwatch:
+  silence_threshold_ms: 30000      # Detect hung processes after 30s
+  log_buffer_size: 50              # Capture last 50 lines for diagnosis
+  heartbeat_interval_ms: 1000      # Check every second
+  max_restart_attempts: 2          # Maximum restart attempts
+```
+
+**Features:**
+- Heartbeat detection (tracks stdout/stderr activity)
+- Rolling log buffer for diagnosis
+- Diagnostic snapshot capture on anomalies
+- Configurable silence threshold
+
+### 2. Internal Doctor
+
+AI-powered failure analysis using a lightweight model to identify root causes and recommend fixes.
+
+```yaml config.yaml
+doctor:
+  model: "gemini-flash"     # Fast, cheap diagnostic model
+  timeout_ms: 5000          # Maximum diagnosis time
+```
+
+**Detects:**
+- Permission prompts (file access, tool execution)
+- Authentication errors
+- Context limit exceeded
+- Rate limiting
+- Network errors
+- Process crashes
+
+### 3. Stdin Injector
+
+Automatically responds to interactive CLI prompts to prevent processes from hanging.
+
+<Tabs>
+  <Tab title="Conservative Mode">
+    ```yaml config.yaml
+    stdin_injection:
+      mode: "conservative"
+      forbidden_patterns:
+        - "delete"
+        - "rm -rf"
+        - "sudo"
+    ```
+    
+    Only responds to **explicitly whitelisted** prompts:
+    - `claude_file_permission`: "Allow read file? [y/n]" → "y"
+    - `claude_tool_permission`: "Allow tool execution? [y/n]" → "y"
+    - `generic_continue`: "Press enter to continue" → "\n"
+  </Tab>
+  <Tab title="Autopilot Mode">
+    ```yaml config.yaml
+    stdin_injection:
+      mode: "autopilot"
+      forbidden_patterns:
+        - "delete"
+        - "remove"
+        - "sudo"
+    ```
+    
+    Automatically approves **all safe operations** (file reads, tool executions) while respecting forbidden patterns.
+  </Tab>
+</Tabs>
+
+### 4. Process Recovery
+
+Automatically restarts failed processes with corrective flags based on diagnosis.
+
+**Example flow:**
+1. **Diagnosis:** "Permission prompt detected"
+2. **Action:** Restart with `--dangerously-skip-permissions` flag
+3. **Result:** Process completes successfully
+
+<Warning>
+Process recovery is limited by `max_restart_attempts` to prevent infinite loops. Default is 2 attempts.
+</Warning>
+
+### 5. Fallback Router
+
+Routes failed requests to alternative providers based on capabilities and success rates.
+
+```yaml config.yaml
+fallback:
+  enabled: true
+  providers:
+    - "geminicli"    # Preferred fallback
+    - "gemini"       # Fallback 2
+    - "ollama"       # Fallback 3
+  min_success_rate: 0.5  # Minimum to consider provider
+```
+
+**Selection criteria:**
+- Provider capabilities (context size, streaming support)
+- Current availability
+- Historical success rates
+- Request requirements
+
+### 6. Context Sculptor
+
+Pre-flight analysis and optimization to fit requests within model context limits.
+
+```yaml config.yaml
+context_sculptor:
+  enabled: true
+  token_estimator: "tiktoken"  # or "simple"
+  priority_files:
+    - "README.md"
+    - "main.go"
+    - "package.json"
+```
+
+**Features:**
+- Token estimation for file/folder references
+- Intelligent file prioritization
+- High-density map generation for excluded content
+- Alternative model recommendations
+
+## Healing Metadata
+
+When Superbrain takes autonomous actions, responses include detailed healing metadata:
+
+<Tabs>
+  <Tab title="Successful Healing">
+    ```json
+    {
+      "id": "chatcmpl-123",
+      "model": "geminicli:gemini-2.5-pro",
+      "choices": [{
+        "message": {
+          "role": "assistant",
+          "content": "Here is the response..."
+        }
+      }],
+      "superbrain": {
+        "healed": true,
+        "original_provider": "claudecli",
+        "final_provider": "geminicli",
+        "healing_actions": [
+          {
+            "timestamp": "2026-01-26T10:30:45Z",
+            "action_type": "stdin_injection",
+            "description": "Injected 'y' response to permission prompt",
+            "success": true
+          },
+          {
+            "timestamp": "2026-01-26T10:30:50Z",
+            "action_type": "restart_with_flags",
+            "description": "Restarted with --dangerously-skip-permissions",
+            "success": true
+          }
+        ],
+        "context_optimized": false,
+        "total_healing_time_ms": 5200
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Negotiated Failure">
+    ```json
+    {
+      "error": {
+        "message": "Request could not be completed after autonomous remediation attempts",
+        "type": "negotiated_failure",
+        "code": "healing_exhausted"
+      },
+      "superbrain": {
+        "attempted_actions": [
+          "stdin_injection: permission_prompt",
+          "restart_with_flags: --dangerously-skip-permissions",
+          "fallback_routing: geminicli, gemini"
+        ],
+        "diagnosis_summary": "Process repeatedly hung on permission prompt despite auto-approval",
+        "suggestions": [
+          "Check CLI tool version and update if needed",
+          "Verify file permissions in working directory",
+          "Try using API-based provider instead of CLI"
+        ],
+        "fallbacks_tried": ["geminicli", "gemini"]
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Phased Rollout
+
+Deploy Superbrain incrementally to manage risk:
+
+<Accordion title="Phase 1: Observe Mode (Week 1)">
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "observe"
+```
+
+**Goal:** Establish baseline metrics without any autonomous actions.
+
+**Success Criteria:**
+- Metrics endpoint shows Superbrain data
+- Audit log captures all detected issues
+- No impact on existing functionality
+</Accordion>
+
+<Accordion title="Phase 2: Diagnose Mode (Week 2)">
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "diagnose"
+  component_flags:
+    doctor_enabled: true
+```
+
+**Goal:** Validate diagnosis accuracy.
+
+**Success Criteria:**
+- Diagnosis correctly identifies failure types
+- Proposed actions are appropriate
+- No false positives in diagnosis
+</Accordion>
+
+<Accordion title="Phase 3: Conservative Mode (Week 3-4)">
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "conservative"
+  component_flags:
+    overwatch_enabled: true
+    doctor_enabled: true
+    injector_enabled: true
+    recovery_enabled: true
+    fallback_enabled: true
+    sculptor_enabled: true
+```
+
+**Goal:** Enable safe autonomous healing.
+
+**Success Criteria:**
+- Success rate improvement (measure before/after)
+- No security incidents
+- Healing metadata is accurate
+</Accordion>
+
+<Accordion title="Phase 4: Autopilot Mode (Week 5+)">
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "autopilot"
+  stdin_injection:
+    mode: "autopilot"
+```
+
+**Goal:** Maximum automation.
+
+**Success Criteria:**
+- Consistent success rate improvement
+- Reduced manual intervention
+- Stable operation over time
+</Accordion>
+
+## Monitoring & Metrics
+
+### Metrics Endpoint
+
+Superbrain exposes metrics via the management API:
+
+```bash
+curl http://localhost:18080/management/metrics
+```
+
+**Example Response:**
+```json
+{
+  "superbrain": {
+    "total_healing_attempts": 142,
+    "successful_healings": 128,
+    "failed_healings": 14,
+    "healing_by_type": {
+      "stdin_injection": 45,
+      "restart_with_flags": 38,
+      "fallback_routing": 32,
+      "context_optimization": 13
+    },
+    "average_healing_latency_ms": 3200,
+    "silence_detections": 89,
+    "diagnoses_performed": 89,
+    "fallbacks_triggered": 32
+  }
+}
+```
+
+### Audit Log
+
+All autonomous actions are logged in JSON format:
+
+```bash
+tail -f logs/superbrain_audit.log
+```
+
+**Log Entry Example:**
+```json
+{
+  "timestamp": "2026-01-26T10:30:45Z",
+  "request_id": "req-abc123",
+  "action_type": "stdin_injection",
+  "provider": "claudecli",
+  "model": "claude-sonnet-4",
+  "action_details": {
+    "pattern_matched": "claude_file_permission",
+    "response_injected": "y\n"
+  },
+  "outcome": "success"
+}
+```
+
+## Security & Safety
+
+### Stdin Injection Whitelist
+
+Only safe patterns are auto-approved by default:
+
+- `claude_file_permission`: Allow read file?
+- `claude_tool_permission`: Allow tool execution?
+- `generic_continue`: Press enter to continue
+
+### Forbidden Patterns
+
+Patterns that will **NEVER** be auto-approved:
+
+```yaml config.yaml
+stdin_injection:
+  forbidden_patterns:
+    - "delete"
+    - "remove"
+    - "sudo"
+    - "rm -rf"
+```
+
+### Security Fail-Safe
+
+If a security-sensitive operation is detected, Superbrain will:
+1. Abort autonomous remediation
+2. Return a safe failure response
+3. Log the incident to the audit log
+
+<Warning>
+Superbrain will never auto-approve operations matching forbidden patterns, even in autopilot mode.
+</Warning>
+
+## Emergency Procedures
+
+### Emergency Disable
+
+If Superbrain causes issues, disable it immediately:
+
+<Tabs>
+  <Tab title="Configuration File">
+    ```yaml config.yaml
+    superbrain:
+      enabled: false
+    ```
+    
+    Changes apply automatically without restart.
+  </Tab>
+  <Tab title="Environment Variable">
+    ```bash
+    export SUPERBRAIN_ENABLED=false
+    ./switchAILocal
+    ```
+  </Tab>
+  <Tab title="Mode Change">
+    ```yaml config.yaml
+    superbrain:
+      mode: "disabled"  # Alternative to enabled: false
+    ```
+  </Tab>
+</Tabs>
+
+### Rollback Procedure
+
+<Steps>
+  <Step title="Set safe mode">
+    Set mode to `observe` or `disabled` in config.yaml
+  </Step>
+  <Step title="Monitor metrics">
+    Monitor metrics endpoint for stability
+  </Step>
+  <Step title="Review audit log">
+    Review audit log for issues
+  </Step>
+  <Step title="Adjust configuration">
+    Adjust configuration as needed
+  </Step>
+  <Step title="Re-enable gradually">
+    Gradually re-enable features
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Accordion title="Superbrain not activating">
+**Check:**
+1. `superbrain.enabled: true` in config.yaml
+2. Mode is not `disabled`
+3. Provider supports CLI execution (Superbrain only monitors CLI providers)
+</Accordion>
+
+<Accordion title="Too many healing attempts">
+**Solution:**
+```yaml config.yaml
+overwatch:
+  max_restart_attempts: 1  # Reduce from default 2
+```
+</Accordion>
+
+<Accordion title="Unwanted stdin injections">
+**Solution:**
+```yaml config.yaml
+stdin_injection:
+  mode: "disabled"  # Disable stdin injection entirely
+```
+
+Or use conservative mode with explicit whitelist:
+```yaml config.yaml
+stdin_injection:
+  mode: "conservative"
+  custom_patterns:
+    - name: "my_safe_pattern"
+      regex: "Continue\\? \\[y/n\\]"
+      response: "y\n"
+      is_safe: true
+```
+</Accordion>
+
+<Accordion title="Diagnosis taking too long">
+**Solution:**
+```yaml config.yaml
+doctor:
+  timeout_ms: 3000  # Reduce from default 5000ms
+```
+</Accordion>
+
+## Best Practices
+
+<Steps>
+  <Step title="Start with Observe Mode">
+    Always deploy in `observe` mode first to establish baseline metrics.
+  </Step>
+  <Step title="Monitor Audit Logs">
+    Regularly review audit logs to understand what actions Superbrain is taking.
+  </Step>
+  <Step title="Use Conservative Mode in Production">
+    The `conservative` mode provides the best balance of automation and safety.
+  </Step>
+  <Step title="Tune Silence Threshold">
+    Adjust based on your typical request latency:
+    - Fast models (< 10s): 15000ms
+    - Medium models (10-30s): 30000ms (default)
+    - Slow models (> 30s): 60000ms
+  </Step>
+  <Step title="Configure Fallback Order">
+    List providers in order of preference based on your needs.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Memory System" icon="database" href="/intelligent-systems/memory">
+    Enable learning from execution history
+  </Card>
+  <Card title="Heartbeat Monitoring" icon="heart-pulse" href="/intelligent-systems/heartbeat">
+    Configure health checks and monitoring
+  </Card>
+</CardGroup>

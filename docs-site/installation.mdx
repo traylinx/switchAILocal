@@ -1,0 +1,815 @@
+---
+title: Installation
+description: Complete installation guide for switchAILocal
+---
+
+This guide covers all installation methods for switchAILocal, from quick local setup to production Docker deployments.
+
+## Prerequisites
+
+<CardGroup cols={2}>
+
+<Card title="Required" icon="check">
+  - **Go 1.24+** - [Download](https://go.dev/doc/install)
+  - **Git** - For cloning the repository
+  - **Terminal/Shell** - Command line access
+</Card>
+
+<Card title="Optional" icon="star">
+  - **Docker** - For containerized deployment
+  - **Node.js 18+** - For building the Management UI
+  - **CLI Tools** - `gemini`, `claude`, `vibe` for zero-config providers
+</Card>
+
+</CardGroup>
+
+## Installation Methods
+
+<Tabs>
+
+<Tab title="Local (Hub Script)">
+
+### Using ail.sh (Recommended)
+
+The unified operations hub script handles building, dependencies, and lifecycle management automatically.
+
+<Steps>
+
+<Step title="Clone Repository">
+
+```bash
+git clone https://github.com/traylinx/switchAILocal.git
+cd switchAILocal
+```
+
+</Step>
+
+<Step title="Check Dependencies">
+
+Verify Go and Docker are installed:
+
+```bash
+./ail.sh check
+```
+
+Expected output:
+```
+[INFO] Running pre-flight checks...
+[OK]   Go detected: 1.24.0
+[OK]   Docker detected.
+[OK]   All systems go.
+```
+
+<Note>
+  **macOS users:** Run `./ail.sh install` to auto-install missing dependencies via Homebrew.
+</Note>
+
+</Step>
+
+<Step title="Start Server">
+
+Build and start in one command:
+
+```bash
+./ail.sh start
+```
+
+The script will:
+1. Create `.ail` state directory
+2. Build the `switchAILocal` binary
+3. Start the server in background
+4. Save PID to `.ail/local.pid`
+5. Write logs to `server.log`
+
+<CodeGroup>
+
+```bash Start with Logs
+./ail.sh start -f
+# Builds, starts, and follows logs
+```
+
+```bash Docker Mode
+./ail.sh start --docker --build
+# Runs in Docker with automatic rebuild
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Verify Installation">
+
+Check server status:
+
+```bash
+./ail.sh status
+```
+
+Test the API:
+
+```bash
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+</Step>
+
+</Steps>
+
+### Hub Script Commands
+
+<ParamField path="start" type="command">
+  Build and start the server
+  
+  **Options:**
+  - `-d, --docker` - Use Docker runtime
+  - `-b, --build` - Force rebuild (Docker only)
+  - `-f, --follow` - Follow logs after starting
+  
+  ```bash
+  ./ail.sh start -f
+  ./ail.sh start --docker --build
+  ```
+</ParamField>
+
+<ParamField path="stop" type="command">
+  Stop the running server
+  
+  ```bash
+  ./ail.sh stop
+  ./ail.sh stop --docker
+  ```
+</ParamField>
+
+<ParamField path="restart" type="command">
+  Restart the server (stop + start)
+  
+  ```bash
+  ./ail.sh restart
+  ```
+</ParamField>
+
+<ParamField path="status" type="command">
+  Show status of all instances (local, Docker, bridge)
+  
+  ```bash
+  ./ail.sh status
+  ```
+</ParamField>
+
+<ParamField path="logs" type="command">
+  View server logs
+  
+  **Options:**
+  - `-f, --follow` - Follow log output
+  
+  ```bash
+  ./ail.sh logs        # Last 50 lines
+  ./ail.sh logs -f     # Follow logs
+  ```
+</ParamField>
+
+<ParamField path="check" type="command">
+  Verify dependencies (Go, Docker)
+  
+  ```bash
+  ./ail.sh check
+  ```
+</ParamField>
+
+<ParamField path="install" type="command">
+  Auto-install dependencies (macOS only, requires Homebrew)
+  
+  ```bash
+  ./ail.sh install
+  ```
+</ParamField>
+
+<ParamField path="bridge" type="command">
+  Manage the bridge agent (for advanced integrations)
+  
+  ```bash
+  ./ail.sh bridge start
+  ./ail.sh bridge stop
+  ./ail.sh bridge status
+  ```
+</ParamField>
+
+</Tab>
+
+<Tab title="Manual Build">
+
+### Build from Source
+
+For users who prefer manual control or are on non-standard systems.
+
+<Steps>
+
+<Step title="Clone and Navigate">
+
+```bash
+git clone https://github.com/traylinx/switchAILocal.git
+cd switchAILocal
+```
+
+</Step>
+
+<Step title="Download Dependencies">
+
+```bash
+go mod download
+```
+
+</Step>
+
+<Step title="Build Binary">
+
+```bash
+go build -o switchAILocal ./cmd/server
+```
+
+For production builds with version information:
+
+```bash
+VERSION=$(git describe --tags --always)
+COMMIT=$(git rev-parse --short HEAD)
+BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+go build \
+  -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
+  -o switchAILocal ./cmd/server
+```
+
+</Step>
+
+<Step title="Verify Build">
+
+```bash
+./switchAILocal --version
+```
+
+</Step>
+
+<Step title="Create Configuration">
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Edit `config.yaml` with your provider credentials (see [Configuration Guide](/configuration/overview)).
+
+</Step>
+
+<Step title="Run Server">
+
+```bash
+./switchAILocal
+```
+
+The server starts on `http://localhost:18080` by default.
+
+</Step>
+
+</Steps>
+
+### Custom Build Options
+
+<CodeGroup>
+
+```bash Optimized Build
+# Smaller binary, no debug symbols
+go build -ldflags="-s -w" -o switchAILocal ./cmd/server
+```
+
+```bash With Race Detector
+# For debugging concurrency issues
+go build -race -o switchAILocal ./cmd/server
+```
+
+```bash Static Binary
+# For containerized environments
+CGO_ENABLED=0 go build -ldflags="-s -w" -o switchAILocal ./cmd/server
+```
+
+```bash Cross-Compile
+# Build for different platforms
+GOOS=linux GOARCH=amd64 go build -o switchAILocal-linux ./cmd/server
+GOOS=darwin GOARCH=arm64 go build -o switchAILocal-mac ./cmd/server
+GOOS=windows GOARCH=amd64 go build -o switchAILocal.exe ./cmd/server
+```
+
+</CodeGroup>
+
+</Tab>
+
+<Tab title="Docker">
+
+### Docker Installation
+
+Run switchAILocal in an isolated container with all dependencies included.
+
+<Steps>
+
+<Step title="Clone Repository">
+
+```bash
+git clone https://github.com/traylinx/switchAILocal.git
+cd switchAILocal
+```
+
+</Step>
+
+<Step title="Choose Installation Method">
+
+<Tabs>
+
+<Tab title="docker-build.sh">
+
+Use the interactive setup script:
+
+```bash
+./docker-build.sh
+```
+
+You'll see:
+```
+=================================================
+  switchAILocal - Docker Build & Run
+=================================================
+
+1) Pre-built image (traylinx/switchailocal:latest)
+2) Build from source (local Dockerfile)
+3) Exit
+
+Select option: 
+```
+
+- **Option 1:** Pull pre-built image from Docker Hub (fastest)
+- **Option 2:** Build from source (recommended for development)
+
+</Tab>
+
+<Tab title="Docker Compose">
+
+Use Docker Compose for production deployments:
+
+```bash
+# Start in detached mode
+docker compose up -d
+
+# Start with rebuild
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+```
+
+</Tab>
+
+<Tab title="Manual Commands">
+
+Build and run manually:
+
+```bash
+# Build image
+docker build -t switchailocal:latest .
+
+# Run container
+docker run -d \
+  --name switchailocal \
+  -p 18080:18080 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v ~/.switchailocal:/home/appuser/.switchailocal \
+  -v $(pwd)/logs:/app/logs \
+  switchailocal:latest
+```
+
+</Tab>
+
+</Tabs>
+
+</Step>
+
+<Step title="Configure Volumes">
+
+The Docker setup mounts these directories:
+
+| Host Path | Container Path | Purpose |
+|-----------|----------------|----------|
+| `./config.yaml` | `/app/config.yaml` | Server configuration |
+| `~/.switchailocal` | `/home/appuser/.switchailocal` | Auth credentials & tokens |
+| `./logs` | `/app/logs` | Server logs |
+| `./plugins` | `/app/plugins` | LUA plugins & Cortex Router skills |
+
+<Warning>
+  Ensure `config.yaml` exists before starting Docker. Copy from `config.example.yaml` if needed.
+</Warning>
+
+</Step>
+
+<Step title="Verify Container">
+
+```bash
+# Check container status
+docker ps | grep switchailocal
+
+# View logs
+docker logs -f switchailocal
+
+# Test API
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+</Step>
+
+</Steps>
+
+### Docker Environment Variables
+
+<ParamField path="TZ" type="string" default="UTC">
+  Container timezone
+  
+  ```yaml
+  environment:
+    TZ: "America/New_York"
+  ```
+</ParamField>
+
+<ParamField path="REMOTE_COMMAND_HOST" type="string" default="http://host.docker.internal:18888">
+  Bridge agent connection URL (advanced)
+  
+  ```yaml
+  environment:
+    REMOTE_COMMAND_HOST: "http://192.168.1.100:18888"
+  ```
+</ParamField>
+
+<ParamField path="SWITCH_AI_IMAGE" type="string" default="traylinx/switchailocal:latest">
+  Docker image to use
+  
+  ```bash
+  SWITCH_AI_IMAGE=switchailocal:dev docker compose up -d
+  ```
+</ParamField>
+
+### Dockerfile Overview
+
+The official Dockerfile includes:
+- **Alpine Linux** base image (minimal footprint)
+- **Go 1.25** build environment
+- **Node.js & npm** for CLI tool support
+- **@google/gemini-cli** pre-installed
+- **Non-root user** for security
+- **TLS certificates** for HTTPS providers
+
+</Tab>
+
+</Tabs>
+
+## Building the Management UI
+
+The optional web dashboard provides a modern interface for configuration and monitoring.
+
+<Steps>
+
+<Step title="Install Node.js">
+
+Requires Node.js 18+ and npm:
+
+```bash
+node --version  # Should be v18.0.0 or higher
+npm --version
+```
+
+</Step>
+
+<Step title="Build UI">
+
+Run the build script:
+
+```bash
+./ail_ui.sh
+```
+
+This script:
+1. Navigates to `frontend/`
+2. Installs dependencies (`npm install`)
+3. Builds React app (`npm run build`)
+4. Inlines all assets (CSS, JS, SVGs)
+5. Outputs single-file `static/management.html` (~226 KB)
+
+</Step>
+
+<Step title="Verify Build">
+
+```bash
+ls -lh static/management.html
+# Should show ~226 KB file
+```
+
+</Step>
+
+<Step title="Access Dashboard">
+
+Start the server and visit:
+
+```
+http://localhost:18080/management
+```
+
+<Note>
+  The Management UI requires a secret key. See [Management Dashboard](/guides/management-dashboard) for setup.
+</Note>
+
+</Step>
+
+</Steps>
+
+## Post-Installation Configuration
+
+<Steps>
+
+### Copy Configuration Template
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+### Add Your Provider Credentials
+
+Edit `config.yaml` and add API keys or enable local providers:
+
+<CodeGroup>
+
+```yaml Cloud APIs
+gemini-api-key:
+  - api-key: "AIzaSy...YOUR_KEY_HERE"
+
+claude-api-key:
+  - api-key: "sk-ant-...YOUR_KEY_HERE"
+
+codex-api-key:
+  - api-key: "sk-...YOUR_KEY_HERE"
+```
+
+```yaml Local Models
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+
+lmstudio:
+  enabled: true
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+```
+
+```yaml CLI Wrappers
+# No configuration needed!
+# Install CLI tools and switchAILocal detects them automatically:
+# - npm install -g @google/gemini-cli
+# - brew install anthropic/tap/claude
+# - npm install -g @mistralai/vibe
+```
+
+</CodeGroup>
+
+### Set Authentication Keys
+
+Update the API keys that clients use to authenticate to **your** switchAILocal server:
+
+```yaml
+api-keys:
+  - "your-secure-key-here"
+  - "another-key-for-team"
+```
+
+<Warning>
+  Replace the default `sk-test-123` key before deploying to production.
+</Warning>
+
+### Restart Server
+
+Apply configuration changes:
+
+```bash
+./ail.sh restart
+```
+
+</Steps>
+
+## Verification Tests
+
+<Tabs>
+
+<Tab title="Health Check">
+
+```bash
+curl http://localhost:18080/health
+```
+
+Expected response:
+```json
+{"status": "ok"}
+```
+
+</Tab>
+
+<Tab title="List Models">
+
+```bash
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+Expected response:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "geminicli:gemini-2.5-pro",
+      "object": "model",
+      "owned_by": "google"
+    },
+    {
+      "id": "ollama:llama3.2",
+      "object": "model",
+      "owned_by": "ollama"
+    }
+  ]
+}
+```
+
+</Tab>
+
+<Tab title="Chat Completion">
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Say hello"}]
+  }'
+```
+
+Expected response:
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gemini-2.5-pro",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "Hello! How can I help you today?"
+    },
+    "finish_reason": "stop"
+  }]
+}
+```
+
+</Tab>
+
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Go version too old">
+  **Error:** `go: directive requires go version >= 1.24`
+  
+  **Solution:**
+  ```bash
+  # Check current version
+  go version
+  
+  # Update Go
+  # macOS
+  brew upgrade go
+  
+  # Linux
+  wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+  sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+  ```
+</Accordion>
+
+<Accordion title="Port 18080 already in use">
+  **Error:** `bind: address already in use`
+  
+  **Solution:**
+  ```bash
+  # Find process using port
+  lsof -i :18080
+  
+  # Kill existing process
+  kill -9 <PID>
+  
+  # OR change port in config.yaml
+  port: 18081
+  ```
+</Accordion>
+
+<Accordion title="Docker build fails">
+  **Error:** `error building image`
+  
+  **Solution:**
+  ```bash
+  # Clean Docker cache
+  docker system prune -a
+  
+  # Rebuild without cache
+  docker build --no-cache -t switchailocal .
+  
+  # Check disk space
+  df -h
+  ```
+</Accordion>
+
+<Accordion title="Config file not found">
+  **Error:** `config.yaml not found`
+  
+  **Solution:**
+  ```bash
+  # Create from template
+  cp config.example.yaml config.yaml
+  
+  # Verify file exists
+  ls -la config.yaml
+  
+  # Check working directory
+  pwd  # Should be in switchAILocal root
+  ```
+</Accordion>
+
+<Accordion title="Module download fails">
+  **Error:** `go: error loading module requirements`
+  
+  **Solution:**
+  ```bash
+  # Clean module cache
+  go clean -modcache
+  
+  # Tidy dependencies
+  go mod tidy
+  
+  # Re-download
+  go mod download
+  
+  # Verify go.sum
+  go mod verify
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## System Requirements
+
+<CardGroup cols={2}>
+
+<Card title="Minimum" icon="gauge-min">
+  - **CPU:** 2 cores
+  - **RAM:** 512 MB
+  - **Disk:** 100 MB
+  - **OS:** Linux, macOS, Windows
+</Card>
+
+<Card title="Recommended" icon="gauge-high">
+  - **CPU:** 4+ cores
+  - **RAM:** 2 GB
+  - **Disk:** 1 GB (for logs & cache)
+  - **OS:** Linux/macOS for CLI tools
+</Card>
+
+</CardGroup>
+
+<Note>
+  Additional RAM required if running local models with Ollama or LM Studio.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={3}>
+
+<Card title="Configure Providers" icon="plug" href="/providers">
+  Set up multiple AI providers and accounts
+</Card>
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Make your first API request
+</Card>
+
+<Card title="Configuration" icon="gear" href="/configuration">
+  Explore advanced settings
+</Card>
+
+</CardGroup>

@@ -1,0 +1,434 @@
+---
+title: 'Provider Configuration'
+description: 'Configure API keys and settings for cloud and local AI providers'
+icon: 'plug'
+---
+
+## Overview
+
+switchAILocal supports multiple AI providers, each with its own configuration format. Providers are organized into:
+
+- **Cloud Providers**: OpenAI, Anthropic, Google Gemini, Traylinx SwitchAI
+- **Local Providers**: Ollama, LM Studio, OpenCode
+- **Compatible Providers**: OpenRouter, Groq, Together AI, and others via OpenAI compatibility
+
+## Traylinx SwitchAI Cloud
+
+Unified access to 100+ cloud models through a single API.
+
+```yaml config.yaml
+switchai-api-key:
+  - api-key: "sk-lf-..."
+    base-url: "https://switchai.traylinx.com/v1"
+    models:
+      - name: "openai/gpt-oss-120b"
+        alias: "switchai-fast"
+      - name: "deepseek-reasoner"
+        alias: "switchai-reasoner"
+```
+
+<ParamField path="switchai-api-key[].api-key" type="string" required>
+  Your SwitchAI API key. Get one at [switchai.traylinx.com](https://switchai.traylinx.com)
+</ParamField>
+
+<ParamField path="switchai-api-key[].base-url" type="string" default="https://switchai.traylinx.com/v1">
+  SwitchAI API endpoint
+</ParamField>
+
+<ParamField path="switchai-api-key[].prefix" type="string">
+  Optional prefix to namespace models (e.g., `"teamA/deepseek"`)
+</ParamField>
+
+<ParamField path="switchai-api-key[].models" type="array">
+  Model name mappings and aliases
+</ParamField>
+
+<ParamField path="switchai-api-key[].proxy-url" type="string">
+  Override global proxy for this credential
+</ParamField>
+
+<ParamField path="switchai-api-key[].headers" type="object">
+  Additional HTTP headers for requests
+</ParamField>
+
+## Google Gemini API
+
+Configure Google Gemini API access:
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+    base-url: "https://generativelanguage.googleapis.com"
+```
+
+<ParamField path="gemini-api-key[].api-key" type="string" required>
+  Google Gemini API key from [Google AI Studio](https://aistudio.google.com)
+</ParamField>
+
+<ParamField path="gemini-api-key[].prefix" type="string">
+  Namespace models (e.g., `"google/gemini-pro"`)
+</ParamField>
+
+<ParamField path="gemini-api-key[].base-url" type="string">
+  Override Gemini API endpoint (optional)
+</ParamField>
+
+<ParamField path="gemini-api-key[].models" type="array">
+  Model aliases for custom routing
+</ParamField>
+
+**Example with model exclusions:**
+
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+    excluded-models:
+      - "*-preview"  # Exclude all preview models
+      - "gemini-1.0-*"  # Exclude Gemini 1.0 models
+```
+
+## Anthropic Claude API
+
+Configure Claude API credentials:
+
+```yaml config.yaml
+claude-api-key:
+  - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "sonnet"
+```
+
+<ParamField path="claude-api-key[].api-key" type="string" required>
+  Anthropic API key from [Anthropic Console](https://console.anthropic.com)
+</ParamField>
+
+<ParamField path="claude-api-key[].base-url" type="string">
+  Override Claude API endpoint (for Claude-compatible services)
+</ParamField>
+
+<ParamField path="claude-api-key[].models" type="array">
+  Model name mappings and aliases
+</ParamField>
+
+<ParamField path="claude-api-key[].prefix" type="string">
+  Namespace models for this credential
+</ParamField>
+
+## OpenAI / Codex API
+
+Configure OpenAI and compatible services:
+
+```yaml config.yaml
+codex-api-key:
+  - api-key: "sk-..."
+    base-url: "https://api.openai.com/v1"
+```
+
+<ParamField path="codex-api-key[].api-key" type="string" required>
+  OpenAI API key from [OpenAI Platform](https://platform.openai.com)
+</ParamField>
+
+<ParamField path="codex-api-key[].base-url" type="string" required>
+  OpenAI API endpoint
+</ParamField>
+
+<ParamField path="codex-api-key[].models" type="array">
+  Model aliases (optional)
+</ParamField>
+
+<Note>
+  The `codex-api-key` name is historical. This provider works with all OpenAI models, not just Codex.
+</Note>
+
+## Ollama (Local)
+
+Configure local Ollama server integration:
+
+```yaml config.yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+```
+
+<ParamField path="ollama.enabled" type="boolean" default="false">
+  Enable Ollama provider registration
+</ParamField>
+
+<ParamField path="ollama.base-url" type="string" default="http://localhost:11434">
+  Ollama API endpoint
+</ParamField>
+
+<ParamField path="ollama.auto-discover" type="boolean" default="true">
+  Automatically fetch available models from Ollama on startup
+</ParamField>
+
+<ParamField path="ollama.excluded-models" type="array">
+  Model IDs to exclude from discovery
+</ParamField>
+
+<ParamField path="ollama.models" type="array">
+  Manual model alias definitions
+</ParamField>
+
+**Example with custom models:**
+
+```yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+  excluded-models:
+    - "llama2"  # Exclude old llama2
+  models:
+    - name: "llama3.2:latest"
+      alias: "llama"
+```
+
+## OpenCode (Local)
+
+Integrate with local OpenCode server:
+
+```yaml config.yaml
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"
+  default-agent: "build"
+```
+
+<ParamField path="opencode.enabled" type="boolean" default="false">
+  Enable OpenCode provider integration
+</ParamField>
+
+<ParamField path="opencode.base-url" type="string" default="http://localhost:4096">
+  OpenCode API endpoint
+</ParamField>
+
+<ParamField path="opencode.default-agent" type="string" default="build">
+  Default agent to use when no specific model is requested
+</ParamField>
+
+## LM Studio (Local)
+
+Configure LM Studio integration:
+
+```yaml config.yaml
+lmstudio:
+  enabled: false
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+```
+
+<ParamField path="lmstudio.enabled" type="boolean" default="false">
+  Enable LM Studio provider registration
+</ParamField>
+
+<ParamField path="lmstudio.base-url" type="string" default="http://localhost:1234/v1">
+  LM Studio API endpoint
+</ParamField>
+
+<ParamField path="lmstudio.auto-discover" type="boolean" default="true">
+  Automatically fetch models from LM Studio on startup
+</ParamField>
+
+## OpenAI Compatibility
+
+Configure third-party providers that support OpenAI API format:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+```
+
+<ParamField path="openai-compatibility[].name" type="string" required>
+  Provider identifier (used in logs and metrics)
+</ParamField>
+
+<ParamField path="openai-compatibility[].base-url" type="string" required>
+  Provider's OpenAI-compatible API endpoint
+</ParamField>
+
+<ParamField path="openai-compatibility[].prefix" type="string">
+  Namespace models (e.g., `"groq/llama-3.1-70b"`)
+</ParamField>
+
+<ParamField path="openai-compatibility[].api-key-entries" type="array">
+  List of API keys for this provider
+</ParamField>
+
+<ParamField path="openai-compatibility[].models" type="array">
+  Model name mappings and aliases
+</ParamField>
+
+**Supported providers:**
+
+- **Groq**: `https://api.groq.com/openai/v1`
+- **OpenRouter**: `https://openrouter.ai/api/v1`
+- **Together AI**: `https://api.together.xyz/v1`
+- **Fireworks AI**: `https://api.fireworks.ai/inference/v1`
+- **DeepSeek**: `https://api.deepseek.com/v1`
+- **Any OpenAI-compatible service**
+
+## Vertex AI Compatibility
+
+For third-party services using Vertex AI-style protocols with API key auth:
+
+```yaml config.yaml
+vertex-api-key:
+  - api-key: "vk-..."
+    base-url: "https://api.example.com"
+    models:
+      - name: "gemini-2.0-flash"
+        alias: "flash"
+```
+
+<ParamField path="vertex-api-key[].api-key" type="string" required>
+  API key for Vertex-compatible service
+</ParamField>
+
+<ParamField path="vertex-api-key[].base-url" type="string" required>
+  Base URL for Vertex-compatible endpoint
+</ParamField>
+
+<ParamField path="vertex-api-key[].models" type="array">
+  Model configurations with aliases
+</ParamField>
+
+<Note>
+  Vertex compatibility is for third-party services that mimic Google's Vertex AI endpoint structure but use simple API key authentication instead of OAuth.
+</Note>
+
+## Global Model Exclusions
+
+Exclude models globally for OAuth/file-backed auth entries:
+
+```yaml config.yaml
+oauth-excluded-models:
+  geminicli:
+    - "*-preview"
+  ollama:
+    - "llama2"
+```
+
+<ParamField path="oauth-excluded-models" type="object">
+  Map of provider names to excluded model patterns (supports wildcards)
+</ParamField>
+
+## Per-Provider Settings
+
+All cloud providers support these common settings:
+
+<Accordion title="Common provider settings">
+
+- **`prefix`**: Namespace models (e.g., `team-a/model-name`)
+- **`proxy-url`**: Override global proxy for this provider
+- **`models-url`**: Override model discovery endpoint
+- **`headers`**: Add custom HTTP headers
+- **`excluded-models`**: List of model patterns to exclude
+- **`models`**: Manual model name/alias mappings
+
+</Accordion>
+
+## Model Aliases
+
+Create friendly aliases for model names:
+
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    models:
+      - name: "gemini-2.0-flash-exp"
+        alias: "flash"
+      - name: "gemini-2.0-pro-exp"
+        alias: "pro"
+```
+
+Now requests for `flash` route to `gemini-2.0-flash-exp`.
+
+## Multiple Credentials
+
+Configure multiple API keys for load balancing and failover:
+
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy...key1"
+    prefix: "team-a"
+  - api-key: "AIzaSy...key2"
+    prefix: "team-b"
+  - api-key: "AIzaSy...shared"
+    # No prefix - shared across all teams
+```
+
+With `routing.strategy: "round-robin"`, requests are distributed evenly.
+
+## Complete Example
+
+```yaml config.yaml
+# Cloud providers
+switchai-api-key:
+  - api-key: "sk-lf-..."
+    models:
+      - name: "deepseek-reasoner"
+        alias: "reasoner"
+
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+
+claude-api-key:
+  - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "sonnet"
+
+codex-api-key:
+  - api-key: "sk-..."
+    base-url: "https://api.openai.com/v1"
+
+# Local providers
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"
+  default-agent: "build"
+
+# OpenAI-compatible providers
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Configuration" icon="shield" href="/configuration/security">
+    Configure API authentication and management access
+  </Card>
+  <Card title="Intelligent Routing" icon="brain" href="/features/intelligent-routing">
+    Enable automatic model selection with Cortex Router
+  </Card>
+</CardGroup>

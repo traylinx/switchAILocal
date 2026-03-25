@@ -1,0 +1,645 @@
+---
+title: 'CLI Attachments'
+description: 'Pass files and folders to CLI providers for context-aware AI interactions'
+---
+
+## Overview
+
+CLI providers (`geminicli:`, `claudecli:`, `codex:`, `vibe:`, `opencode:`) support file and folder attachments through the `extra_body.cli` parameter. This enables the AI to read, analyze, and modify local files.
+
+<Warning>
+CLI attachments are only supported with CLI providers. API providers (`gemini:`, `claude:`, etc.) do not support this feature.
+</Warning>
+
+## Syntax
+
+Add attachments via the `extra_body.cli.attachments` array:
+
+```json
+{
+  "model": "geminicli:gemini-2.5-pro",
+  "messages": [{"role": "user", "content": "Analyze this code"}],
+  "extra_body": {
+    "cli": {
+      "attachments": [
+        {"type": "file", "path": "/path/to/file.py"},
+        {"type": "folder", "path": "./src/"}
+      ]
+    }
+  }
+}
+```
+
+## Attachment Types
+
+### File Attachments
+
+Attach a single file:
+
+```json
+{
+  "type": "file",
+  "path": "/absolute/or/relative/path/to/file.py"
+}
+```
+
+**Supported Path Formats**:
+- Absolute: `/home/user/project/main.py`
+- Relative: `./src/main.py` (relative to server working directory)
+- Home directory: `~/projects/file.py`
+
+### Folder Attachments
+
+Attach an entire directory:
+
+```json
+{
+  "type": "folder",
+  "path": "./src/"
+}
+```
+
+All files in the folder and subdirectories are included.
+
+## Examples
+
+### Single File
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "Fix the bugs in this code"}
+    ],
+    "extra_body": {
+      "cli": {
+        "attachments": [
+          {"type": "file", "path": "./main.py"}
+        ]
+      }
+    }
+  }'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Fix the bugs in this code"}
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "file", "path": "./main.py"}
+            ]
+        }
+    }
+)
+
+print(response.choices[0].message.content)
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const response = await client.chat.completions.create({
+  model: 'geminicli:gemini-2.5-pro',
+  messages: [
+    { role: 'user', content: 'Fix the bugs in this code' }
+  ],
+  extra_body: {
+    cli: {
+      attachments: [
+        { type: 'file', path: './main.py' }
+      ]
+    }
+  }
+});
+
+console.log(response.choices[0].message.content);
+```
+</CodeGroup>
+
+### Multiple Files
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Review this pull request"}
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "file", "path": "./src/main.py"},
+                {"type": "file", "path": "./src/utils.py"},
+                {"type": "file", "path": "./tests/test_main.py"}
+            ]
+        }
+    }
+)
+```
+
+### Folder Attachment
+
+```python
+response = client.chat.completions.create(
+    model="claudecli:claude-sonnet-4",
+    messages=[
+        {"role": "user", "content": "Refactor this codebase to use TypeScript"}
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "folder", "path": "./src/"}
+            ]
+        }
+    }
+)
+```
+
+### Mixed Attachments
+
+Combine files and folders:
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Add tests for the new features"}
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "folder", "path": "./src/"},       # Source code
+                {"type": "folder", "path": "./tests/"},     # Existing tests
+                {"type": "file", "path": "./package.json"}  # Dependencies
+            ]
+        }
+    }
+)
+```
+
+## CLI Flags
+
+Control CLI behavior with flags:
+
+```json
+{
+  "extra_body": {
+    "cli": {
+      "attachments": [...],
+      "flags": {
+        "sandbox": true,
+        "auto_approve": true,
+        "yolo": false
+      }
+    }
+  }
+}
+```
+
+### Available Flags
+
+<ParamField body="sandbox" type="boolean" default={false}>
+  Run in restricted execution mode. Prevents file modifications.
+  
+  **CLI Mapping**:
+  - `geminicli`: `-s` or `--sandbox`
+  - `codex`: `--sandbox`
+  - `claudecli`: Not supported
+  - `vibe`: Not supported
+</ParamField>
+
+<ParamField body="auto_approve" type="boolean" default={false}>
+  Skip confirmation prompts for file operations.
+  
+  **CLI Mapping**:
+  - `geminicli`: `-y` or `--yes`
+  - `vibe`: `--auto-approve`
+  - `claudecli`: `--dangerously-skip-permissions`
+  - `codex`: `--full-auto`
+</ParamField>
+
+<ParamField body="yolo" type="boolean" default={false}>
+  Maximum autonomy mode. Combines auto-approve with other permissive flags.
+  
+  **CLI Mapping**:
+  - `geminicli`: `--yolo`
+  - `vibe`: `--auto-approve`
+  - `claudecli`: `--dangerously-skip-permissions`
+  - `codex`: `--full-auto`
+</ParamField>
+
+### Flag Examples
+
+<Tabs>
+  <Tab title="Sandbox Mode">
+    ```python
+    # Read-only mode - AI can view but not modify files
+    response = client.chat.completions.create(
+        model="geminicli:gemini-2.5-pro",
+        messages=[
+            {"role": "user", "content": "Analyze code quality"}
+        ],
+        extra_body={
+            "cli": {
+                "attachments": [{"type": "folder", "path": "./src/"}],
+                "flags": {
+                    "sandbox": True  # Read-only
+                }
+            }
+        }
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Auto-Approve">
+    ```python
+    # Skip confirmations for file modifications
+    response = client.chat.completions.create(
+        model="claudecli:claude-sonnet-4",
+        messages=[
+            {"role": "user", "content": "Fix all linting errors"}
+        ],
+        extra_body={
+            "cli": {
+                "attachments": [{"type": "folder", "path": "./src/"}],
+                "flags": {
+                    "auto_approve": True  # Skip prompts
+                }
+            }
+        }
+    )
+    ```
+  </Tab>
+  
+  <Tab title="YOLO Mode">
+    ```python
+    # Maximum autonomy - use with caution!
+    response = client.chat.completions.create(
+        model="geminicli:gemini-2.5-pro",
+        messages=[
+            {"role": "user", "content": "Implement the feature"}
+        ],
+        extra_body={
+            "cli": {
+                "attachments": [{"type": "folder", "path": "./"}],
+                "flags": {
+                    "yolo": True  # Full autonomy
+                }
+            }
+        }
+    )
+    ```
+    
+    <Warning>
+    YOLO mode grants maximum autonomy. Only use in controlled environments or with proper backups.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Session Management
+
+Resume or name CLI sessions:
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Continue working on the feature"}
+    ],
+    extra_body={
+        "cli": {
+            "session_id": "my-project-session",
+            "attachments": [{"type": "folder", "path": "./"}]
+        }
+    }
+)
+```
+
+### Session ID Values
+
+| Value | Behavior |
+|-------|----------|
+| `"latest"` | Resume most recent session |
+| `"new"` | Force new session |
+| `"my-session-name"` | Named session (resumable) |
+
+### Session Example
+
+```python
+# First request: Start named session
+response1 = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Create a user authentication system"}
+    ],
+    extra_body={
+        "cli": {
+            "session_id": "auth-feature",
+            "attachments": [{"type": "folder", "path": "./src/"}]
+        }
+    }
+)
+
+# Later request: Resume same session
+response2 = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Add password reset functionality"}
+    ],
+    extra_body={
+        "cli": {
+            "session_id": "auth-feature",  # Same session
+            "attachments": [{"type": "folder", "path": "./src/"}]
+        }
+    }
+)
+```
+
+## Use Cases
+
+### Code Review
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {
+            "role": "user",
+            "content": "Review this code for security vulnerabilities and suggest improvements"
+        }
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "folder", "path": "./src/"},
+                {"type": "file", "path": "./package.json"}
+            ],
+            "flags": {"sandbox": True}  # Read-only review
+        }
+    }
+)
+```
+
+### Automated Refactoring
+
+```python
+response = client.chat.completions.create(
+    model="claudecli:claude-sonnet-4",
+    messages=[
+        {
+            "role": "user",
+            "content": "Refactor to use async/await throughout"
+        }
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [{"type": "folder", "path": "./src/"}],
+            "flags": {"auto_approve": True}  # Auto-apply changes
+        }
+    }
+)
+```
+
+### Test Generation
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {
+            "role": "user",
+            "content": "Generate comprehensive unit tests for all functions"
+        }
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "folder", "path": "./src/"},
+                {"type": "folder", "path": "./tests/"}  # Existing tests for reference
+            ]
+        }
+    }
+)
+```
+
+### Documentation Generation
+
+```python
+response = client.chat.completions.create(
+    model="codex:gpt-5",
+    messages=[
+        {
+            "role": "user",
+            "content": "Add comprehensive JSDoc comments to all functions"
+        }
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [{"type": "folder", "path": "./src/"}],
+            "flags": {"auto_approve": True}
+        }
+    }
+)
+```
+
+### Codebase Migration
+
+```python
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[
+        {
+            "role": "user",
+            "content": "Migrate from JavaScript to TypeScript. Add type definitions to all files."
+        }
+    ],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "folder", "path": "./src/"},
+                {"type": "file", "path": "./tsconfig.json"}
+            ],
+            "session_id": "ts-migration",
+            "flags": {"auto_approve": True}
+        }
+    }
+)
+```
+
+## Provider Support
+
+| Provider | Files | Folders | Flags | Sessions |
+|----------|-------|---------|-------|----------|
+| **geminicli** | ✅ | ✅ | ✅ | ✅ |
+| **claudecli** | ✅ | ✅ | ⚠️ | ❌ |
+| **codex** | ✅ | ✅ | ✅ | ✅ |
+| **vibe** | ✅ | ✅ | ⚠️ | ❌ |
+| **opencode** | ✅ | ✅ | ✅ | ✅ |
+
+⚠️ = Partial support (limited flags)
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Path Validation">
+    switchAILocal validates all file paths to prevent directory traversal attacks:
+    ```python
+    # Safe: Relative paths are resolved securely
+    {"type": "file", "path": "./src/main.py"}
+    
+    # Unsafe: Absolute paths outside workspace are rejected
+    {"type": "file", "path": "/etc/passwd"}  # Blocked
+    ```
+  </Accordion>
+
+  <Accordion title="Sandbox Mode">
+    Use sandbox mode for untrusted operations:
+    ```python
+    # Safe: Read-only analysis
+    extra_body={
+        "cli": {
+            "attachments": [...],
+            "flags": {"sandbox": True}
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="File Size Limits">
+    Large files may exceed CLI limits:
+    ```yaml config.yaml
+    cli:
+      max_attachment_size: 10485760  # 10MB
+      max_total_size: 52428800       # 50MB
+    ```
+  </Accordion>
+
+  <Accordion title="Sensitive Files">
+    Avoid attaching sensitive files:
+    ```python
+    # Don't attach:
+    # - .env files
+    # - credentials.json
+    # - private keys
+    # - API tokens
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+<CodeGroup>
+```python Python
+from openai import OpenAI, APIError
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+try:
+    response = client.chat.completions.create(
+        model="geminicli:gemini-2.5-pro",
+        messages=[
+            {"role": "user", "content": "Analyze this file"}
+        ],
+        extra_body={
+            "cli": {
+                "attachments": [
+                    {"type": "file", "path": "./nonexistent.py"}
+                ]
+            }
+        }
+    )
+except APIError as e:
+    if "file not found" in str(e).lower():
+        print("File does not exist")
+    elif "permission denied" in str(e).lower():
+        print("Cannot access file")
+    else:
+        print(f"Error: {e.message}")
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+try {
+  const response = await client.chat.completions.create({
+    model: 'geminicli:gemini-2.5-pro',
+    messages: [
+      { role: 'user', content: 'Analyze this file' }
+    ],
+    extra_body: {
+      cli: {
+        attachments: [
+          { type: 'file', path: './nonexistent.py' }
+        ]
+      }
+    }
+  });
+} catch (error) {
+  if (error.message.includes('file not found')) {
+    console.log('File does not exist');
+  } else if (error.message.includes('permission denied')) {
+    console.log('Cannot access file');
+  } else {
+    console.error('Error:', error.message);
+  }
+}
+```
+</CodeGroup>
+
+## Limitations
+
+| Limitation | Value | Notes |
+|------------|-------|-------|
+| **Max file size** | 10 MB | Configurable in `config.yaml` |
+| **Max total size** | 50 MB | Sum of all attachments |
+| **Max files** | 100 | Per request |
+| **Supported formats** | All text | Binary files may fail |
+
+## Best Practices
+
+1. **Start with Sandbox**: Test with read-only mode first
+2. **Use Relative Paths**: More portable and secure
+3. **Minimize Attachments**: Only include relevant files
+4. **Name Sessions**: Use descriptive session IDs for continuity
+5. **Validate Outputs**: Review AI changes before committing
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
+    Learn about CLI provider routing
+  </Card>
+  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
+    Master the chat completions API
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/providers">
+    Configure CLI provider settings
+  </Card>
+</CardGroup>

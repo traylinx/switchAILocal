@@ -1,0 +1,504 @@
+---
+title: Multi-Provider Patterns
+description: Advanced patterns for using multiple AI providers with intelligent failover
+icon: diagram-project
+---
+
+## Overview
+
+One of switchAILocal's most powerful features is seamless multi-provider support. This guide demonstrates advanced patterns for leveraging multiple providers simultaneously.
+
+## Tiered Failover Strategy
+
+Prioritize free/cheap providers, fall back to premium ones:
+
+### Configuration
+
+```yaml
+# config.yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+
+gemini:
+  api-key: "your-gemini-api-key"
+
+switchai:
+  api-key: "your-switchai-api-key"
+
+routing:
+  strategy: "fill-first"  # Try providers in order
+  fallback-enabled: true
+```
+
+### Usage Pattern
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# Tier 1: Try local Ollama first (free, private)
+try:
+    completion = client.chat.completions.create(
+        model="ollama:llama3.2",
+        messages=[{"role": "user", "content": "Explain recursion"}],
+        timeout=5,  # Fast timeout for local
+    )
+    print("✅ Used Ollama (local, free)")
+except Exception as e:
+    print(f"❌ Ollama failed: {e}")
+    
+    # Tier 2: Fall back to Gemini Flash (cheap, fast)
+    try:
+        completion = client.chat.completions.create(
+            model="switchai:switchai-fast",
+            messages=[{"role": "user", "content": "Explain recursion"}],
+        )
+        print("✅ Used switchAI Fast (cheap)")
+    except Exception as e:
+        print(f"❌ switchAI Fast failed: {e}")
+        
+        # Tier 3: Last resort - premium model
+        completion = client.chat.completions.create(
+            model="switchai:switchai-reasoner",
+            messages=[{"role": "user", "content": "Explain recursion"}],
+        )
+        print("✅ Used switchAI Reasoner (premium)")
+
+print(completion.choices[0].message.content)
+```
+
+## Provider Pool with Round-Robin
+
+Balance load across multiple providers:
+
+```python
+from openai import OpenAI
+import itertools
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# Define provider pool
+providers = itertools.cycle([
+    "geminicli:gemini-2.5-pro",
+    "switchai:switchai-fast",
+    "ollama:llama3.2",
+])
+
+# Make requests using round-robin
+for i in range(6):
+    model = next(providers)
+    print(f"Request {i+1} -> {model}")
+    
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": f"Say 'Hello from request {i+1}'"}],
+    )
+    
+    print(f"Response: {completion.choices[0].message.content}\n")
+```
+
+**Output:**
+```
+Request 1 -> geminicli:gemini-2.5-pro
+Response: Hello from request 1
+
+Request 2 -> switchai:switchai-fast
+Response: Hello from request 2
+
+Request 3 -> ollama:llama3.2
+Response: Hello from request 3
+...
+```
+
+## Cost Optimization Pattern
+
+Route based on task complexity:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+def get_optimal_model(task_type: str, content_length: int) -> str:
+    """Select the most cost-effective model for the task."""
+    
+    # Simple queries -> fast, cheap model
+    if task_type == "simple" or content_length < 100:
+        return "switchai:switchai-fast"
+    
+    # Code generation -> coding-optimized model
+    elif task_type == "coding":
+        return "geminicli:gemini-2.5-pro"
+    
+    # Complex reasoning -> premium model
+    elif task_type == "reasoning" or content_length > 1000:
+        return "switchai:switchai-reasoner"
+    
+    # Default: balanced model
+    else:
+        return "switchai:switchai-chat"
+
+# Example usage
+tasks = [
+    {"type": "simple", "content": "What is 2+2?"},
+    {"type": "coding", "content": "Write a binary search algorithm in Python"},
+    {"type": "reasoning", "content": "Analyze the ethical implications of AI in healthcare"},
+]
+
+for task in tasks:
+    model = get_optimal_model(task["type"], len(task["content"]))
+    print(f"\nTask: {task['type']}")
+    print(f"Model: {model}")
+    
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": task["content"]}],
+    )
+    
+    print(f"Response: {completion.choices[0].message.content[:100]}...")
+```
+
+## Privacy-Aware Routing
+
+Keep sensitive data local:
+
+```python
+from openai import OpenAI
+import re
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+def contains_sensitive_data(text: str) -> bool:
+    """Detect if text contains sensitive information."""
+    patterns = [
+        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
+        r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
+        r'\b\d{16}\b',  # Credit card
+        r'\b(password|secret|api[_-]?key)\b',  # Keywords
+    ]
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+def route_securely(content: str) -> str:
+    """Route to local model if content is sensitive."""
+    if contains_sensitive_data(content):
+        print("🔒 Sensitive data detected -> using local model")
+        return "ollama:llama3.2"
+    else:
+        print("✅ No sensitive data -> using cloud model")
+        return "switchai:switchai-fast"
+
+# Example usage
+queries = [
+    "What is machine learning?",
+    "My email is john.doe@example.com and I need help",
+    "Explain quantum computing",
+]
+
+for query in queries:
+    model = route_securely(query)
+    print(f"Query: {query[:50]}...")
+    print(f"Model: {model}\n")
+    
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": query}],
+    )
+```
+
+## A/B Testing Pattern
+
+Compare responses from multiple providers:
+
+```python
+from openai import OpenAI
+import time
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+def ab_test_providers(prompt: str, providers: list) -> dict:
+    """Test the same prompt across multiple providers."""
+    results = {}
+    
+    for provider in providers:
+        start = time.time()
+        
+        try:
+            completion = client.chat.completions.create(
+                model=provider,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            
+            elapsed = (time.time() - start) * 1000
+            results[provider] = {
+                "success": True,
+                "response": completion.choices[0].message.content,
+                "latency_ms": elapsed,
+                "tokens": completion.usage.total_tokens if completion.usage else 0,
+            }
+        except Exception as e:
+            results[provider] = {
+                "success": False,
+                "error": str(e),
+            }
+    
+    return results
+
+# Run A/B test
+prompt = "Explain the concept of recursion in programming"
+providers = [
+    "geminicli:gemini-2.5-pro",
+    "ollama:llama3.2",
+    "switchai:switchai-fast",
+]
+
+results = ab_test_providers(prompt, providers)
+
+# Display results
+for provider, result in results.items():
+    print(f"\n{'='*60}")
+    print(f"Provider: {provider}")
+    
+    if result["success"]:
+        print(f"✅ Success")
+        print(f"Latency: {result['latency_ms']:.0f}ms")
+        print(f"Tokens: {result['tokens']}")
+        print(f"Response: {result['response'][:150]}...")
+    else:
+        print(f"❌ Failed: {result['error']}")
+```
+
+## Multi-Provider Consensus
+
+Get answers from multiple providers and choose the best:
+
+```python
+from openai import OpenAI
+from collections import Counter
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+def get_consensus(prompt: str, providers: list) -> dict:
+    """Get responses from multiple providers and find consensus."""
+    responses = []
+    
+    for provider in providers:
+        try:
+            completion = client.chat.completions.create(
+                model=provider,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,  # Low temp for consistency
+            )
+            responses.append(completion.choices[0].message.content)
+        except Exception as e:
+            print(f"⚠️  {provider} failed: {e}")
+    
+    # Simple consensus: most common response
+    if responses:
+        response_counts = Counter(responses)
+        consensus_response = response_counts.most_common(1)[0][0]
+        confidence = response_counts.most_common(1)[0][1] / len(responses)
+        
+        return {
+            "consensus": consensus_response,
+            "confidence": confidence,
+            "total_responses": len(responses),
+            "all_responses": responses,
+        }
+    
+    return None
+
+# Example: Get consensus on a factual question
+prompt = "What is the capital of France?"
+providers = [
+    "geminicli:gemini-2.5-pro",
+    "ollama:llama3.2",
+    "switchai:switchai-fast",
+]
+
+result = get_consensus(prompt, providers)
+
+if result:
+    print(f"Consensus: {result['consensus']}")
+    print(f"Confidence: {result['confidence']:.1%}")
+    print(f"Responses: {result['total_responses']}")
+```
+
+## Geographic Distribution
+
+Route to providers based on user location:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+def get_regional_model(region: str) -> str:
+    """Select provider based on geographic region."""
+    regional_routing = {
+        "us-east": "openai:gpt-4",
+        "us-west": "openai:gpt-4",
+        "eu": "gemini:gemini-2.5-pro",
+        "asia": "claude:claude-3-5-sonnet",
+        "local": "ollama:llama3.2",
+    }
+    return regional_routing.get(region, "switchai:switchai-fast")
+
+# Example usage
+users = [
+    {"id": "user1", "region": "us-east"},
+    {"id": "user2", "region": "eu"},
+    {"id": "user3", "region": "local"},
+]
+
+for user in users:
+    model = get_regional_model(user["region"])
+    print(f"User: {user['id']} (Region: {user['region']}) -> {model}")
+    
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "Hello!"}],
+    )
+```
+
+## Provider Health Monitoring
+
+Monitor provider availability and automatically failover:
+
+```python
+from openai import OpenAI
+import time
+from datetime import datetime
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+class ProviderHealthMonitor:
+    def __init__(self, providers: list):
+        self.providers = providers
+        self.health = {p: {"status": "unknown", "last_check": None} for p in providers}
+    
+    def check_health(self, provider: str) -> bool:
+        """Check if a provider is healthy."""
+        try:
+            start = time.time()
+            completion = client.chat.completions.create(
+                model=provider,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=10,
+                timeout=5,
+            )
+            latency = (time.time() - start) * 1000
+            
+            self.health[provider] = {
+                "status": "healthy",
+                "latency_ms": latency,
+                "last_check": datetime.now(),
+            }
+            return True
+        except Exception as e:
+            self.health[provider] = {
+                "status": "unhealthy",
+                "error": str(e),
+                "last_check": datetime.now(),
+            }
+            return False
+    
+    def get_healthy_provider(self) -> str:
+        """Get the first healthy provider."""
+        for provider in self.providers:
+            if self.check_health(provider):
+                return provider
+        raise Exception("No healthy providers available")
+    
+    def get_status_report(self) -> dict:
+        """Get health status of all providers."""
+        return self.health
+
+# Initialize monitor
+providers = [
+    "ollama:llama3.2",
+    "geminicli:gemini-2.5-pro",
+    "switchai:switchai-fast",
+]
+
+monitor = ProviderHealthMonitor(providers)
+
+# Use the first healthy provider
+try:
+    healthy_provider = monitor.get_healthy_provider()
+    print(f"✅ Using healthy provider: {healthy_provider}")
+    
+    completion = client.chat.completions.create(
+        model=healthy_provider,
+        messages=[{"role": "user", "content": "Hello!"}],
+    )
+except Exception as e:
+    print(f"❌ All providers unhealthy: {e}")
+
+# Display health report
+print("\nProvider Health Report:")
+for provider, status in monitor.get_status_report().items():
+    print(f"  {provider}: {status['status']}")
+    if status['status'] == 'healthy':
+        print(f"    Latency: {status['latency_ms']:.0f}ms")
+```
+
+## Best Practices
+
+<Tip>
+**Implement Timeouts** - Set appropriate timeouts for each provider tier to enable fast failover.
+</Tip>
+
+<Tip>
+**Cache Provider Status** - Monitor provider health periodically rather than on every request.
+</Tip>
+
+<Tip>
+**Log Provider Usage** - Track which providers are being used to optimize your configuration.
+</Tip>
+
+<Warning>
+**Avoid Cascading Failures** - Implement circuit breakers to prevent overwhelming failing providers.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Usage" icon="rocket" href="/examples/basic-usage">
+    Learn the fundamentals
+  </Card>
+  <Card title="Intelligent Routing" icon="brain" href="/examples/intelligent-routing">
+    Use Cortex Router for automatic routing
+  </Card>
+  <Card title="Streaming" icon="stream" href="/examples/streaming">
+    Real-time streaming responses
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure provider settings
+  </Card>
+</CardGroup>

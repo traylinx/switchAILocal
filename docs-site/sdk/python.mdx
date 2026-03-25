@@ -1,0 +1,295 @@
+---
+title: Python SDK
+description: Use switchAILocal with the OpenAI Python SDK for seamless AI provider switching
+icon: python
+---
+
+## Overview
+
+switchAILocal is fully compatible with the OpenAI Python SDK. Simply point the SDK to your local switchAILocal instance and you can access all configured providers through a single, unified API.
+
+## Installation
+
+Install the official OpenAI Python SDK:
+
+```bash
+pip install openai
+```
+
+## Quick Start
+
+<CodeGroup>
+
+```python Basic Usage
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",  # Must match a key in config.yaml
+)
+
+# Auto-routing: switchAILocal picks the best available provider
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "What is the meaning of life?"}
+    ]
+)
+
+print(completion.choices[0].message.content)
+```
+
+```python Streaming
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+stream = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+    stream=True,
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+```python Provider Selection
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# Force Ollama provider
+completion = client.chat.completions.create(
+    model="ollama:llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+# Force Gemini CLI
+completion = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+# Use switchAI cloud provider
+completion = client.chat.completions.create(
+    model="switchai:switchai-fast",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+</CodeGroup>
+
+## Advanced Features
+
+### Multi-turn Conversations
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+messages = [
+    {"role": "system", "content": "You are a helpful coding assistant."},
+    {"role": "user", "content": "Write a Python function to calculate factorial"}
+]
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=messages
+)
+
+# Add assistant response to conversation
+messages.append({
+    "role": "assistant",
+    "content": response.choices[0].message.content
+})
+
+# Continue conversation
+messages.append({
+    "role": "user",
+    "content": "Now add error handling"
+})
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=messages
+)
+```
+
+### Temperature and Parameters
+
+```python
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Write a creative story"}],
+    temperature=0.9,      # Higher = more creative
+    max_tokens=1000,      # Limit response length
+    top_p=0.95,           # Nucleus sampling
+)
+```
+
+### CLI Attachments (Files & Folders)
+
+Pass local files and folders to CLI providers like Gemini or Vibe:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+completion = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Explain the logic in this file"}],
+    extra_body={
+        "cli": {
+            "attachments": [
+                {"type": "file", "path": "/path/to/script.py"},
+                {"type": "folder", "path": "./src/internal"}
+            ]
+        }
+    }
+)
+```
+
+### CLI Flags (Auto-approve, Sandbox)
+
+Control CLI behavior with standardized flags:
+
+```python
+completion = client.chat.completions.create(
+    model="vibe:mistral-large",
+    messages=[{"role": "user", "content": "Update the version in package.json"}],
+    extra_body={
+        "cli": {
+            "flags": {
+                "auto_approve": True,  # Auto-approve actions
+                "sandbox": True        # Run in sandbox mode
+            }
+        }
+    }
+)
+```
+
+### Session Management
+
+Resume or name specific CLI sessions:
+
+```python
+completion = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Continue our previous discussion"}],
+    extra_body={
+        "cli": {
+            "session_id": "latest"  # Or use a custom session name
+        }
+    }
+)
+```
+
+## List Available Models
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+models = client.models.list()
+for model in models.data:
+    print(f"{model.id} ({model.owned_by})")
+```
+
+## Error Handling
+
+```python
+from openai import OpenAI, APIError, APIConnectionError
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+try:
+    completion = client.chat.completions.create(
+        model="gemini-2.5-pro",
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    print(completion.choices[0].message.content)
+except APIConnectionError as e:
+    print(f"Connection error: {e}")
+except APIError as e:
+    print(f"API error: {e.status_code} - {e.message}")
+```
+
+## Provider Prefixes
+
+Use these prefixes to route to specific providers:
+
+| Prefix | Provider | Example |
+|--------|----------|----------|
+| `geminicli:` | Google Gemini CLI | `geminicli:gemini-2.5-pro` |
+| `claudecli:` | Anthropic Claude CLI | `claudecli:claude-sonnet-4` |
+| `ollama:` | Ollama (local) | `ollama:llama3.2` |
+| `lmstudio:` | LM Studio (local) | `lmstudio:mistral-7b` |
+| `switchai:` | Traylinx switchAI | `switchai:switchai-fast` |
+| `gemini:` | Google AI Studio | `gemini:gemini-2.5-pro` |
+| `claude:` | Anthropic API | `claude:claude-3-5-sonnet` |
+| `openai:` | OpenAI API | `openai:gpt-4` |
+
+<Tip>
+Omit the prefix to let switchAILocal automatically route to the best available provider for that model.
+</Tip>
+
+## Environment Variables
+
+You can configure the client using environment variables:
+
+```python
+import os
+from openai import OpenAI
+
+# Set environment variables
+os.environ["OPENAI_BASE_URL"] = "http://localhost:18080/v1"
+os.environ["OPENAI_API_KEY"] = "sk-test-123"
+
+# Client automatically uses environment variables
+client = OpenAI()
+
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Node.js SDK" icon="node-js" href="/sdk/nodejs">
+    Use switchAILocal with Node.js
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdk/go">
+    Embed switchAILocal in Go applications
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/basic-usage">
+    See more usage examples
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Complete API documentation
+  </Card>
+</CardGroup>

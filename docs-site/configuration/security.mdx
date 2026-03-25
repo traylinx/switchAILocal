@@ -1,0 +1,416 @@
+---
+title: 'Security Configuration'
+description: 'Configure API authentication, management access, and TLS security'
+icon: 'shield'
+---
+
+## API Key Authentication
+
+switchAILocal requires clients to authenticate using API keys. Requests must include the `Authorization: Bearer <key>` header.
+
+### Configuring API Keys
+
+```yaml config.yaml
+api-keys:
+  - "sk-test-123"
+  - "sk-prod-456"
+```
+
+<ParamField path="api-keys" type="array" required>
+  List of valid API keys for client authentication. All requests to `/v1/*` endpoints require a key from this list.
+</ParamField>
+
+**Example client request:**
+
+```bash
+curl https://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-pro",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+<Warning>
+  Store API keys securely. Do not commit them to version control. Use environment-based configuration for production deployments.
+</Warning>
+
+### Key Rotation
+
+API keys support hot reload. To rotate keys:
+
+1. Add new key to `api-keys` list
+2. Save `config.yaml`
+3. switchAILocal automatically reloads (no restart needed)
+4. Update clients to use new key
+5. Remove old key from config
+
+```yaml
+api-keys:
+  - "sk-old-key-123"     # Keep temporarily during migration
+  - "sk-new-key-456"     # New key for clients
+```
+
+## Management Access Control
+
+The Management API provides dashboard access and control endpoints. It has separate authentication and access controls.
+
+```yaml config.yaml
+remote-management:
+  allow-remote: false
+  secret-key: ""
+  disable-control-panel: false
+  panel-github-repository: "https://github.com/traylinx/switchAILocal-Management-Center"
+```
+
+### Management Secret Key
+
+<ParamField path="remote-management.secret-key" type="string">
+  Management authentication key. All management requests require this key. Leave empty to disable Management API entirely (404 for all management routes).
+</ParamField>
+
+**Automatic hashing:**
+
+When you set a plaintext key:
+
+```yaml
+remote-management:
+  secret-key: "my-secure-password"
+```
+
+switchAILocal automatically hashes it with bcrypt on first startup:
+
+```yaml
+remote-management:
+  secret-key: "$2a$10$...<bcrypt-hash>..."
+```
+
+<Note>
+  The hashed value is persisted back to `config.yaml` automatically. Future startups skip re-hashing.
+</Note>
+
+### Remote Access Control
+
+<ParamField path="remote-management.allow-remote" type="boolean" default="false">
+  Allow remote (non-localhost) access to management endpoints. When `false`, only localhost (127.0.0.1, ::1) can access management routes, even with valid key.
+</ParamField>
+
+**Localhost-only (default):**
+
+```yaml
+remote-management:
+  allow-remote: false
+  secret-key: "your-management-key"
+```
+
+- ✅ Requests from `127.0.0.1` with valid key → **Allowed**
+- ❌ Requests from `192.168.1.100` with valid key → **Denied (403)**
+
+**Remote access enabled:**
+
+```yaml
+remote-management:
+  allow-remote: true
+  secret-key: "your-management-key"
+```
+
+- ✅ Requests from any IP with valid key → **Allowed**
+
+<Warning>
+  Enabling `allow-remote: true` exposes management endpoints to the network. Ensure you use a strong secret key and TLS.
+</Warning>
+
+### Management Control Panel
+
+<ParamField path="remote-management.disable-control-panel" type="boolean" default="false">
+  Disable the bundled management control panel asset download and HTTP route. When `true`, management UI is not served.
+</ParamField>
+
+<ParamField path="remote-management.panel-github-repository" type="string" default="https://github.com/traylinx/switchAILocal-Management-Center">
+  GitHub repository URL for management panel assets. Override to use custom dashboard.
+</ParamField>
+
+**Disable dashboard UI:**
+
+```yaml
+remote-management:
+  secret-key: "api-only"
+  disable-control-panel: true  # API access only, no UI
+```
+
+### Disabling Management API
+
+To completely disable all management endpoints:
+
+```yaml
+remote-management:
+  secret-key: ""  # Empty = Management API disabled (404)
+```
+
+With empty secret key:
+- Management dashboard returns 404
+- All `/api/management/*` routes return 404
+- Client API (`/v1/*`) continues working normally
+
+## WebSocket Authentication
+
+Control authentication for WebSocket API:
+
+```yaml config.yaml
+ws-auth: true
+```
+
+<ParamField path="ws-auth" type="boolean" default="true">
+  Enable authentication for WebSocket API (`/v1/ws`). Requires same API keys as REST endpoints.
+</ParamField>
+
+<Warning>
+  Disabling WebSocket authentication (`ws-auth: false`) allows unauthenticated access to streaming endpoints. Only disable in trusted environments.
+</Warning>
+
+## TLS/HTTPS Configuration
+
+Enable HTTPS for encrypted transport:
+
+```yaml config.yaml
+tls:
+  enable: false
+  cert: ""
+  key: ""
+```
+
+<ParamField path="tls.enable" type="boolean" default="false">
+  Enable HTTPS server mode with TLS certificates
+</ParamField>
+
+<ParamField path="tls.cert" type="string">
+  Path to TLS certificate file (PEM format)
+</ParamField>
+
+<ParamField path="tls.key" type="string">
+  Path to TLS private key file (PEM format)
+</ParamField>
+
+### Production TLS Example
+
+**With Let's Encrypt:**
+
+```yaml
+host: ""
+port: 443
+
+tls:
+  enable: true
+  cert: "/etc/letsencrypt/live/api.example.com/fullchain.pem"
+  key: "/etc/letsencrypt/live/api.example.com/privkey.pem"
+
+remote-management:
+  allow-remote: true
+  secret-key: "<strong-password>"
+
+api-keys:
+  - "sk-prod-..."
+```
+
+**With custom CA:**
+
+```yaml
+tls:
+  enable: true
+  cert: "/etc/ssl/certs/switchai.crt"
+  key: "/etc/ssl/private/switchai.key"
+```
+
+<Note>
+  TLS certificate changes require a server restart. Hot reload does not apply to TLS settings.
+</Note>
+
+## Authentication Directory
+
+Configure storage location for authentication tokens:
+
+```yaml config.yaml
+auth-dir: "~/.switchailocal"
+```
+
+<ParamField path="auth-dir" type="string" default="~/.switchailocal">
+  Directory for OAuth tokens, session data, and authentication cache. Supports `~` for home directory.
+</ParamField>
+
+This directory contains:
+- `tokens.json` - OAuth refresh tokens (Gemini, etc.)
+- Session state for authenticated providers
+- Authentication cache
+
+<Warning>
+  Ensure this directory has restricted permissions (`chmod 700`) to prevent token theft.
+</Warning>
+
+## Security Best Practices
+
+### 1. Use Strong API Keys
+
+```yaml
+# ❌ Weak keys
+api-keys:
+  - "test"
+  - "123456"
+
+# ✅ Strong keys
+api-keys:
+  - "sk-4f8a9b2c...32-char-random"
+  - "sk-7d3e1f9a...32-char-random"
+```
+
+Generate strong keys:
+
+```bash
+openssl rand -base64 32
+```
+
+### 2. Enable TLS in Production
+
+```yaml
+# ✅ Production configuration
+tls:
+  enable: true
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+```
+
+### 3. Restrict Management Access
+
+```yaml
+# ✅ Secure management (localhost only)
+remote-management:
+  allow-remote: false
+  secret-key: "<strong-unique-password>"
+
+# ⚠️ Remote access (ensure TLS + strong key)
+remote-management:
+  allow-remote: true
+  secret-key: "<very-strong-password>"
+```
+
+### 4. Secure Authentication Directory
+
+```bash
+# Set restrictive permissions
+chmod 700 ~/.switchailocal
+chmod 600 ~/.switchailocal/tokens.json
+```
+
+### 5. Rotate Keys Regularly
+
+Set up a key rotation schedule:
+
+- Client API keys: Rotate every 90 days
+- Management secret key: Rotate every 180 days
+- OAuth tokens: Automatically refreshed by switchAILocal
+
+### 6. Use Environment-Specific Configs
+
+```yaml
+# config.production.yaml
+api-keys:
+  - "${API_KEY_1}"  # Load from environment
+  - "${API_KEY_2}"
+
+remote-management:
+  secret-key: "${MGMT_SECRET}"
+```
+
+## Firewall Configuration
+
+When deploying with `allow-remote: true`, configure firewall rules:
+
+```bash
+# Allow HTTPS traffic
+sudo ufw allow 443/tcp
+
+# Deny direct access to management port if separate
+sudo ufw deny 8443/tcp
+```
+
+## Complete Security Example
+
+```yaml config.yaml
+# Production-grade security configuration
+host: ""
+port: 443
+
+# TLS encryption
+tls:
+  enable: true
+  cert: "/etc/letsencrypt/live/api.company.com/fullchain.pem"
+  key: "/etc/letsencrypt/live/api.company.com/privkey.pem"
+
+# Client authentication
+api-keys:
+  - "sk-prod-a1b2c3d4e5f6..."  # Production key 1
+  - "sk-prod-g7h8i9j0k1l2..."  # Production key 2
+
+# Management access (localhost only)
+remote-management:
+  allow-remote: false
+  secret-key: "$2a$10$...<bcrypt-hash>..."
+  disable-control-panel: false
+
+# WebSocket security
+ws-auth: true
+
+# Secure token storage
+auth-dir: "/var/lib/switchailocal/auth"
+
+# Logging for audit
+logging-to-file: true
+debug: false
+```
+
+## Troubleshooting
+
+<Accordion title="Authentication failures">
+
+**Problem:** Requests return 401 Unauthorized
+
+**Solutions:**
+- Verify `Authorization: Bearer <key>` header is included
+- Check key is in `api-keys` list
+- Ensure config.yaml has been reloaded
+- Check for typos in API key
+
+</Accordion>
+
+<Accordion title="Management API returns 404">
+
+**Problem:** Management endpoints return 404
+
+**Solutions:**
+- Ensure `remote-management.secret-key` is not empty
+- Check if `disable-control-panel: true` is set
+- Verify you're accessing the correct endpoint
+
+</Accordion>
+
+<Accordion title="Remote management access denied">
+
+**Problem:** Management requests from network IPs return 403
+
+**Solutions:**
+- Set `remote-management.allow-remote: true`
+- Verify firewall allows traffic on the port
+- Ensure correct management secret key is used
+
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Configuration" icon="server" href="/configuration/server">
+    Configure host, port, logging, and core settings
+  </Card>
+  <Card title="Provider Setup" icon="plug" href="/configuration/providers">
+    Add API keys for cloud and local AI providers
+  </Card>
+</CardGroup>

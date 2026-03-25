@@ -1,0 +1,733 @@
+---
+title: 'Configuration Management'
+description: 'Manage server configuration and settings programmatically'
+---
+
+## Overview
+
+The Configuration Management API allows you to read and modify switchAILocal's configuration at runtime without restarting the server.
+
+## Get Configuration
+
+### JSON Format
+
+```
+GET /v0/management/config
+```
+
+Returns the current configuration in JSON format:
+
+```bash
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "host": "0.0.0.0",
+  "port": 18080,
+  "debug": false,
+  "request_log": true,
+  "websocket_auth": true,
+  "gemini": {
+    "api-key": [
+      {"name": "Production", "key": "***"}
+    ]
+  },
+  "routing": {
+    "priority": ["geminicli", "ollama", "switchai"]
+  }
+}
+```
+
+### YAML Format
+
+```
+GET /v0/management/config.yaml
+```
+
+Returns the configuration in YAML format:
+
+```bash
+curl http://localhost:18080/v0/management/config.yaml \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```yaml
+host: 0.0.0.0
+port: 18080
+debug: false
+request_log: true
+websocket_auth: true
+
+gemini:
+  api-key:
+    - name: Production
+      key: "***"
+
+routing:
+  priority:
+    - geminicli
+    - ollama
+    - switchai
+```
+
+## Update Configuration
+
+```
+PUT /v0/management/config.yaml
+```
+
+Update the entire configuration file:
+
+```bash
+curl -X PUT http://localhost:18080/v0/management/config.yaml \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @config.yaml
+```
+
+**Success Response**:
+```json
+{
+  "message": "Configuration updated successfully"
+}
+```
+
+<Note>
+Configuration changes are applied immediately without server restart. The `config.yaml` file is updated on disk.
+</Note>
+
+## Individual Settings
+
+### Debug Mode
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/debug \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "debug": false
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/debug \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"debug": true}'
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "message": "Debug mode updated",
+      "debug": true
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### File Logging
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/logging-to-file \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "logging_to_file": true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/logging-to-file \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+### Request Logging
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/request-log \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "request_log": true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/request-log \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+### WebSocket Authentication
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/ws-auth \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "websocket_auth": true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/ws-auth \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+### Usage Statistics
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/usage-statistics-enabled \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "usage_statistics_enabled": true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/usage-statistics-enabled \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+### Proxy Settings
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/proxy-url \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "proxy_url": "http://proxy.example.com:8080"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/proxy-url \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"proxy_url": "http://proxy.example.com:8080"}'
+    ```
+  </Tab>
+  
+  <Tab title="Delete">
+    ```bash
+    curl -X DELETE http://localhost:18080/v0/management/proxy-url \
+      -H "X-Management-Key: your-secret-key"
+    ```
+  </Tab>
+</Tabs>
+
+## Retry Configuration
+
+### Request Retry
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/request-retry \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "request_retry": 3
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/request-retry \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"retries": 5}'
+    ```
+  </Tab>
+</Tabs>
+
+### Max Retry Interval
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/max-retry-interval \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "max_retry_interval": 60
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/max-retry-interval \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"seconds": 120}'
+    ```
+  </Tab>
+</Tabs>
+
+## Quota Configuration
+
+### Switch Project on Quota
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/quota-exceeded/switch-project \
+      -H "X-Management-Key: your-secret-key"
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "switch_project": true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/quota-exceeded/switch-project \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+### Switch Preview Model
+
+<Tabs>
+  <Tab title="Get">
+    ```bash
+    curl http://localhost:18080/v0/management/quota-exceeded/switch-preview-model \
+      -H "X-Management-Key: your-secret-key"
+    ```
+  </Tab>
+  
+  <Tab title="Update">
+    ```bash
+    curl -X PUT http://localhost:18080/v0/management/quota-exceeded/switch-preview-model \
+      -H "X-Management-Key: your-secret-key" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": true}'
+    ```
+  </Tab>
+</Tabs>
+
+## Monitoring
+
+### Server Logs
+
+```
+GET /v0/management/logs
+```
+
+Retrieve server logs:
+
+```bash
+curl http://localhost:18080/v0/management/logs \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Query Parameters**:
+- `lines` - Number of lines to retrieve (default: 100)
+- `level` - Filter by log level: `debug`, `info`, `warn`, `error`
+
+**Example**:
+```bash
+curl "http://localhost:18080/v0/management/logs?lines=50&level=error" \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Delete Logs
+
+```
+DELETE /v0/management/logs
+```
+
+Clear all log files:
+
+```bash
+curl -X DELETE http://localhost:18080/v0/management/logs \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Request Error Logs
+
+```
+GET /v0/management/request-error-logs
+```
+
+List all request error logs:
+
+```bash
+curl http://localhost:18080/v0/management/request-error-logs \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "logs": [
+    {
+      "name": "error-2026-03-09-10-30-15.json",
+      "size": 1024,
+      "timestamp": "2026-03-09T10:30:15Z"
+    }
+  ]
+}
+```
+
+### Download Error Log
+
+```
+GET /v0/management/request-error-logs/:name
+```
+
+Download a specific error log:
+
+```bash
+curl http://localhost:18080/v0/management/request-error-logs/error-2026-03-09-10-30-15.json \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Get Request by ID
+
+```
+GET /v0/management/request-log-by-id/:id
+```
+
+Retrieve a specific request log:
+
+```bash
+curl http://localhost:18080/v0/management/request-log-by-id/req_abc123 \
+  -H "X-Management-Key: your-secret-key"
+```
+
+## State Box
+
+```
+GET /v0/management/state-box/status
+```
+
+Get State Box information:
+
+```bash
+curl http://localhost:18080/v0/management/state-box/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "enabled": true,
+  "path": "/home/user/.switchailocal",
+  "mode": "user",
+  "writable": true,
+  "size_bytes": 10485760
+}
+```
+
+## Version Check
+
+```
+GET /v0/management/latest-version
+```
+
+Check for updates:
+
+```bash
+curl http://localhost:18080/v0/management/latest-version \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "current_version": "1.0.0",
+  "latest_version": "1.1.0",
+  "update_available": true,
+  "release_url": "https://github.com/traylinx/switchAILocal/releases/tag/v1.1.0"
+}
+```
+
+## Hot-Reload Operations
+
+### Reload Steering Rules
+
+```
+POST /v0/management/steering/reload
+```
+
+Reload steering rules from disk:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/steering/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "message": "Steering rules reloaded successfully",
+  "rules_loaded": 5
+}
+```
+
+### Reload Hooks
+
+```
+POST /v0/management/hooks/reload
+```
+
+Reload hooks from disk:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/hooks/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "message": "Hooks reloaded successfully",
+  "hooks_loaded": 3
+}
+```
+
+## Python Examples
+
+```python
+import requests
+import yaml
+
+class ConfigManager:
+    def __init__(self, base_url, secret_key):
+        self.base_url = base_url
+        self.headers = {"X-Management-Key": secret_key}
+    
+    def get_config(self):
+        """Get configuration in JSON format"""
+        response = requests.get(
+            f"{self.base_url}/v0/management/config",
+            headers=self.headers
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def update_config(self, config_path):
+        """Update configuration from YAML file"""
+        with open(config_path, 'r') as f:
+            config_yaml = f.read()
+        
+        response = requests.put(
+            f"{self.base_url}/v0/management/config.yaml",
+            headers={**self.headers, "Content-Type": "application/yaml"},
+            data=config_yaml
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def set_debug(self, enabled):
+        """Enable or disable debug mode"""
+        response = requests.put(
+            f"{self.base_url}/v0/management/debug",
+            headers=self.headers,
+            json={"debug": enabled}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_logs(self, lines=100, level=None):
+        """Retrieve server logs"""
+        params = {"lines": lines}
+        if level:
+            params["level"] = level
+        
+        response = requests.get(
+            f"{self.base_url}/v0/management/logs",
+            headers=self.headers,
+            params=params
+        )
+        response.raise_for_status()
+        return response.text
+
+# Usage
+manager = ConfigManager(
+    "http://localhost:18080",
+    "your-secret-key"
+)
+
+# Get current config
+config = manager.get_config()
+print(f"Debug mode: {config['debug']}")
+
+# Enable debug
+manager.set_debug(True)
+
+# Get recent error logs
+error_logs = manager.get_logs(lines=50, level="error")
+print(error_logs)
+```
+
+## JavaScript Examples
+
+```javascript
+class ConfigManager {
+  constructor(baseURL, secretKey) {
+    this.baseURL = baseURL;
+    this.headers = { 'X-Management-Key': secretKey };
+  }
+
+  async getConfig() {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/config`,
+      { headers: this.headers }
+    );
+    if (!response.ok) throw new Error('Failed to get config');
+    return response.json();
+  }
+
+  async updateConfig(configYAML) {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/config.yaml`,
+      {
+        method: 'PUT',
+        headers: {
+          ...this.headers,
+          'Content-Type': 'application/yaml'
+        },
+        body: configYAML
+      }
+    );
+    if (!response.ok) throw new Error('Failed to update config');
+    return response.json();
+  }
+
+  async setDebug(enabled) {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/debug`,
+      {
+        method: 'PUT',
+        headers: {
+          ...this.headers,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ debug: enabled })
+      }
+    );
+    if (!response.ok) throw new Error('Failed to set debug');
+    return response.json();
+  }
+
+  async getLogs(lines = 100, level = null) {
+    const params = new URLSearchParams({ lines });
+    if (level) params.append('level', level);
+
+    const response = await fetch(
+      `${this.baseURL}/v0/management/logs?${params}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) throw new Error('Failed to get logs');
+    return response.text();
+  }
+}
+
+// Usage
+const manager = new ConfigManager(
+  'http://localhost:18080',
+  'your-secret-key'
+);
+
+const config = await manager.getConfig();
+console.log(`Debug mode: ${config.debug}`);
+
+await manager.setDebug(true);
+
+const errorLogs = await manager.getLogs(50, 'error');
+console.log(errorLogs);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Management" icon="layer-group" href="/api/management/providers">
+    Manage AI provider settings
+  </Card>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Set up management authentication
+  </Card>
+  <Card title="Configuration Guide" icon="book" href="/configuration/overview">
+    Learn about configuration options
+  </Card>
+</CardGroup>

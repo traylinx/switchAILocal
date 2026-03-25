@@ -1,0 +1,244 @@
+---
+title: 'Authentication'
+description: 'Secure your API with Bearer tokens and access control'
+---
+
+## Overview
+
+switchAILocal uses Bearer token authentication compatible with the OpenAI API format. Configure access keys in your `config.yaml` or use the Management Dashboard.
+
+## Authentication Methods
+
+### Bearer Token (Recommended)
+
+Include your API key in the `Authorization` header:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-2.5-pro", "messages": [...]}'
+```
+
+### X-API-Key Header
+
+Alternative header format:
+
+```bash
+curl http://localhost:18080/v1/models \
+  -H "X-API-Key: sk-test-123"
+```
+
+## Configuring Access Keys
+
+### Option 1: Configuration File
+
+Add access keys to `config.yaml`:
+
+```yaml config.yaml
+access:
+  keys:
+    - key: sk-test-123
+      name: "Development Key"
+      enabled: true
+    - key: sk-prod-456
+      name: "Production Key"
+      enabled: true
+```
+
+### Option 2: Management Dashboard
+
+1. Open `http://localhost:18080/management`
+2. Navigate to **API Keys** section
+3. Click **Add Key** to generate new access keys
+4. Copy and use the generated key
+
+### Option 3: Environment Variable
+
+Set a default key via environment variable:
+
+```bash
+export SWITCHAI_ACCESS_KEY=sk-test-123
+./switchAILocal
+```
+
+## SDK Configuration
+
+<CodeGroup>
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"  # Your configured access key
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'  // Your configured access key
+});
+
+const response = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+```
+
+```go Go
+import "github.com/sashabaranov/go-openai"
+
+client := openai.NewClient("sk-test-123")
+client.BaseURL = "http://localhost:18080/v1"
+
+resp, err := client.CreateChatCompletion(
+    context.Background(),
+    openai.ChatCompletionRequest{
+        Model: "gemini-2.5-pro",
+        Messages: []openai.ChatCompletionMessage{
+            {Role: "user", Content: "Hello!"},
+        },
+    },
+)
+```
+</CodeGroup>
+
+## Access Control
+
+### Key Permissions
+
+Each access key can be configured with specific permissions:
+
+```yaml config.yaml
+access:
+  keys:
+    - key: sk-readonly-789
+      name: "Read-Only Key"
+      permissions:
+        - read:models
+        - read:providers
+      enabled: true
+    - key: sk-admin-999
+      name: "Admin Key"
+      permissions:
+        - "*"  # All permissions
+      enabled: true
+```
+
+### Remote Access
+
+By default, the API only accepts requests from `localhost`. To enable remote access:
+
+```yaml config.yaml
+remote_management:
+  allow_remote: true
+  secret_key: "your-hashed-secret"  # Use Management API to set
+```
+
+<Warning>
+Enabling remote access requires setting a strong secret key. Use the Management Dashboard to initialize security settings.
+</Warning>
+
+## Management API Authentication
+
+Management endpoints require a separate secret key:
+
+```bash
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Initialize Management Secret
+
+```bash
+curl -X POST http://localhost:18080/v0/management/initialize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "password": "your-secure-password"
+  }'
+```
+
+See [Management API](/api/management/overview) for details.
+
+## WebSocket Authentication
+
+WebSocket connections support query parameter authentication:
+
+```javascript
+const ws = new WebSocket(
+  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
+);
+```
+
+Alternatively, disable WebSocket auth in `config.yaml`:
+
+```yaml config.yaml
+websocket_auth: false  # Not recommended for production
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Strong API Keys">
+    Generate random keys with sufficient entropy:
+    ```bash
+    openssl rand -hex 32
+    ```
+    Prefix with `sk-` for consistency with OpenAI format.
+  </Accordion>
+
+  <Accordion title="Rotate Keys Regularly">
+    Create new keys and deprecate old ones periodically. Use the Management Dashboard to manage active keys.
+  </Accordion>
+
+  <Accordion title="Restrict Remote Access">
+    Only enable `allow_remote: true` when necessary. Use firewall rules to limit access to trusted IPs.
+  </Accordion>
+
+  <Accordion title="Monitor Usage">
+    Check access logs in the Management Dashboard to detect unauthorized usage:
+    ```bash
+    curl http://localhost:18080/v0/management/usage \
+      -H "X-Management-Key: your-secret-key"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### 401 Unauthorized
+
+**Cause**: Missing or invalid API key
+
+**Solution**:
+1. Verify key is configured in `config.yaml` under `access.keys`
+2. Check key is enabled: `enabled: true`
+3. Ensure `Authorization: Bearer <key>` header is present
+
+### 403 Forbidden
+
+**Cause**: Remote access disabled or insufficient permissions
+
+**Solution**:
+1. For remote access, set `allow_remote: true` in config
+2. Verify key has required permissions for the endpoint
+3. Check Management API secret is properly initialized
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
+    Start sending authenticated requests
+  </Card>
+  <Card title="Management API" icon="gear" href="/api/management/overview">
+    Configure advanced security settings
+  </Card>
+</CardGroup>

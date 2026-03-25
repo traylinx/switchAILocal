@@ -1,0 +1,546 @@
+---
+title: Memory System
+description: Persistent learning from routing decisions and user preferences
+icon: database
+---
+
+The Memory System enables switchAILocal to learn from every routing decision, building a persistent knowledge base of user preferences, provider quirks, and performance patterns.
+
+## Overview
+
+The Memory System stores:
+- **Routing History**: Every decision with outcomes and latency
+- **User Preferences**: Learned model preferences per API key
+- **Provider Quirks**: Known issues and workarounds
+- **Analytics**: Performance trends and success rates
+
+<Warning>
+Memory data is stored in `~/.switchailocal/memory/` and can grow over time. Configure retention policies to manage disk usage.
+</Warning>
+
+## Quick Start
+
+### Initialize Memory System
+
+Initialize the memory system before first use:
+
+```bash
+switchAILocal memory init
+```
+
+**Output:**
+```
+Initializing switchAILocal memory system...
+✓ Memory system initialized successfully
+  Base directory: /Users/user/.switchailocal/memory
+  Retention: 90 days
+  Compression: true
+  Max log size: 100 MB
+
+Directory structure created:
+  /Users/user/.switchailocal/memory/
+  ├── routing-history.jsonl
+  ├── provider-quirks.md
+  ├── user-preferences/
+  ├── daily/
+  └── analytics/
+
+Memory system is ready to use!
+```
+
+### Enable in Configuration
+
+Add to your `config.yaml`:
+
+```yaml config.yaml
+intelligence:
+  enabled: true
+  
+  feedback:
+    enabled: true
+    retention-days: 90  # Keep data for 90 days
+```
+
+## CLI Commands
+
+The Memory System provides a comprehensive CLI for management:
+
+<Tabs>
+  <Tab title="Status">
+    Check memory system health and disk usage:
+    
+    ```bash
+    switchAILocal memory status
+    ```
+    
+    **Example Output:**
+    ```
+    switchAILocal Memory System Status
+    ==================================
+    Status: ✓ Healthy
+    Base Directory: /Users/user/.switchailocal/memory
+    Enabled: true
+    
+    Statistics:
+      Total Routing Decisions: 15,234
+      Total Users: 12
+      Total Provider Quirks: 8
+      Disk Usage: 45.2 MB
+      Newest Decision: 2026-03-09T14:23:45Z
+      Oldest Decision: 2025-12-09T09:15:30Z
+    
+    Configuration:
+      Retention Days: 90
+      Compression Enabled: true
+      Last Cleanup: 2026-03-09T00:00:00Z
+    
+    Daily Logs:
+      Total Files: 90
+      Total Entries: 15,234
+      Disk Usage: 42.1 MB
+    ```
+  </Tab>
+  <Tab title="History">
+    View recent routing decisions:
+    
+    ```bash
+    # View last 100 decisions
+    switchAILocal memory history
+    
+    # View last 50 decisions
+    switchAILocal memory history --limit 50
+    
+    # View decisions for specific API key
+    switchAILocal memory history --api-key-hash sha256:abc123...
+    ```
+    
+    **Example Output:**
+    ```
+    Recent Routing Decisions (limit: 100)
+    =====================================
+    
+    [1] 2026-03-09T14:23:45Z
+        API Key: sha256:abc123...
+        Model: auto → switchai-chat
+        Intent: coding
+        Tier: semantic (confidence: 0.92)
+        Latency: 15ms
+        Outcome: ✓ Success: true, Response: 1234ms, Quality: 0.95
+    
+    [2] 2026-03-09T14:20:12Z
+        API Key: sha256:abc123...
+        Model: auto → switchai-reasoner
+        Intent: reasoning
+        Tier: cognitive (confidence: 0.78)
+        Latency: 342ms
+        Outcome: ✓ Success: true, Response: 5678ms, Quality: 0.88
+    ```
+  </Tab>
+  <Tab title="Preferences">
+    View learned user preferences:
+    
+    ```bash
+    # View preferences for API key
+    switchAILocal memory preferences --api-key sk-test-123
+    
+    # Or use the hash directly
+    switchAILocal memory preferences --api-key-hash sha256:abc123...
+    ```
+    
+    **Example Output:**
+    ```
+    User Preferences for API Key: sha256:abc123...
+    ==========================================
+    Last Updated: 2026-03-09T14:23:45Z
+    
+    Model Preferences:
+      coding → switchai-chat
+      reasoning → switchai-reasoner
+      creative → switchai-chat
+    
+    Provider Bias:
+      ollama: +0.15
+      geminicli: +0.05
+      claudecli: -0.10
+    
+    Custom Rules:
+      [1] context_size > 100k → gemini-2.5-pro (priority: 10)
+      [2] contains "security" → ollama:llama3.2 (priority: 8)
+    ```
+  </Tab>
+  <Tab title="Export">
+    Create a backup of all memory data:
+    
+    ```bash
+    # Auto-generated filename
+    switchAILocal memory export
+    
+    # Custom filename
+    switchAILocal memory export --output my-backup.tar.gz
+    ```
+    
+    **Output:**
+    ```
+    Exporting memory data to: switchailocal-memory-20260309-142345.tar.gz
+    ✓ Export completed successfully
+      Archive size: 45.2 MB
+      Contains all memory data from: /Users/user/.switchailocal/memory
+    ```
+  </Tab>
+  <Tab title="Reset">
+    Clear all memory data with confirmation:
+    
+    ```bash
+    # Show warning (requires --confirm)
+    switchAILocal memory reset
+    
+    # Actually reset (creates automatic backup)
+    switchAILocal memory reset --confirm
+    ```
+    
+    **Output:**
+    ```
+    Creating automatic backup before reset...
+    Backup file: memory-backup-before-reset-20260309-142345.tar.gz
+    ✓ Backup created successfully
+    
+    Proceeding with reset...
+    ✓ Memory system reset successfully
+      Removed directory: /Users/user/.switchailocal/memory
+      Backup available: memory-backup-before-reset-20260309-142345.tar.gz
+    
+    💡 Run 'switchAILocal memory init' to reinitialize the memory system.
+    💡 To restore from backup: tar -xzf memory-backup-before-reset-20260309-142345.tar.gz -C ~/
+    ```
+  </Tab>
+</Tabs>
+
+## Directory Structure
+
+The memory system creates the following structure:
+
+```
+~/.switchailocal/memory/
+├── routing-history.jsonl          # All routing decisions (append-only)
+├── provider-quirks.md             # Known provider issues and workarounds
+├── user-preferences/              # Per-user learned preferences
+│   ├── sha256-abc123.json
+│   └── sha256-def456.json
+├── daily/                         # Daily log rotation
+│   ├── 2026-03-09.jsonl.gz
+│   └── 2026-03-08.jsonl.gz
+└── analytics/                     # Aggregated statistics
+    └── weekly-summary.json
+```
+
+## Routing Decision Schema
+
+Each routing decision is stored in JSONL format:
+
+```json
+{
+  "timestamp": "2026-03-09T14:23:45Z",
+  "api_key_hash": "sha256:abc123...",
+  "request": {
+    "model": "auto",
+    "intent": "coding",
+    "complexity": "medium",
+    "has_images": false,
+    "context_size": 1024
+  },
+  "routing": {
+    "tier": "semantic",
+    "confidence": 0.92,
+    "selected_model": "switchai-chat",
+    "matched_skill": "go-expert",
+    "latency_ms": 15
+  },
+  "outcome": {
+    "success": true,
+    "response_time_ms": 1234,
+    "quality_score": 0.95,
+    "cascade_occurred": false,
+    "error": null
+  }
+}
+```
+
+## User Preferences
+
+Preferences are learned automatically based on routing history:
+
+<Steps>
+  <Step title="Model Preferences">
+    Most frequently selected models for each intent category
+  </Step>
+  <Step title="Provider Bias">
+    Relative preference scores based on success rates and user behavior
+  </Step>
+  <Step title="Custom Rules">
+    Detected patterns like "always use local models for security queries"
+  </Step>
+</Steps>
+
+**Preference Schema:**
+```json
+{
+  "api_key_hash": "sha256:abc123...",
+  "last_updated": "2026-03-09T14:23:45Z",
+  "model_preferences": {
+    "coding": "switchai-chat",
+    "reasoning": "switchai-reasoner"
+  },
+  "provider_bias": {
+    "ollama": 0.15,
+    "geminicli": 0.05,
+    "claudecli": -0.10
+  },
+  "custom_rules": [
+    {
+      "condition": "context_size > 100000",
+      "model": "gemini-2.5-pro",
+      "priority": 10
+    }
+  ]
+}
+```
+
+## Configuration Options
+
+Fine-tune memory system behavior in `config.yaml`:
+
+```yaml config.yaml
+intelligence:
+  feedback:
+    enabled: true
+    retention-days: 90           # Keep data for 90 days
+    compression: true            # Compress daily logs
+    max-log-size-mb: 100        # Rotate when log exceeds 100MB
+    base-dir: "~/.switchailocal/memory"  # Storage location
+    
+    # Privacy settings
+    hash-api-keys: true          # Store hashed API keys only
+    redact-content: true         # Don't store request/response content
+    
+    # Analytics
+    daily-aggregation: true      # Generate daily summaries
+    weekly-reports: true         # Generate weekly reports
+```
+
+## Privacy Considerations
+
+<Warning>
+By default, the memory system stores **routing metadata only**, not request/response content.
+</Warning>
+
+### What is Stored
+
+<Tabs>
+  <Tab title="Stored" icon="check">
+    - Hashed API keys (SHA-256)
+    - Model names and intents
+    - Routing tiers and confidence scores
+    - Latency and performance metrics
+    - Success/failure outcomes
+  </Tab>
+  <Tab title="NOT Stored" icon="x">
+    - Request content/prompts
+    - Response content
+    - Raw API keys
+    - IP addresses
+    - User identifiable information
+  </Tab>
+</Tabs>
+
+### Configuration for Privacy
+
+```yaml config.yaml
+intelligence:
+  feedback:
+    enabled: true
+    hash-api-keys: true         # Never store raw API keys
+    redact-content: true        # Never store content
+    anonymize-stats: true       # Aggregate stats without user tracking
+```
+
+## Disk Usage Management
+
+The memory system automatically manages disk usage:
+
+### Automatic Cleanup
+
+- **Daily rotation**: Logs are rotated daily and compressed
+- **Retention policy**: Old data is deleted after configured retention period
+- **Size limits**: Logs are rotated when they exceed max size
+
+### Manual Cleanup
+
+```bash
+# Check current disk usage
+switchAILocal memory status
+
+# Export before cleanup
+switchAILocal memory export --output backup-before-cleanup.tar.gz
+
+# Reset to free all space
+switchAILocal memory reset --confirm
+
+# Reinitialize
+switchAILocal memory init
+```
+
+## Monitoring & Analytics
+
+### Statistics Query
+
+Memory statistics are available via the management API:
+
+```bash
+curl http://localhost:18080/management/metrics | jq '.memory'
+```
+
+**Example Response:**
+```json
+{
+  "memory": {
+    "total_decisions": 15234,
+    "total_users": 12,
+    "disk_usage_bytes": 47431680,
+    "newest_decision": "2026-03-09T14:23:45Z",
+    "oldest_decision": "2025-12-09T09:15:30Z",
+    "retention_days": 90,
+    "compression_enabled": true,
+    "last_cleanup": "2026-03-09T00:00:00Z"
+  }
+}
+```
+
+### Weekly Reports
+
+When `weekly-reports: true`, the system generates performance summaries:
+
+```json analytics/weekly-summary.json
+{
+  "week_start": "2026-03-03",
+  "week_end": "2026-03-09",
+  "total_requests": 3456,
+  "success_rate": 0.97,
+  "avg_latency_ms": 234,
+  "intent_distribution": {
+    "coding": 0.45,
+    "reasoning": 0.25,
+    "creative": 0.15,
+    "fast": 0.15
+  },
+  "tier_usage": {
+    "cache": 0.35,
+    "reflex": 0.20,
+    "semantic": 0.30,
+    "cognitive": 0.15
+  },
+  "top_models": [
+    {"model": "switchai-chat", "count": 1500},
+    {"model": "switchai-reasoner", "count": 890}
+  ]
+}
+```
+
+## Troubleshooting
+
+<Accordion title="Memory system not initialized">
+**Error:** `Memory system not initialized`
+
+**Solution:**
+```bash
+switchAILocal memory init
+```
+</Accordion>
+
+<Accordion title="Permission denied on memory directory">
+**Error:** `Permission denied: /Users/user/.switchailocal/memory`
+
+**Solution:**
+```bash
+chmod 0700 ~/.switchailocal/memory
+chmod 0600 ~/.switchailocal/memory/*.db
+```
+</Accordion>
+
+<Accordion title="Disk usage growing too fast">
+**Solutions:**
+
+1. Reduce retention period:
+   ```yaml
+   feedback:
+     retention-days: 30  # Reduce from 90
+   ```
+
+2. Enable compression:
+   ```yaml
+   feedback:
+     compression: true
+   ```
+
+3. Disable content storage:
+   ```yaml
+   feedback:
+     redact-content: true
+   ```
+</Accordion>
+
+<Accordion title="Preferences not being learned">
+**Check:**
+
+1. Feedback collection is enabled:
+   ```yaml
+   feedback:
+     enabled: true
+   ```
+
+2. Sufficient history exists (minimum ~100 decisions)
+
+3. API key hash is consistent
+</Accordion>
+
+## Best Practices
+
+<Steps>
+  <Step title="Enable from Day One">
+    Initialize memory system before production deployment to start learning immediately.
+  </Step>
+  <Step title="Regular Backups">
+    Export memory data regularly:
+    ```bash
+    switchAILocal memory export --output weekly-backup.tar.gz
+    ```
+  </Step>
+  <Step title="Monitor Disk Usage">
+    Check memory status weekly:
+    ```bash
+    switchAILocal memory status
+    ```
+  </Step>
+  <Step title="Set Appropriate Retention">
+    Balance learning vs disk usage:
+    - Development: 30 days
+    - Production: 90 days
+    - Analytics: 180 days
+  </Step>
+  <Step title="Review Preferences Periodically">
+    Check learned preferences to ensure they align with expectations:
+    ```bash
+    switchAILocal memory preferences --api-key sk-test-123
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cortex Router" icon="brain" href="/intelligent-systems/cortex-router">
+    Learn about intelligent routing that uses memory data
+  </Card>
+  <Card title="Heartbeat Monitoring" icon="heart-pulse" href="/intelligent-systems/heartbeat">
+    Configure health checks and monitoring
+  </Card>
+</CardGroup>

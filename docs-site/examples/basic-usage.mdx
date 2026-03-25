@@ -1,0 +1,342 @@
+---
+title: Basic Usage Examples
+description: Common patterns for using switchAILocal with various providers
+icon: rocket
+---
+
+## Overview
+
+This guide demonstrates the most common usage patterns for switchAILocal, from simple chat completions to multi-provider routing.
+
+## Simple Chat Completion
+
+The most basic usage - send a message and get a response:
+
+<CodeGroup>
+
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+print(completion.choices[0].message.content)
+```
+
+```javascript JavaScript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+const completion = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+
+console.log(completion.choices[0].message.content);
+```
+
+</CodeGroup>
+
+## Auto-Routing (No Provider Prefix)
+
+Let switchAILocal automatically select the best available provider:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# No prefix = auto-routing to any logged-in provider
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",  # switchAILocal picks: geminicli, gemini API, or switchAI
+    messages=[{"role": "user", "content": "What is the meaning of life?"}]
+)
+```
+
+<Tip>
+Auto-routing prioritizes:
+1. CLI providers (if authenticated)
+2. API providers (if keys configured)
+3. Local providers (Ollama, LM Studio)
+</Tip>
+
+## Explicit Provider Selection
+
+Force routing to a specific provider using prefixes:
+
+<Tabs>
+  <Tab title="Gemini CLI">
+    ```python
+    completion = client.chat.completions.create(
+        model="geminicli:gemini-2.5-pro",  # Force Gemini CLI
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    ```
+  </Tab>
+  <Tab title="Ollama (Local)">
+    ```python
+    completion = client.chat.completions.create(
+        model="ollama:llama3.2",  # Force Ollama local model
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    ```
+  </Tab>
+  <Tab title="switchAI Cloud">
+    ```python
+    completion = client.chat.completions.create(
+        model="switchai:switchai-fast",  # Force switchAI cloud
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    ```
+  </Tab>
+  <Tab title="Claude CLI">
+    ```python
+    completion = client.chat.completions.create(
+        model="claudecli:claude-sonnet-4",  # Force Claude CLI
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## List Available Models
+
+Discover all models from all configured providers:
+
+<CodeGroup>
+
+```bash cURL
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+models = client.models.list()
+for model in models.data:
+    print(f"{model.id} ({model.owned_by})")
+```
+
+```javascript JavaScript
+const models = await client.models.list();
+
+for (const model of models.data) {
+  console.log(`${model.id} (${model.owned_by})`);
+}
+```
+
+</CodeGroup>
+
+**Example Output:**
+```
+geminicli:gemini-2.5-pro (google)
+ollama:llama3.2 (ollama)
+switchai:switchai-fast (traylinx)
+switchai:switchai-reasoner (traylinx)
+claudecli:claude-sonnet-4 (anthropic)
+```
+
+## Multi-turn Conversations
+
+Maintain conversation context across multiple turns:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+messages = [
+    {"role": "system", "content": "You are a helpful coding assistant."},
+    {"role": "user", "content": "Write a Python function to calculate factorial"}
+]
+
+# First turn
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=messages
+)
+
+# Add assistant response to history
+messages.append({
+    "role": "assistant",
+    "content": response.choices[0].message.content
+})
+
+# Second turn
+messages.append({
+    "role": "user",
+    "content": "Now add error handling"
+})
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=messages
+)
+
+print(response.choices[0].message.content)
+```
+
+## Temperature Control
+
+Adjust creativity and randomness:
+
+```python
+# Low temperature (0.0-0.3) = Focused, deterministic
+code_response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Write a sorting algorithm"}],
+    temperature=0.2,  # Precise, consistent code
+)
+
+# High temperature (0.7-1.0) = Creative, varied
+story_response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Write a short story"}],
+    temperature=0.9,  # Creative, diverse outputs
+)
+```
+
+## Max Tokens Limit
+
+Control response length:
+
+```python
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Explain quantum computing"}],
+    max_tokens=200,  # Limit to ~200 tokens (approx 150 words)
+)
+```
+
+## System Messages
+
+Set the assistant's behavior and personality:
+
+```python
+completion = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[
+        {
+            "role": "system",
+            "content": "You are a senior Go developer. Always provide idiomatic Go code with error handling."
+        },
+        {
+            "role": "user",
+            "content": "Show me how to read a JSON file"
+        }
+    ]
+)
+```
+
+## Error Handling
+
+<CodeGroup>
+
+```python Python
+from openai import OpenAI, APIError, APIConnectionError
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+try:
+    completion = client.chat.completions.create(
+        model="gemini-2.5-pro",
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    print(completion.choices[0].message.content)
+except APIConnectionError as e:
+    print(f"Connection error: {e}")
+except APIError as e:
+    print(f"API error: {e.status_code} - {e.message}")
+```
+
+```javascript JavaScript
+import { APIConnectionError, APIError } from 'openai';
+
+try {
+  const completion = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+  console.log(completion.choices[0].message.content);
+} catch (error) {
+  if (error instanceof APIConnectionError) {
+    console.error(`Connection error: ${error.message}`);
+  } else if (error instanceof APIError) {
+    console.error(`API error: ${error.status} - ${error.message}`);
+  }
+}
+```
+
+</CodeGroup>
+
+## Provider Prefix Reference
+
+| Prefix | Provider | Type | Example |
+|--------|----------|------|----------|
+| `geminicli:` | Google Gemini CLI | CLI Tool | `geminicli:gemini-2.5-pro` |
+| `claudecli:` | Anthropic Claude CLI | CLI Tool | `claudecli:claude-sonnet-4` |
+| `codex:` | OpenAI Codex CLI | CLI Tool | `codex:gpt-4` |
+| `vibe:` | Mistral Vibe CLI | CLI Tool | `vibe:mistral-large` |
+| `ollama:` | Ollama | Local | `ollama:llama3.2` |
+| `lmstudio:` | LM Studio | Local | `lmstudio:mistral-7b` |
+| `switchai:` | Traylinx switchAI | Cloud API | `switchai:switchai-fast` |
+| `gemini:` | Google AI Studio | Cloud API | `gemini:gemini-2.5-pro` |
+| `claude:` | Anthropic API | Cloud API | `claude:claude-3-5-sonnet` |
+| `openai:` | OpenAI API | Cloud API | `openai:gpt-4` |
+
+<Note>
+**No Prefix = Auto-routing** - switchAILocal will intelligently select the best available provider.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Streaming" icon="stream" href="/examples/streaming">
+    Real-time streaming responses
+  </Card>
+  <Card title="Multi-Provider" icon="diagram-project" href="/examples/multi-provider">
+    Advanced multi-provider patterns
+  </Card>
+  <Card title="Intelligent Routing" icon="brain" href="/examples/intelligent-routing">
+    Auto-routing with Cortex Router
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdk/python">
+    Complete Python SDK reference
+  </Card>
+</CardGroup>

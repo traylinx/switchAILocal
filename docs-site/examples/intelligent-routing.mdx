@@ -1,0 +1,463 @@
+---
+title: Intelligent Routing with Cortex
+description: Automatic model selection using the Cortex Router plugin
+icon: brain
+---
+
+## Overview
+
+The Cortex Router plugin provides intelligent, multi-tier routing that automatically selects the optimal model based on request content. This eliminates the need to manually choose providers and models for each request.
+
+## Quick Start
+
+### Enable Cortex Router
+
+```yaml
+# config.yaml
+plugin:
+  enabled: true
+  enabled-plugins:
+    - "cortex-router"
+
+intelligence:
+  enabled: true
+  router-model: "ollama:qwen:0.5b"  # Fast classification model
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    fast: "switchai-fast"
+    secure: "ollama:llama3.2"  # Local for sensitive data
+```
+
+### Basic Usage
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# Use "auto" or "cortex" to trigger intelligent routing
+completion = client.chat.completions.create(
+    model="auto",  # Let Cortex Router decide
+    messages=[{"role": "user", "content": "Write a Python function to sort a list"}]
+)
+# → Automatically routes to coding model
+
+print(completion.choices[0].message.content)
+```
+
+## How It Works
+
+Cortex Router analyzes requests through multiple tiers:
+
+<Steps>
+  <Step title="Reflex Tier (<1ms)">
+    Pattern matching for obvious cases:
+    - Code blocks → coding model
+    - PII detection → secure/local model
+    - Image attachments → vision model
+  </Step>
+  
+  <Step title="Semantic Tier (<20ms)">
+    Embedding-based intent matching (Phase 2):
+    - Compute query embedding
+    - Match against pre-computed intent vectors
+    - Route if confidence > threshold
+  </Step>
+  
+  <Step title="Cognitive Tier (200-500ms)">
+    LLM-based classification:
+    - Analyze query with router model
+    - Generate confidence scores
+    - Select optimal capability slot
+  </Step>
+</Steps>
+
+## Routing Examples
+
+### Coding Tasks
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# These are automatically routed to the coding model
+coding_queries = [
+    "Write a binary search algorithm in Go",
+    "Debug this Python code: def factorial(n): return n * factorial(n)",
+    "Explain how async/await works in JavaScript",
+    "Generate unit tests for this function",
+]
+
+for query in coding_queries:
+    completion = client.chat.completions.create(
+        model="auto",
+        messages=[{"role": "user", "content": query}]
+    )
+    print(f"Query: {query[:50]}...")
+    print(f"Response: {completion.choices[0].message.content[:100]}...\n")
+```
+
+### Reasoning Tasks
+
+```python
+# These route to the reasoning model
+reasoning_queries = [
+    "Solve this logic puzzle: If all bloops are razzies...",
+    "What are the ethical implications of AI in healthcare?",
+    "Prove that the square root of 2 is irrational",
+    "Analyze the pros and cons of remote work",
+]
+
+for query in reasoning_queries:
+    completion = client.chat.completions.create(
+        model="cortex",  # Explicit Cortex routing
+        messages=[{"role": "user", "content": query}]
+    )
+    print(f"Reasoning: {completion.choices[0].message.content[:100]}...\n")
+```
+
+### Fast Queries
+
+```python
+# These route to the fast model
+fast_queries = [
+    "What is 2+2?",
+    "Define recursion",
+    "What is the capital of France?",
+    "Translate 'hello' to Spanish",
+]
+
+for query in fast_queries:
+    completion = client.chat.completions.create(
+        model="auto",
+        messages=[{"role": "user", "content": query}]
+    )
+    print(f"Fast response: {completion.choices[0].message.content}\n")
+```
+
+### Secure/Private Data
+
+```python
+# Queries with PII automatically route to local models
+sensitive_queries = [
+    "My email is john@example.com and I need help with...",
+    "Analyze this customer data: SSN 123-45-6789",
+    "Review this API key: sk_live_1234567890abcdef",
+]
+
+for query in sensitive_queries:
+    print("🔒 Detected sensitive data -> routing to local model")
+    completion = client.chat.completions.create(
+        model="auto",
+        messages=[{"role": "user", "content": query}]
+    )
+    # → Automatically routes to ollama:llama3.2 (local)
+```
+
+## Phase 2 Features
+
+### Semantic Tier
+
+Enable faster intent matching with embeddings:
+
+```yaml
+intelligence:
+  enabled: true
+  
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+  
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+```
+
+**Download the embedding model first:**
+```bash
+./scripts/download-embedding-model.sh
+```
+
+**Benefits:**
+- 10-20x faster than LLM classification
+- Deterministic results
+- No API costs
+
+### Skill Matching
+
+Match queries to domain-specific skills:
+
+```yaml
+intelligence:
+  skills:
+    enabled: true
+    directory: "plugins/cortex-router/skills"
+  
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80
+```
+
+**Example:**
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123",
+)
+
+# These match to specialized skills
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Write a Kubernetes deployment YAML"}]
+)
+# → Matches "kubernetes" skill → augments prompt with K8s expertise
+
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Optimize this Go code for concurrency"}]
+)
+# → Matches "golang" skill → adds Go best practices to context
+```
+
+### Dynamic Model Discovery
+
+Automatically discover available models from all providers:
+
+```yaml
+intelligence:
+  discovery:
+    enabled: true
+    refresh-interval: 3600  # Re-discover every hour
+    cache-dir: "~/.switchailocal/cache/discovery"
+  
+  auto-assign:
+    enabled: true
+    prefer-local: true  # Prefer local models for 'secure' slot
+    cost-optimization: true  # Favor cheaper models when quality is similar
+```
+
+**What it does:**
+- Queries all providers for available models at startup
+- Assigns optimal models to capability slots based on:
+  - Model capabilities (coding, reasoning, vision)
+  - Context window size
+  - Cost
+  - Local vs cloud
+- Updates the matrix automatically
+
+### Quality-Based Cascading
+
+Automatically escalate to better models if quality is insufficient:
+
+```yaml
+intelligence:
+  cascade:
+    enabled: true
+    quality-threshold: 0.70
+  
+  verification:
+    enabled: true
+```
+
+**Example:**
+```python
+# Start with fast model, escalate if needed
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Explain quantum entanglement"}]
+)
+# Flow:
+# 1. Routes to switchai-fast
+# 2. Verifies response quality < 0.70
+# 3. Cascades to switchai-reasoner
+# 4. Returns higher-quality response
+```
+
+## Capability Matrix
+
+The matrix defines which models handle which types of requests:
+
+```yaml
+intelligence:
+  matrix:
+    coding: "switchai-chat"          # Code generation, debugging
+    reasoning: "switchai-reasoner"   # Complex analysis, math
+    creative: "switchai-chat"        # Writing, brainstorming
+    fast: "switchai-fast"            # Quick factual questions
+    secure: "ollama:llama3.2"        # Sensitive data (local)
+    vision: "switchai-chat"          # Image analysis
+```
+
+### Slot Descriptions
+
+| Slot | Use Case | Priority |
+|------|----------|----------|
+| `coding` | Code generation, debugging, code review | Coding capability, context window |
+| `reasoning` | Complex analysis, math, logic puzzles | Reasoning capability, accuracy |
+| `creative` | Writing, storytelling, brainstorming | General capability, creativity |
+| `fast` | Quick questions, simple tasks | Low latency, low cost |
+| `secure` | Sensitive data, PII | Local models preferred |
+| `vision` | Image analysis, multimodal | Vision capability required |
+
+## Monitoring and Debugging
+
+### View Routing Decisions
+
+Check logs to see how queries are routed:
+
+```bash
+tail -f ~/.switchailocal/logs/request.log | grep cortex
+```
+
+**Example log:**
+```json
+{
+  "timestamp": "2026-03-09T10:30:15Z",
+  "level": "info",
+  "plugin": "cortex-router",
+  "tier": "reflex",
+  "intent": "coding",
+  "confidence": 1.0,
+  "latency_ms": 0.5,
+  "model": "switchai-chat"
+}
+```
+
+### Override Routing
+
+Force a specific slot:
+
+```python
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Explain machine learning"}],
+    extra_body={
+        "cortex": {
+            "force_slot": "reasoning"  # Override automatic detection
+        }
+    }
+)
+```
+
+### Disable Cortex for Specific Requests
+
+```python
+# Use a specific model directly (bypasses Cortex)
+completion = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",  # Explicit provider
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+## Performance Comparison
+
+| Tier | Latency | Accuracy | Use Case |
+|------|---------|----------|----------|
+| Reflex | &lt;1ms | 95%+ | Obvious patterns (code, PII) |
+| Semantic | &lt;20ms | 85%+ | Intent matching |
+| Cognitive | 200-500ms | 90%+ | Complex classification |
+| Manual | 0ms | 100% | Explicit provider selection |
+
+## Best Practices
+
+<Tip>
+**Start with Reflex Tier** - Most requests can be handled by fast pattern matching.
+</Tip>
+
+<Tip>
+**Enable Semantic Tier** - Adds 10-20ms but saves 200-500ms on LLM classification.
+</Tip>
+
+<Tip>
+**Monitor Routing Decisions** - Check logs to ensure queries are routed correctly.
+</Tip>
+
+<Warning>
+**Download Embedding Model** - Semantic tier requires the MiniLM model. Run `./scripts/download-embedding-model.sh`.
+</Warning>
+
+## Complete Configuration Example
+
+```yaml
+# Full Phase 2 configuration
+plugin:
+  enabled: true
+  enabled-plugins:
+    - "cortex-router"
+
+intelligence:
+  enabled: true
+  
+  # Core routing
+  router-model: "ollama:qwen:0.5b"
+  router-fallback: "openai:gpt-4o-mini"
+  
+  # Capability matrix
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    creative: "switchai-chat"
+    fast: "switchai-fast"
+    secure: "ollama:llama3.2"
+    vision: "switchai-chat"
+  
+  # Phase 2 features
+  discovery:
+    enabled: true
+    refresh-interval: 3600
+  
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+  
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+  
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80
+  
+  cascade:
+    enabled: true
+    quality-threshold: 0.70
+  
+  semantic-cache:
+    enabled: true
+    similarity-threshold: 0.95
+    max-size: 10000
+  
+  verification:
+    enabled: true
+  
+  feedback:
+    enabled: true
+    retention-days: 90
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cortex Router Guide" icon="book" href="/features/cortex-router">
+    Complete Cortex Router documentation
+  </Card>
+  <Card title="Embedding SDK" icon="brain" href="/sdk/embedding/overview">
+    Learn about the embedding engine
+  </Card>
+  <Card title="Multi-Provider" icon="diagram-project" href="/examples/multi-provider">
+    Manual multi-provider patterns
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure all routing options
+  </Card>
+</CardGroup>

@@ -1,0 +1,556 @@
+---
+title: 'Authentication'
+description: 'Understanding authentication flows and credential management'
+icon: 'shield'
+---
+
+## Overview
+
+switchAILocal supports multiple authentication methods across different provider types. The Auth Manager orchestrates credential lifecycle, automatic refresh, and secure storage.
+
+## Authentication Methods
+
+<CardGroup cols={3}>
+  <Card title="API Keys" icon="key" color="#10b981">
+    Static credentials configured in `config.yaml`
+  </Card>
+  <Card title="OAuth 2.0" icon="fingerprint" color="#3b82f6">
+    Interactive login flows with automatic token refresh
+  </Card>
+  <Card title="Service Accounts" icon="id-card" color="#f59e0b">
+    Long-lived credentials for automation
+  </Card>
+</CardGroup>
+
+## API Key Authentication
+
+The simplest authentication method using static API keys.
+
+### Configuration
+
+```yaml config.yaml
+# Gemini API
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+    base-url: "https://generativelanguage.googleapis.com"
+
+# Claude API
+claude-api-key:
+  - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+
+# OpenAI API
+codex-api-key:
+  - api-key: "sk-proj-..."
+    base-url: "https://api.openai.com/v1"
+```
+
+<Tip>
+API keys are read at startup and hot-reloaded when `config.yaml` changes.
+</Tip>
+
+### Storage
+
+API keys from config are stored in-memory only:
+
+```go
+type Auth struct {
+    ID         string
+    Provider   string
+    Credentials map[string]string // {"api_key": "sk-..."}
+    Metadata   map[string]any     // Source, base URL, etc.
+}
+```
+
+<Note>
+API keys in `config.yaml` are never persisted to the auth directory. Only OAuth tokens are saved.
+</Note>
+
+## OAuth 2.0 Authentication
+
+Interactive login flows for providers like Gemini CLI, Codex, and Claude.
+
+### OAuth Providers
+
+<CardGroup cols={2}>
+  <Card title="Gemini CLI (Google)" icon="google">
+    OAuth with device flow and token refresh
+    
+    ```bash
+    switchAILocal -login
+    ```
+  </Card>
+  <Card title="Codex (OpenAI)" icon="bolt">
+    OAuth for ChatGPT Plus accounts
+    
+    ```bash
+    switchAILocal -codex-login
+    ```
+  </Card>
+  <Card title="Claude (Anthropic)" icon="message">
+    OAuth for Claude Pro accounts
+    
+    ```bash
+    switchAILocal -claude-login
+    ```
+  </Card>
+  <Card title="Qwen" icon="robot">
+    OAuth for Qwen services
+    
+    ```bash
+    switchAILocal -qwen-login
+    ```
+  </Card>
+</CardGroup>
+
+### Login Flow
+
+The OAuth flow is managed by `cmd/server/main.go`:
+
+```mermaid
+sequencer
+    User->>CLI: switchAILocal -login
+    CLI->>OAuth Server: Request device code
+    OAuth Server-->>CLI: Return code & URL
+    CLI->>User: Display URL and code
+    User->>Browser: Visit URL and enter code
+    Browser->>OAuth Server: Authorize device
+    CLI->>OAuth Server: Poll for token
+    OAuth Server-->>CLI: Return access + refresh tokens
+    CLI->>File Store: Save tokens
+    CLI->>User: Login successful
+```
+
+### Implementation
+
+<Accordion title="Gemini OAuth Flow">
+The Gemini authenticator (`sdk/auth/gemini.go`) implements the device flow:
+
+```go
+type GeminiAuthenticator struct {
+    clientID     string
+    clientSecret string
+    scopes       []string
+}
+
+func (a *GeminiAuthenticator) Login(ctx, cfg, opts) (*TokenData, error) {
+    // 1. Request device code
+    config := &oauth2.Config{
+        ClientID:     geminiOAuthClientID,
+        ClientSecret: geminiOAuthClientSecret,
+        Endpoint:     google.Endpoint,
+        Scopes: []string{
+            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/userinfo.email",
+        },
+    }
+    
+    // 2. Display code to user
+    deviceAuth, err := config.DeviceAuth(ctx)
+    fmt.Printf("Visit: %s\n", deviceAuth.VerificationURI)
+    fmt.Printf("Code: %s\n", deviceAuth.UserCode)
+    
+    // 3. Poll for token
+    token, err := config.DeviceAccessToken(ctx, deviceAuth)
+    
+    // 4. Return token data
+    return &TokenData{
+        AccessToken:  token.AccessToken,
+        RefreshToken: token.RefreshToken,
+        Expiry:       token.Expiry,
+    }, nil
+}
+```
+</Accordion>
+
+### Token Storage
+
+OAuth tokens are persisted in the auth directory:
+
+```bash
+~/.switchailocal/
+├── auths/
+│   ├── gemini_1234abcd.json    # Gemini OAuth token
+│   ├── codex_5678efgh.json     # Codex OAuth token
+│   └── claude_9012ijkl.json    # Claude OAuth token
+└── config.yaml                  # Not stored here
+```
+
+Token file format:
+
+```json
+{
+  "id": "gemini_1234abcd",
+  "provider": "geminicli",
+  "credentials": {
+    "access_token": "ya29.a0...",
+    "refresh_token": "1//0g...",
+    "token_type": "Bearer"
+  },
+  "metadata": {
+    "expiry": "2026-03-09T15:30:00Z",
+    "email": "user@gmail.com",
+    "project_id": "my-project-123"
+  },
+  "status": "active",
+  "created_at": "2026-03-09T14:30:00Z",
+  "updated_at": "2026-03-09T14:30:00Z"
+}
+```
+
+<Note>
+Tokens are stored with `600` permissions (owner read/write only) for security.
+</Note>
+
+## Token Refresh
+
+OAuth tokens are automatically refreshed before expiration.
+
+### Auto-Refresh System
+
+The Auth Manager runs a background refresh loop:
+
+```go
+func (m *Manager) StartAutoRefresh(parent context.Context, interval time.Duration) {
+    go func() {
+        ticker := time.NewTicker(refreshCheckInterval) // 5 seconds
+        defer ticker.Stop()
+        
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case <-ticker.C:
+                m.checkRefreshes(ctx)
+            }
+        }
+    }()
+}
+```
+
+### Refresh Decision
+
+<Accordion title="When to Refresh">
+The system decides whether to refresh based on multiple factors:
+
+```go
+func (m *Manager) shouldRefresh(a *Auth, now time.Time) bool {
+    // Don't refresh if disabled
+    if a.Disabled {
+        return false
+    }
+    
+    // Don't refresh if recently attempted
+    if !a.NextRefreshAfter.IsZero() && now.Before(a.NextRefreshAfter) {
+        return false
+    }
+    
+    // Get token expiry
+    expiry, hasExpiry := a.ExpirationTime()
+    
+    // Refresh if expired or expiring soon
+    if hasExpiry && !expiry.IsZero() {
+        lead := ProviderRefreshLead(a.Provider, a.Runtime)
+        if lead != nil && time.Until(expiry) <= *lead {
+            return true  // Refresh within lead time
+        }
+    }
+    
+    return false
+}
+```
+
+Refresh lead times by provider:
+- **Gemini**: 5 minutes before expiry
+- **Codex**: 10 minutes before expiry
+- **Claude**: 15 minutes before expiry
+</Accordion>
+
+### Refresh Execution
+
+```go
+func (m *Manager) refreshAuth(ctx context.Context, id string) {
+    auth := m.auths[id]
+    executor := m.executors[auth.Provider]
+    
+    // Call provider-specific refresh
+    updated, err := executor.Refresh(ctx, auth)
+    
+    if err != nil {
+        // Mark refresh failed, retry later
+        auth.NextRefreshAfter = now.Add(refreshFailureBackoff) // 5 minutes
+        return
+    }
+    
+    // Update with new tokens
+    updated.LastRefreshedAt = now
+    updated.NextRefreshAfter = time.Time{}
+    m.Update(ctx, updated)
+}
+```
+
+<Tip>
+Refresh happens in the background without blocking requests. If a token expires during a request, the request fails and triggers immediate refresh.
+</Tip>
+
+## Credential Lifecycle
+
+### Registration
+
+Credentials are registered during initialization:
+
+```go
+func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
+    if auth.ID == "" {
+        auth.ID = uuid.NewString()
+    }
+    
+    m.mu.Lock()
+    m.auths[auth.ID] = auth.Clone()
+    m.mu.Unlock()
+    
+    // Persist to storage
+    m.persist(ctx, auth)
+    
+    // Notify hooks
+    m.hook.OnAuthRegistered(ctx, auth.Clone())
+    
+    return auth.Clone(), nil
+}
+```
+
+### State Tracking
+
+Each credential tracks its operational state:
+
+```go
+type Auth struct {
+    ID              string
+    Provider        string
+    Status          Status        // Active, Error, Disabled
+    Unavailable     bool          // Currently unavailable
+    NextRetryAfter  time.Time     // When to retry
+    Quota           QuotaState    // Quota status
+    LastError       *Error        // Last error
+    ModelStates     map[string]*ModelState  // Per-model state
+}
+
+type Status string
+
+const (
+    StatusActive   Status = "active"
+    StatusError    Status = "error"
+    StatusDisabled Status = "disabled"
+)
+```
+
+### Result Marking
+
+Execution results update credential state:
+
+```go
+func (m *Manager) MarkResult(ctx context.Context, result Result) {
+    auth := m.auths[result.AuthID]
+    
+    if result.Success {
+        // Clear errors and cooldowns
+        resetModelState(auth.ModelStates[result.Model], now)
+        auth.Status = StatusActive
+        auth.LastError = nil
+    } else {
+        // Mark as failed based on error type
+        switch result.Error.HTTPStatus {
+        case 401:  // Unauthorized
+            auth.NextRetryAfter = now.Add(30 * time.Minute)
+            auth.Status = StatusError
+        case 429:  // Rate limit
+            auth.Quota.Exceeded = true
+            auth.NextRetryAfter = now.Add(quotaCooldown)
+        case 500, 502, 503, 504:  // Server error
+            auth.NextRetryAfter = now.Add(1 * time.Minute)
+        }
+    }
+    
+    m.persist(ctx, auth)
+    m.hook.OnResult(ctx, result)
+}
+```
+
+## Storage Backends
+
+Flexible storage for different deployment scenarios.
+
+### File Store (Default)
+
+Local filesystem storage:
+
+```go
+type FileTokenStore struct {
+    baseDir string  // ~/.switchailocal
+}
+
+func (s *FileTokenStore) Save(ctx, auth) (*Auth, error) {
+    path := filepath.Join(s.baseDir, "auths", auth.ID+".json")
+    data, _ := json.MarshalIndent(auth, "", "  ")
+    return auth, os.WriteFile(path, data, 0600)
+}
+```
+
+### Postgres Store
+
+Database-backed storage for multi-node deployments:
+
+```bash
+export PGSTORE_DSN="postgres://user:pass@localhost/switchai"
+export PGSTORE_SCHEMA="public"
+```
+
+```sql
+CREATE TABLE auths (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    credentials JSONB NOT NULL,
+    metadata JSONB,
+    status TEXT,
+    updated_at TIMESTAMP
+);
+```
+
+### Git Store
+
+Version-controlled storage with remote sync:
+
+```bash
+export GITSTORE_GIT_URL="https://github.com/user/switchai-auth.git"
+export GITSTORE_GIT_USERNAME="user"
+export GITSTORE_GIT_TOKEN="ghp_..."
+```
+
+Automatic commit and push on credential changes.
+
+### Object Store
+
+S3-compatible storage for cloud deployments:
+
+```bash
+export OBJECTSTORE_ENDPOINT="s3.amazonaws.com"
+export OBJECTSTORE_BUCKET="switchai-auth"
+export OBJECTSTORE_ACCESS_KEY="AKIA..."
+export OBJECTSTORE_SECRET_KEY="..."
+```
+
+<Note>
+All storage backends implement the same `Store` interface, making them interchangeable.
+</Note>
+
+## Security Considerations
+
+### Credential Protection
+
+1. **File Permissions**: Auth files use `0600` (owner read/write only)
+2. **Path Validation**: Prevents path traversal attacks
+3. **Error Sanitization**: Strips credentials from error messages
+4. **Memory Clearing**: Overwrites sensitive data after use
+
+<Accordion title="Security Implementation">
+```go
+// Path validation
+func validateFilePath(path string) error {
+    if strings.Contains(path, "..") || strings.Contains(path, "~") {
+        return fmt.Errorf("invalid file path: path traversal")
+    }
+    // Check for null bytes
+    // Validate absolute paths
+}
+
+// Error sanitization
+func sanitizeError(err error, context string) error {
+    errStr := err.Error()
+    sensitivePatterns := []*regexp.Regexp{
+        regexp.MustCompile(`(://[^:@]+):([^@]+)@`),
+        regexp.MustCompile(`\b(password|secret|token|key)=[^\s]+`),
+    }
+    for _, pattern := range sensitivePatterns {
+        errStr = pattern.ReplaceAllString(errStr, "$1:***@")
+    }
+    return fmt.Errorf("%s: %s", context, errStr)
+}
+
+// Permission check
+func checkFilePermissions(filePath string) error {
+    fileInfo, _ := os.Stat(filePath)
+    mode := fileInfo.Mode()
+    if mode.Perm()&0077 != 0 {
+        return fmt.Errorf("insecure permissions")
+    }
+}
+```
+</Accordion>
+
+### Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Environment Variables" icon="terminal">
+    Store sensitive values in `.env` files, not committed to version control
+  </Card>
+  <Card title="Rotate Credentials" icon="rotate">
+    Periodically rotate API keys and refresh OAuth tokens
+  </Card>
+  <Card title="Restrict Permissions" icon="lock">
+    Ensure auth directory and config files have proper permissions
+  </Card>
+  <Card title="Monitor Access" icon="eye">
+    Enable logging to track authentication attempts
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Token Expired
+
+```bash
+# Force refresh
+switchAILocal -login  # Re-authenticate
+```
+
+### Invalid API Key
+
+```yaml
+# Check config.yaml for typos
+gemini-api-key:
+  - api-key: "AIzaSy..."  # Verify key is correct
+```
+
+### Permission Denied
+
+```bash
+# Fix permissions
+chmod 600 ~/.switchailocal/auths/*.json
+chmod 700 ~/.switchailocal/auths
+```
+
+### Multiple Accounts
+
+```bash
+# Login with different account
+switchAILocal -login -project_id my-other-project
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Providers" href="/configuration/providers" icon="plug">
+    Set up authentication for each provider
+  </Card>
+  <Card title="Security Guide" href="/deployment/security" icon="shield">
+    Secure your switchAILocal deployment
+  </Card>
+  <Card title="OAuth Setup" href="/guides/oauth-setup" icon="key">
+    Detailed OAuth configuration guide
+  </Card>
+  <Card title="Storage Options" href="/configuration/storage" icon="database">
+    Choose the right storage backend
+  </Card>
+</CardGroup>

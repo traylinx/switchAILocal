@@ -1,0 +1,200 @@
+---
+title: Embedding SDK Overview
+description: Local embedding generation for semantic search and intelligent routing
+icon: brain
+---
+
+## Overview
+
+The switchAILocal embedding SDK provides ONNX-based local embedding generation using the MiniLM model. This enables advanced features like semantic caching, intelligent routing, and skill matching without requiring external API calls.
+
+## Key Features
+
+- **Local Processing**: All embeddings computed on-device using ONNX Runtime
+- **384-Dimensional Vectors**: Standard MiniLM-L6-v2 model output
+- **Fast Inference**: Optimized for real-time semantic matching (&lt;20ms)
+- **No External Dependencies**: Fully offline after model download
+- **Thread-Safe**: Concurrent embedding generation support
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Text Input] --> B[Tokenizer]
+    B --> C[ONNX Runtime]
+    C --> D[Mean Pooling]
+    D --> E[L2 Normalization]
+    E --> F[384D Vector]
+```
+
+## When to Use Embeddings
+
+### Semantic Tier (Phase 2)
+
+Match user queries to intents using embedding similarity instead of LLM classification:
+
+```yaml
+intelligence:
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+```
+
+**Benefits:**
+- 10-20x faster than LLM classification
+- Deterministic results
+- No API costs
+
+### Semantic Caching
+
+Cache responses based on semantic similarity:
+
+```yaml
+intelligence:
+  semantic-cache:
+    enabled: true
+    similarity-threshold: 0.95
+    max-size: 10000
+```
+
+**Use Cases:**
+- Deduplicating similar queries
+- Reducing API costs
+- Faster response times for common questions
+
+### Skill Matching
+
+Match queries to domain-specific skills:
+
+```yaml
+intelligence:
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80
+```
+
+**Example Skills:**
+- Language experts (Go, Python, TypeScript)
+- Infrastructure (Docker, Kubernetes)
+- Security, Testing, Debugging
+
+## Model Details
+
+### all-MiniLM-L6-v2
+
+| Property | Value |
+|----------|-------|
+| **Dimensions** | 384 |
+| **Max Sequence Length** | 256 tokens |
+| **Model Size** | ~23 MB (ONNX) |
+| **Vocabulary Size** | ~30,000 tokens |
+| **Performance** | ~5-10ms per embedding |
+
+### Download the Model
+
+```bash
+./scripts/download-embedding-model.sh
+```
+
+This downloads:
+- `model.onnx` - The ONNX model file
+- `vocab.txt` - The tokenizer vocabulary
+
+Files are stored in `~/.switchailocal/models/`.
+
+## Quick Start
+
+<Steps>
+  <Step title="Download Model">
+    ```bash
+    ./scripts/download-embedding-model.sh
+    ```
+  </Step>
+  
+  <Step title="Enable in Config">
+    ```yaml
+    intelligence:
+      enabled: true
+      embedding:
+        enabled: true
+        model: "all-MiniLM-L6-v2"
+    ```
+  </Step>
+  
+  <Step title="Start Server">
+    ```bash
+    ./ail.sh start
+    ```
+  </Step>
+  
+  <Step title="Verify">
+    Check logs for:
+    ```
+    INFO Embedding engine initialized with model: model.onnx
+    ```
+  </Step>
+</Steps>
+
+## Configuration Options
+
+```yaml
+intelligence:
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"  # Model name
+    model-path: "~/.switchailocal/models/model.onnx"  # Override path
+    vocab-path: "~/.switchailocal/models/vocab.txt"   # Override vocab
+    shared-library: ""  # ONNX Runtime library (auto-detected)
+```
+
+## Performance Characteristics
+
+### Latency
+
+| Operation | Typical Latency |
+|-----------|----------------|
+| Single embedding | 5-10ms |
+| Batch (10 texts) | 30-50ms |
+| Cosine similarity | &lt;1ms |
+
+### Memory Usage
+
+- **Model Loading**: ~50 MB
+- **Per Request**: ~1-2 MB (temporary)
+- **Cached Embeddings**: 384 floats × 4 bytes = 1.5 KB per vector
+
+### Accuracy
+
+- **Semantic Similarity**: 0.0 (unrelated) to 1.0 (identical)
+- **Typical Intent Match**: >0.85 for correct matches
+- **Typical Skill Match**: >0.80 for relevant skills
+
+## Comparison with Alternatives
+
+| Feature | switchAILocal Embedding | OpenAI Embedding API | SentenceTransformers |
+|---------|------------------------|----------------------|----------------------|
+| **Cost** | Free (local) | $0.0001/1K tokens | Free (local) |
+| **Latency** | 5-10ms | 50-200ms (network) | 10-20ms |
+| **Privacy** | 100% local | Data sent to API | 100% local |
+| **Dimensions** | 384 | 1536 (ada-002) | Varies |
+| **Dependencies** | ONNX Runtime only | Internet required | Python + PyTorch |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Usage Guide" icon="code" href="/sdk/embedding/usage">
+    Learn how to use the embedding SDK
+  </Card>
+  <Card title="Custom Providers" icon="plug" href="/sdk/embedding/custom-providers">
+    Integrate custom embedding models
+  </Card>
+  <Card title="Semantic Tier" icon="brain" href="/features/intelligent-routing">
+    Configure semantic intent matching
+  </Card>
+  <Card title="Semantic Cache" icon="database" href="/features/semantic-cache">
+    Enable semantic caching
+  </Card>
+</CardGroup>

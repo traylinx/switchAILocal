@@ -1,0 +1,452 @@
+---
+title: Payload Injection
+description: Apply default parameters and override model request payloads globally
+icon: syringe
+---
+
+**Payload Injection** allows you to apply default parameters or force override specific fields in model request payloads globally. This is useful for setting consistent behavior across models, injecting metadata, or enforcing organizational policies without modifying client code.
+
+## Overview
+
+Payload injection operates in two modes:
+
+- **Default**: Only sets parameters if they are missing in the original request
+- **Override**: Always overwrites parameters, even if present in the original request
+
+Rules are defined in `config.yaml` and apply to models matching specific patterns and protocols.
+
+<Tip>
+Payload injection happens after request translation but before the request is sent to the provider, ensuring compatibility with all supported protocols.
+</Tip>
+
+## Configuration
+
+Add the `payload` section to your `config.yaml`:
+
+```yaml
+payload:
+  default:  # Only set if missing
+    - models:
+        - name: "gemini-*"
+          protocol: "gemini"
+      params:
+        generationConfig.thinkingConfig.thinkingBudget: 32768
+        generationConfig.temperature: 0.7
+    
+    - models:
+        - name: "gpt-*"
+          protocol: "openai"
+      params:
+        temperature: 0.7
+        max_tokens: 4096
+  
+  override:  # Always overwrite
+    - models:
+        - name: "gpt-*"
+          protocol: "openai"
+      params:
+        user: "switchAILocal-User"
+        metadata.organization: "acme-corp"
+    
+    - models:
+        - name: "claude-*"
+          protocol: "claude"
+      params:
+        metadata.system: "switchAILocal"
+```
+
+## Rule Structure
+
+### Model Matching
+
+Each rule specifies which models it applies to:
+
+```yaml
+models:
+  - name: "gemini-*"        # Pattern with wildcard
+    protocol: "gemini"       # Optional: restrict to protocol
+  - name: "gpt-4*"          # Multiple patterns per rule
+    protocol: "openai"
+```
+
+**Pattern Syntax:**
+- `*` matches zero or more characters
+- `gemini-*` matches `gemini-2.5-pro`, `gemini-3-flash`, etc.
+- `gpt-*-turbo` matches `gpt-3.5-turbo`, `gpt-4-turbo`, etc.
+- `*` matches all models
+
+**Protocol Matching:**
+When specified, rules only apply to requests using that protocol:
+- `openai` - OpenAI-compatible endpoints
+- `gemini` - Google Gemini API
+- `claude` - Anthropic Claude API
+- `vertex` - Google Vertex AI
+
+<Warning>
+If protocol is omitted, the rule applies to all matching models regardless of protocol.
+</Warning>
+
+### Parameters
+
+Parameters use dot notation to specify nested JSON paths:
+
+```yaml
+params:
+  temperature: 0.7                                      # Top-level field
+  generationConfig.temperature: 0.9                     # Nested field
+  generationConfig.thinkingConfig.thinkingBudget: 32768 # Deeply nested
+  metadata.user: "api-gateway"                          # Custom metadata
+```
+
+## Default vs Override
+
+### Default Mode
+
+Defaults only set parameters if they are **missing** from the original request:
+
+```yaml
+payload:
+  default:
+    - models: [{name: "gpt-*"}]
+      params:
+        temperature: 0.7
+        max_tokens: 4096
+```
+
+**Behavior:**
+
+<CodeGroup>
+```json Original Request
+{
+  "model": "gpt-4",
+  "messages": [...],
+  "temperature": 1.0
+}
+```
+
+```json Modified Request
+{
+  "model": "gpt-4",
+  "messages": [...],
+  "temperature": 1.0,      // Unchanged (already present)
+  "max_tokens": 4096        // Added (was missing)
+}
+```
+</CodeGroup>
+
+### Override Mode
+
+Overrides **always overwrite** parameters, regardless of their presence:
+
+```yaml
+payload:
+  override:
+    - models: [{name: "gpt-*"}]
+      params:
+        temperature: 0.7
+        user: "api-gateway"
+```
+
+**Behavior:**
+
+<CodeGroup>
+```json Original Request
+{
+  "model": "gpt-4",
+  "messages": [...],
+  "temperature": 1.0
+}
+```
+
+```json Modified Request
+{
+  "model": "gpt-4",
+  "messages": [...],
+  "temperature": 0.7,       // Overwritten (was 1.0)
+  "user": "api-gateway"      // Added
+}
+```
+</CodeGroup>
+
+<Tip>
+Use **default** for convenience parameters and **override** for enforcing policies or injecting system metadata.
+</Tip>
+
+## Common Use Cases
+
+### 1. Enforce Thinking Budget for Gemini
+
+Ensure all Gemini reasoning models use a minimum thinking budget:
+
+```yaml
+payload:
+  default:
+    - models:
+        - name: "gemini-*-thinking*"
+          protocol: "gemini"
+      params:
+        generationConfig.thinkingConfig.thinkingBudget: 32768
+        generationConfig.thinkingConfig.includeThoughts: true
+```
+
+### 2. Set Default Temperature Across All Models
+
+```yaml
+payload:
+  default:
+    - models:
+        - name: "*"  # Matches all models
+      params:
+        temperature: 0.7
+```
+
+### 3. Inject User Metadata for Tracking
+
+Track all requests with organizational metadata:
+
+```yaml
+payload:
+  override:
+    - models: [{name: "*"}]
+      params:
+        metadata.system: "switchAILocal"
+        metadata.environment: "production"
+        metadata.organization: "acme-corp"
+```
+
+### 4. Enforce Context Limits
+
+Prevent clients from requesting excessive tokens:
+
+```yaml
+payload:
+  override:
+    - models:
+        - name: "gpt-3.5-turbo"
+      params:
+        max_tokens: 4096
+    
+    - models:
+        - name: "claude-*"
+      params:
+        max_tokens: 8192
+```
+
+### 5. Provider-Specific Configurations
+
+Apply different defaults per provider:
+
+```yaml
+payload:
+  default:
+    - models:
+        - name: "*"
+          protocol: "openai"
+      params:
+        temperature: 0.7
+        top_p: 0.95
+    
+    - models:
+        - name: "*"
+          protocol: "claude"
+      params:
+        temperature: 1.0
+        top_p: 0.99
+        top_k: 50
+```
+
+## Advanced Patterns
+
+### Multi-Protocol Rules
+
+Apply the same parameters to multiple protocols:
+
+```yaml
+payload:
+  default:
+    - models:
+        - name: "gpt-*"
+          protocol: "openai"
+        - name: "gpt-*"
+          protocol: "vertex"
+      params:
+        temperature: 0.8
+```
+
+### Conditional Parameters by Model Tier
+
+Different configurations for different model tiers:
+
+```yaml
+payload:
+  default:
+    # Fast models: Lower temperature for consistency
+    - models:
+        - name: "*-flash*"
+        - name: "*-nano*"
+      params:
+        temperature: 0.5
+    
+    # Reasoning models: Higher budget
+    - models:
+        - name: "*-thinking*"
+        - name: "*-reasoner*"
+      params:
+        temperature: 1.0
+        max_tokens: 32768
+```
+
+### Nested Configuration Objects
+
+Build complex nested configurations:
+
+```yaml
+payload:
+  default:
+    - models: [{name: "gemini-*", protocol: "gemini"}]
+      params:
+        generationConfig.temperature: 0.7
+        generationConfig.topP: 0.95
+        generationConfig.topK: 40
+        generationConfig.candidateCount: 1
+        generationConfig.maxOutputTokens: 8192
+        generationConfig.thinkingConfig.thinkingBudget: 16384
+        generationConfig.thinkingConfig.includeThoughts: true
+```
+
+## Debugging
+
+### Enable Debug Logging
+
+Set `debug: true` in `config.yaml` to see payload injection logs:
+
+```yaml
+debug: true
+```
+
+You'll see output like:
+
+```
+[DEBUG] Applied payload default: generationConfig.temperature = 0.7 (model: gemini-2.5-pro)
+[DEBUG] Applied payload override: user = "api-gateway" (model: gpt-4)
+```
+
+### Verify Parameters
+
+Use the Management Dashboard to inspect outgoing requests:
+
+1. Open http://localhost:18080/dashboard
+2. Navigate to **Request Inspector**
+3. View the **Modified Payload** section
+
+<Accordion title="Testing Payload Injection">
+Send a test request and verify the injected parameters:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Test"}]
+  }'
+```
+
+Check the debug logs to confirm injection occurred.
+</Accordion>
+
+## Precedence Rules
+
+### Default Rules
+
+For **default** mode:
+1. **First write wins** per field across all matching rules
+2. If a field exists in the original request, it is never overwritten
+3. Rules are evaluated in the order they appear in `config.yaml`
+
+### Override Rules
+
+For **override** mode:
+1. **Last write wins** per field across all matching rules
+2. Fields are always overwritten, even if present in the original request
+3. Rules are evaluated in the order they appear in `config.yaml`
+
+### Combined Example
+
+```yaml
+payload:
+  default:
+    - models: [{name: "gpt-4"}]
+      params:
+        temperature: 0.5
+    - models: [{name: "gpt-*"}]
+      params:
+        temperature: 0.7  # Ignored (first rule already set it)
+        max_tokens: 4096   # Applied
+  
+  override:
+    - models: [{name: "gpt-4"}]
+      params:
+        user: "gateway-v1"
+    - models: [{name: "gpt-*"}]
+      params:
+        user: "gateway-v2"  # Overwrites previous (last write wins)
+```
+
+## Protocol-Specific Paths
+
+Different protocols use different JSON structures. switchAILocal handles this automatically:
+
+### Gemini API (Standard)
+
+Parameters apply to the root payload:
+
+```yaml
+params:
+  generationConfig.temperature: 0.7  # → body.generationConfig.temperature
+```
+
+### Gemini CLI API
+
+Parameters are nested under `request`:
+
+```yaml
+params:
+  generationConfig.temperature: 0.7  # → body.request.generationConfig.temperature
+```
+
+<Tip>
+switchAILocal automatically detects the protocol and adjusts paths accordingly. You don't need separate rules for Gemini API vs Gemini CLI.
+</Tip>
+
+### OpenAI API
+
+```yaml
+params:
+  temperature: 0.7        # → body.temperature
+  max_tokens: 4096        # → body.max_tokens
+  user: "gateway"         # → body.user
+```
+
+### Claude API
+
+```yaml
+params:
+  temperature: 1.0        # → body.temperature
+  max_tokens: 8192        # → body.max_tokens
+  top_p: 0.99             # → body.top_p
+  top_k: 50               # → body.top_k
+```
+
+## Limitations
+
+- Array parameters are not supported for partial updates (entire array is replaced)
+- Cannot delete fields, only add or overwrite
+- No conditional logic within a single rule (use multiple rules instead)
+- Parameters must be valid JSON types (string, number, boolean, object)
+
+## See Also
+
+- [Lua Plugins](/advanced/lua-plugins) - For dynamic request transformation
+- [Configuration Reference](/configuration/overview) - Complete config.yaml options
+- [Model Routing](/intelligent-systems/cortex-router) - Intelligent model selection

@@ -1,0 +1,381 @@
+---
+title: "Hooks Commands"
+description: "Configure event-driven automation and custom webhooks"
+---
+
+## Overview
+
+Hooks commands manage event-driven automation that triggers actions based on switchAILocal events like request completion, provider failures, quota warnings, and health changes.
+
+## Commands
+
+### list
+
+Display all configured hooks.
+
+```bash
+switchAILocal hooks list
+```
+
+**Output:**
+```
+Configured Hooks:
+
+ID                TYPE        EVENT                  STATUS    TRIGGERS
+--                ----        -----                  ------    --------
+slack-alerts      webhook     provider_unhealthy     enabled   24
+quota-warning     webhook     quota_threshold        enabled   3
+request-log       file        request_completed      enabled   1,243
+custom-notify     script      request_failed         disabled  0
+```
+
+<Info>
+  Hooks are loaded from `~/.switchailocal/hooks/*.yaml` files.
+</Info>
+
+### enable
+
+Enable a disabled hook.
+
+```bash
+switchAILocal hooks enable --id <hook-id>
+```
+
+<ParamField path="--id" type="string" required>
+  Hook ID to enable
+</ParamField>
+
+**Example:**
+```bash
+switchAILocal hooks enable --id slack-alerts
+```
+
+**Output:**
+```
+✓ Hook 'slack-alerts' enabled
+```
+
+### disable
+
+Disable an active hook without deleting it.
+
+```bash
+switchAILocal hooks disable --id <hook-id>
+```
+
+**Example:**
+```bash
+switchAILocal hooks disable --id custom-notify
+```
+
+### test
+
+Test a hook with sample event data.
+
+```bash
+switchAILocal hooks test [options]
+```
+
+<ParamField path="--id" type="string" required>
+  Hook ID to test
+</ParamField>
+
+<ParamField path="--event" type="string" required>
+  Event type to simulate (e.g., `request_completed`, `provider_unhealthy`)
+</ParamField>
+
+<ParamField path="--data" type="string">
+  JSON data payload for the event (default: `{}`)
+</ParamField>
+
+**Example:**
+```bash
+switchAILocal hooks test --id slack-alerts --event provider_unhealthy --data '{"provider":"geminicli","reason":"timeout"}'
+```
+
+**Output:**
+```
+Testing hook: slack-alerts
+Event: provider_unhealthy
+
+✓ Webhook POST successful
+  URL: https://hooks.slack.com/services/...
+  Status: 200 OK
+  Response: {"ok":true}
+
+Test completed successfully.
+```
+
+### logs
+
+View recent hook execution logs.
+
+```bash
+switchAILocal hooks logs [options]
+```
+
+<ParamField path="--id" type="string">
+  Filter logs for specific hook ID
+</ParamField>
+
+<ParamField path="--limit" type="integer">
+  Number of log entries to show (default: 50)
+</ParamField>
+
+<ParamField path="--format" type="string">
+  Output format: `table` or `json` (default: `table`)
+</ParamField>
+
+**Example:**
+```bash
+switchAILocal hooks logs --id slack-alerts --limit 10
+```
+
+**Output:**
+```
+Hook Execution Logs (last 10 for slack-alerts):
+
+TIMESTAMP            EVENT                  STATUS   DURATION   MESSAGE
+---------            -----                  ------   --------   -------
+2026-03-09 10:23:41  provider_unhealthy     success  234ms      Webhook delivered
+2026-03-09 09:15:22  provider_unhealthy     success  189ms      Webhook delivered
+2026-03-09 08:47:03  quota_threshold        success  212ms      Webhook delivered
+```
+
+### reload
+
+Reload all hooks from disk without restarting the server.
+
+```bash
+switchAILocal hooks reload
+```
+
+**Output:**
+```
+Reloading hooks...
+
+✓ Loaded 4 hooks from 2 files
+✓ All hooks validated successfully
+
+Hooks engine reloaded.
+```
+
+## Hook Configuration Format
+
+Hooks are defined in YAML files:
+
+```yaml ~/.switchailocal/hooks/alerts.yaml
+hooks:
+  - id: slack-provider-alerts
+    type: webhook
+    enabled: true
+    events:
+      - provider_unhealthy
+      - provider_recovered
+    config:
+      url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body_template: |
+        {
+          "text": "🚨 Provider Alert: {{.provider}} is {{.status}}",
+          "details": "{{.reason}}"
+        }
+  
+  - id: quota-warnings
+    type: webhook
+    enabled: true
+    events:
+      - quota_threshold
+    conditions:
+      - threshold: 80
+    config:
+      url: "https://example.com/api/alerts"
+      method: POST
+  
+  - id: request-logger
+    type: file
+    enabled: true
+    events:
+      - request_completed
+      - request_failed
+    config:
+      path: "/var/log/switchai/requests.log"
+      format: json
+```
+
+### Hook Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the hook
+</ParamField>
+
+<ParamField path="type" type="string" required>
+  Hook type: `webhook`, `file`, or `script`
+</ParamField>
+
+<ParamField path="enabled" type="boolean">
+  Whether the hook is active (default: `true`)
+</ParamField>
+
+<ParamField path="events" type="array" required>
+  List of events that trigger this hook
+</ParamField>
+
+<ParamField path="conditions" type="array">
+  Optional conditions for hook execution
+</ParamField>
+
+<ParamField path="config" type="object" required>
+  Hook-type specific configuration
+</ParamField>
+
+## Supported Events
+
+### Request Events
+- `request_received` - New request received
+- `request_completed` - Request successfully completed
+- `request_failed` - Request failed with error
+- `request_timeout` - Request exceeded timeout
+
+### Provider Events
+- `provider_healthy` - Provider became healthy
+- `provider_unhealthy` - Provider became unhealthy
+- `provider_degraded` - Provider experiencing high latency
+- `provider_recovered` - Provider recovered from unhealthy state
+
+### Quota Events
+- `quota_threshold` - Quota usage exceeded threshold
+- `quota_exceeded` - Quota fully exhausted
+- `quota_reset` - Quota period reset
+
+### Routing Events
+- `routing_decision` - Cortex Router made a routing decision
+- `steering_applied` - Steering rule was applied
+- `fallback_triggered` - Failover to backup provider
+
+## Hook Types
+
+### Webhook Hooks
+
+Send HTTP requests to external services:
+
+```yaml
+type: webhook
+config:
+  url: "https://api.example.com/webhook"
+  method: POST  # GET, POST, PUT, PATCH
+  headers:
+    Authorization: "Bearer YOUR_TOKEN"
+    Content-Type: application/json
+  body_template: |
+    {
+      "event": "{{.event}}",
+      "provider": "{{.provider}}",
+      "timestamp": "{{.timestamp}}"
+    }
+  timeout: 5000  # milliseconds
+```
+
+### File Hooks
+
+Write events to log files:
+
+```yaml
+type: file
+config:
+  path: "/var/log/switchai/events.log"
+  format: json  # json or text
+  rotate: true
+  max_size_mb: 100
+```
+
+### Script Hooks
+
+Execute custom scripts:
+
+```yaml
+type: script
+config:
+  command: "/usr/local/bin/notify.sh"
+  args:
+    - "{{.event}}"
+    - "{{.provider}}"
+  timeout: 10000
+  env:
+    HOOK_ID: "{{.id}}"
+```
+
+## Template Variables
+
+Hooks support Go template syntax with these variables:
+
+- `{{.event}}` - Event name
+- `{{.timestamp}}` - ISO 8601 timestamp
+- `{{.provider}}` - Provider name (provider events)
+- `{{.model}}` - Model name (request events)
+- `{{.status}}` - Status code or state
+- `{{.reason}}` - Error or status reason
+- `{{.user}}` - API key hash
+- `{{.latency}}` - Request latency in ms
+- `{{.quota}}` - Quota usage percentage
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Slack Alerts" icon="slack">
+    Get notified when providers go down or quotas are exceeded
+  </Card>
+  <Card title="Request Logging" icon="file-lines">
+    Log all requests for audit and compliance
+  </Card>
+  <Card title="PagerDuty Integration" icon="bell">
+    Create incidents for critical failures
+  </Card>
+  <Card title="Metrics Collection" icon="chart-line">
+    Send metrics to Datadog, Prometheus, or Grafana
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Tip>
+  **Use webhook retries** - Configure retry logic for critical webhooks to handle temporary network failures.
+</Tip>
+
+<Warning>
+  **Avoid infinite loops** - Don't trigger hooks that make requests to switchAILocal itself.
+</Warning>
+
+<Info>
+  **Rate limiting** - Hooks are automatically rate-limited to 100 executions per minute per hook.
+</Info>
+
+## Troubleshooting
+
+<Accordion title="Webhook not triggering">
+  - Check if hook is enabled: `hooks list`
+  - Verify event name matches supported events
+  - Test webhook URL manually with curl
+  - Check hook logs: `hooks logs --id <hook-id>`
+</Accordion>
+
+<Accordion title="Template rendering errors">
+  - Verify template syntax with `hooks test`
+  - Ensure all variables are available for the event type
+  - Check for typos in variable names (case-sensitive)
+</Accordion>
+
+<Accordion title="Script hook timing out">
+  - Increase timeout in config
+  - Ensure script has execute permissions
+  - Run script manually to verify it completes
+  - Check script logs for errors
+</Accordion>
+
+## See Also
+
+- [Heartbeat Commands](/cli/heartbeat) - Monitor provider health
+- [Steering Commands](/cli/steering) - Configure routing rules
+- [Memory Commands](/cli/memory) - Analyze routing history

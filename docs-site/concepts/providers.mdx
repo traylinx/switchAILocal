@@ -1,0 +1,470 @@
+---
+title: 'Providers'
+description: 'Understanding provider types and implementations in switchAILocal'
+icon: 'plug'
+---
+
+## Overview
+
+Providers are the backbone of switchAILocal, enabling access to various AI services through a unified interface. Each provider type has unique characteristics and authentication requirements.
+
+## Provider Types
+
+switchAILocal supports three distinct categories of providers:
+
+<CardGroup cols={3}>
+  <Card title="CLI Providers" icon="terminal" color="#10b981">
+    Local command-line tools running on your machine
+  </Card>
+  <Card title="Cloud Providers" icon="cloud" color="#3b82f6">
+    Remote API services accessed via HTTP
+  </Card>
+  <Card title="OAuth Providers" icon="key" color="#f59e0b">
+    Services requiring OAuth2 authentication flows
+  </Card>
+</CardGroup>
+
+## CLI Providers
+
+CLI providers execute locally-installed AI tools and expose them through the proxy.
+
+### Ollama
+
+Local model server for running open-source LLMs.
+
+```yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true  # Automatically fetch available models
+```
+
+<Accordion title="Implementation Details">
+The **OllamaExecutor** (`internal/runtime/executor/ollama_executor.go`) translates OpenAI format to Ollama's native API:
+
+```go
+type OllamaExecutor struct {
+    cfg     *config.Config
+    baseURL string
+    client  *http.Client
+}
+```
+
+Key features:
+- **Auto-discovery**: Queries `/api/tags` for available models
+- **Vision support**: Handles base64-encoded images
+- **Streaming**: Real-time response chunks
+- **No authentication**: Direct HTTP access
+</Accordion>
+
+**Example models**:
+- `ollama:llama3.2`
+- `ollama:mistral`
+- `ollama:qwen3-vl:235b-instruct-cloud`
+
+### OpenCode
+
+Local AI coding agent for development tasks.
+
+```yaml
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"
+  default-agent: "build"
+```
+
+<Note>
+OpenCode agents are specialized for different tasks: `build`, `debug`, `test`, `refactor`.
+</Note>
+
+### LM Studio
+
+GUI application for running local models with OpenAI-compatible API.
+
+```yaml
+lmstudio:
+  enabled: true
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+```
+
+### Gemini CLI
+
+Access Google's Gemini via OAuth credentials without API keys.
+
+```yaml
+# Use OAuth login instead of API keys
+# Run: switchAILocal -login
+```
+
+<Accordion title="Authentication Flow">
+The **GeminiCLIExecutor** uses OAuth2 with device flow:
+
+```go
+type GeminiCLIExecutor struct {
+    cfg *config.Config
+}
+
+func prepareGeminiCLITokenSource(ctx, cfg, auth) (TokenSource, error) {
+    // Exchange refresh token for access token
+    // Endpoint: https://cloudcode-pa.googleapis.com
+}
+```
+
+Scopes required:
+- `https://www.googleapis.com/auth/cloud-platform`
+- `https://www.googleapis.com/auth/userinfo.email`
+</Accordion>
+
+## Cloud Providers
+
+Cloud providers access remote APIs using API keys or OAuth tokens.
+
+### Gemini API
+
+Google's Gemini models via REST API.
+
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+    base-url: "https://generativelanguage.googleapis.com"
+```
+
+**Supported endpoints**:
+- `/v1beta/models/{model}:generateContent`
+- `/v1beta/models/{model}:streamGenerateContent`
+- `/v1beta/models/{model}:countTokens`
+
+<Tip>
+Use the `prefix` to disambiguate when you have multiple Gemini providers configured. Access as `google/gemini-2.0-flash`.
+</Tip>
+
+### Claude (Anthropic)
+
+Anthropic's Claude models.
+
+```yaml
+claude-api-key:
+  - api-key: "sk-ant-..."
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "sonnet"
+      - name: "claude-3-opus-20240229"
+        alias: "opus"
+```
+
+<Accordion title="Message Format Translation">
+The **ClaudeExecutor** translates between OpenAI and Claude formats:
+
+```go
+// OpenAI format
+{
+  "model": "gpt-4",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+
+// Claude format (translated)
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "max_tokens": 4096
+}
+```
+
+Note: Claude requires explicit `max_tokens` parameter.
+</Accordion>
+
+### OpenAI / Codex
+
+OpenAI's GPT models.
+
+```yaml
+codex-api-key:
+  - api-key: "sk-..."
+    base-url: "https://api.openai.com/v1"
+```
+
+**Available models**:
+- GPT-4 series: `gpt-4`, `gpt-4-turbo`, `gpt-4o`
+- GPT-3.5 series: `gpt-3.5-turbo`
+- O-series: `o1`, `o1-mini`, `o1-preview`
+
+### SwitchAI Cloud
+
+Unified access to 100+ cloud models through single API key.
+
+```yaml
+switchai-api-key:
+  - api-key: "sk-lf-..."
+    base-url: "https://switchai.traylinx.com/v1"
+    models:
+      - name: "openai/gpt-oss-120b"
+        alias: "switchai-fast"
+      - name: "deepseek-reasoner"
+        alias: "switchai-reasoner"
+```
+
+<Note>
+SwitchAI provides access to models from OpenAI, Anthropic, Google, DeepSeek, and more through a single endpoint.
+</Note>
+
+## OpenAI-Compatible Providers
+
+Many providers offer OpenAI-compatible endpoints that can be configured using `openai-compatibility`.
+
+```yaml
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+  
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+  
+  - name: "together"
+    prefix: "together"
+    base-url: "https://api.together.xyz/v1"
+    api-key-entries:
+      - api-key: "..."
+```
+
+<Accordion title="OpenAICompatExecutor Implementation">
+The **OpenAICompatExecutor** is a generic executor for OpenAI-compatible APIs:
+
+```go
+type OpenAICompatExecutor struct {
+    provider string  // e.g., "groq", "openrouter"
+    cfg      *config.Config
+}
+
+func (e *OpenAICompatExecutor) Identifier() string {
+    return e.provider
+}
+```
+
+Supports:
+- Chat completions: `/chat/completions`
+- Image generation: `/images/generations`  
+- Audio transcription: `/audio/transcriptions`
+- Audio speech: `/audio/speech`
+</Accordion>
+
+### Supported Services
+
+<CardGroup cols={2}>
+  <Card title="Groq" icon="bolt">
+    Ultra-fast inference with LPU technology
+    
+    Models: Llama, Mixtral, Gemma
+  </Card>
+  <Card title="OpenRouter" icon="route">
+    Access to 100+ models with unified billing
+    
+    Models: GPT-4, Claude, Gemini, and more
+  </Card>
+  <Card title="Together AI" icon="users">
+    Open-source models with fast inference
+    
+    Models: Llama, Mistral, Qwen
+  </Card>
+  <Card title="Anyscale" icon="server">
+    Serverless endpoints for OSS models
+    
+    Models: Llama, Mixtral, CodeLlama
+  </Card>
+</CardGroup>
+
+## Provider Lifecycle
+
+### Registration
+
+Providers are registered during service initialization:
+
+```go
+// Register executors in service builder
+func (b *ServiceBuilder) Build() (*Service, error) {
+    // Register Gemini CLI
+    geminiCLIExec := executor.NewGeminiCLIExecutor(b.cfg)
+    b.coreManager.RegisterExecutor(geminiCLIExec)
+    
+    // Register Ollama
+    ollamaExec := executor.NewOllamaExecutor(b.cfg)
+    b.coreManager.RegisterExecutor(ollamaExec)
+    
+    // Register OpenAI compat providers
+    for _, compatCfg := range b.cfg.OpenAICompatibility {
+        exec := executor.NewOpenAICompatExecutor(compatCfg.Name, b.cfg)
+        b.coreManager.RegisterExecutor(exec)
+    }
+}
+```
+
+### Discovery
+
+Providers with `auto-discover: true` fetch available models:
+
+```go
+// Ollama auto-discovery
+func (e *OllamaExecutor) DiscoverModels() ([]string, error) {
+    resp, err := e.client.Get(e.baseURL + "/api/tags")
+    // Parse and return model list
+}
+```
+
+### Health Checking
+
+Providers can implement health checks:
+
+```go
+type ProviderHealthChecker interface {
+    CheckHealth(ctx context.Context) error
+}
+```
+
+## Model Naming Conventions
+
+Providers use prefixes to avoid naming conflicts:
+
+```bash
+# Without prefix (uses first matching provider)
+model: gpt-4o
+
+# With provider prefix
+model: openrouter/gpt-4o
+model: groq/llama-3.2-90b
+model: ollama:mistral
+
+# With custom alias
+model: sonnet  # Maps to claude-3-5-sonnet-20241022
+```
+
+<Tip>
+Use `force-model-prefix: true` in config to require explicit prefixes for all requests.
+</Tip>
+
+## Provider Metadata
+
+Each provider auth includes metadata:
+
+```go
+type Auth struct {
+    Provider   string
+    Metadata   map[string]any
+    Attributes map[string]string
+}
+
+// Example metadata
+metadata: {
+    "source": "config_yaml",
+    "base_url": "https://api.groq.com/openai/v1",
+    "prefix": "groq",
+    "auto_discover": true
+}
+```
+
+## Proxy Configuration
+
+Providers can use HTTP proxies:
+
+```yaml
+# Global proxy for all providers
+proxy-url: "socks5://user:pass@192.168.1.1:1080/"
+
+# Per-provider proxy
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    proxy-url: "http://proxy.example.com:8080"
+```
+
+<Note>
+Supported proxy protocols: `http://`, `https://`, `socks5://`
+</Note>
+
+## Error Handling
+
+Providers implement standardized error responses:
+
+```go
+type Error struct {
+    Code       string  // "auth_failed", "quota_exceeded", etc.
+    Message    string
+    HTTPStatus int     // 401, 429, 500, etc.
+    Retryable  bool
+}
+```
+
+Common error codes:
+- `401`: Invalid API key or expired token
+- `402/403`: Payment required or forbidden
+- `404`: Model not found
+- `429`: Rate limit exceeded (triggers cooldown)
+- `500/502/503/504`: Transient server errors
+
+## Provider Quotas
+
+Quota management prevents excessive retry storms:
+
+```go
+type QuotaState struct {
+    Exceeded      bool
+    Reason        string
+    NextRecoverAt time.Time
+    BackoffLevel  int  // Exponential backoff level
+}
+```
+
+Backoff schedule:
+- Level 0: 1 second
+- Level 1: 2 seconds  
+- Level 2: 4 seconds
+- ...
+- Max: 30 minutes
+
+<Accordion title="Quota Recovery">
+When a provider returns `429 Too Many Requests`:
+
+1. Mark the credential as quota-exceeded
+2. Set `NextRecoverAt` based on `Retry-After` header or exponential backoff
+3. Skip this credential during selection until recovery time
+4. Reset quota state on successful request
+
+```go
+case 429:
+    var next time.Time
+    if result.RetryAfter != nil {
+        next = now.Add(*result.RetryAfter)
+    } else {
+        cooldown, nextLevel := nextQuotaCooldown(backoffLevel)
+        next = now.Add(cooldown)
+        backoffLevel = nextLevel
+    }
+    state.Quota = QuotaState{
+        Exceeded:      true,
+        NextRecoverAt: next,
+        BackoffLevel:  backoffLevel,
+    }
+```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Add Provider" href="/configuration/providers" icon="plus">
+    Configure a new provider in your setup
+  </Card>
+  <Card title="Routing Strategies" href="/concepts/routing" icon="route">
+    Learn how requests are routed to providers
+  </Card>
+  <Card title="Authentication" href="/concepts/authentication" icon="key">
+    Understand authentication flows
+  </Card>
+  <Card title="Model Discovery" href="/features/discovery" icon="magnifying-glass">
+    Automatic model discovery and registration
+  </Card>
+</CardGroup>

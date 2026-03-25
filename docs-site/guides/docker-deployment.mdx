@@ -1,0 +1,455 @@
+---
+title: Docker Deployment
+description: Deploy switchAILocal using Docker and Docker Compose
+---
+
+## Overview
+
+switchAILocal provides official Docker images and a Docker Compose setup for easy deployment and production use.
+
+## Quick Start with Docker Compose
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/traylinx/switchAILocal.git
+    cd switchAILocal
+    ```
+  </Step>
+  
+  <Step title="Create Configuration">
+    ```bash
+    cp config.example.yaml config.yaml
+    ```
+    
+    Edit `config.yaml` to add your provider credentials and settings.
+  </Step>
+  
+  <Step title="Start with Docker Compose">
+    ```bash
+    docker-compose up -d
+    ```
+    
+    Or use the hub script:
+    
+    ```bash
+    ./ail.sh start --docker
+    ```
+  </Step>
+  
+  <Step title="Verify Deployment">
+    ```bash
+    curl http://localhost:18080/health
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Docker Compose Configuration
+
+The included `docker-compose.yml` provides a complete production-ready setup:
+
+```yaml docker-compose.yml
+services:
+  switchailocal:
+    image: ${SWITCH_AI_IMAGE:-traylinx/switchailocal:latest}
+    pull_policy: always
+    container_name: switchailocal
+    environment:
+      TZ: ${TZ:-UTC}
+      REMOTE_COMMAND_HOST: ${REMOTE_COMMAND_HOST:-http://host.docker.internal:18888}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ${HOME}/.switchailocal:/home/appuser/.switchailocal
+      - ./logs:/app/logs
+      - ./plugins:/app/plugins
+    restart: unless-stopped
+```
+
+<Accordion title="Configuration Options">
+  **Environment Variables:**
+  - `TZ`: Timezone for logs and timestamps (default: `UTC`)
+  - `REMOTE_COMMAND_HOST`: Host for remote command execution
+  - `SWITCH_AI_IMAGE`: Docker image to use (default: `traylinx/switchailocal:latest`)
+  
+  **Volumes:**
+  - `./config.yaml`: Main configuration file
+  - `~/.switchailocal`: OAuth tokens and authentication data
+  - `./logs`: Application logs (when file logging is enabled)
+  - `./plugins`: Custom LUA plugins and Cortex Router skills
+</Accordion>
+
+---
+
+## Building from Source
+
+Build your own Docker image from source:
+
+<Steps>
+  <Step title="Build with Docker Compose">
+    ```bash
+    docker-compose build
+    ```
+    
+    Or with version metadata:
+    
+    ```bash
+    VERSION=1.0.0 COMMIT=$(git rev-parse HEAD) BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+      docker-compose build
+    ```
+  </Step>
+  
+  <Step title="Run Custom Build">
+    ```bash
+    docker-compose up -d
+    ```
+  </Step>
+</Steps>
+
+### Build Arguments
+
+The Dockerfile supports these build arguments:
+
+```dockerfile Dockerfile
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -ldflags="-s -w \
+    -X 'main.Version=${VERSION}' \
+    -X 'main.Commit=${COMMIT}' \
+    -X 'main.BuildDate=${BUILD_DATE}'" \
+  -o ./switchAILocal ./cmd/server/
+```
+
+---
+
+## Dockerfile Architecture
+
+The official Dockerfile uses a multi-stage build for optimal image size:
+
+<CodeGroup>
+```dockerfile Build Stage
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -ldflags="-s -w \
+    -X 'main.Version=${VERSION}' \
+    -X 'main.Commit=${COMMIT}' \
+    -X 'main.BuildDate=${BUILD_DATE}'" \
+  -o ./switchAILocal ./cmd/server/
+```
+
+```dockerfile Runtime Stage
+# Runtime stage
+FROM alpine:3.23.3
+
+RUN apk add --no-cache tzdata ca-certificates nodejs npm
+
+# Install Gemini CLI in the container
+RUN npm install -g @google/gemini-cli
+
+# Create a non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY --from=builder /app/switchAILocal /app/switchAILocal
+COPY config.example.yaml /app/config.example.yaml
+COPY static /app/static
+
+RUN chown -R appuser:appgroup /app
+
+EXPOSE 18080
+
+ENV TZ=UTC
+
+USER appuser
+
+CMD ["./switchAILocal"]
+```
+</CodeGroup>
+
+<Note>
+  The image includes Node.js and npm to support the Gemini CLI tool for CLI-based authentication.
+</Note>
+
+---
+
+## Using Pre-built Images
+
+### Docker Hub
+
+Pull the latest official image:
+
+```bash
+docker pull traylinx/switchailocal:latest
+```
+
+Run directly:
+
+```bash
+docker run -d \
+  -p 18080:18080 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v ~/.switchailocal:/home/appuser/.switchailocal \
+  --name switchailocal \
+  traylinx/switchailocal:latest
+```
+
+### Version Tags
+
+Available image tags:
+
+- `latest`: Most recent stable release
+- `vX.Y.Z`: Specific version (e.g., `v1.0.0`)
+- `dev`: Development builds from main branch
+
+---
+
+## Volume Management
+
+### Configuration Volume
+
+Mount your `config.yaml` into the container:
+
+```bash
+-v $(pwd)/config.yaml:/app/config.yaml
+```
+
+### Authentication Data
+
+Persist OAuth tokens and session data:
+
+```bash
+-v ~/.switchailocal:/home/appuser/.switchailocal
+```
+
+### Logs
+
+When file logging is enabled, mount a logs directory:
+
+```yaml config.yaml
+logging-to-file: true
+logs-max-total-size-mb: 500
+```
+
+```bash
+-v $(pwd)/logs:/app/logs
+```
+
+### Plugins
+
+Mount custom plugins and skills:
+
+```bash
+-v $(pwd)/plugins:/app/plugins
+```
+
+---
+
+## Environment Variables
+
+### Timezone
+
+Set the container timezone:
+
+```yaml docker-compose.yml
+environment:
+  TZ: America/New_York
+```
+
+### Remote Command Host
+
+For distributed deployments with remote command execution:
+
+```yaml docker-compose.yml
+environment:
+  REMOTE_COMMAND_HOST: http://command-service:18888
+```
+
+---
+
+## Networking
+
+### Host Network Access
+
+The Docker Compose configuration includes `host.docker.internal` mapping for accessing services on the host machine:
+
+```yaml docker-compose.yml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+This allows the container to connect to:
+- Ollama running on host: `http://host.docker.internal:11434`
+- LM Studio on host: `http://host.docker.internal:1234`
+- Other local services
+
+### Custom Networks
+
+For advanced deployments, create a custom network:
+
+```yaml docker-compose.yml
+networks:
+  switchai:
+    driver: bridge
+
+services:
+  switchailocal:
+    networks:
+      - switchai
+```
+
+---
+
+## Health Checks
+
+Add a Docker health check:
+
+```yaml docker-compose.yml
+services:
+  switchailocal:
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:18080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+---
+
+## Resource Limits
+
+Set resource constraints for production:
+
+```yaml docker-compose.yml
+services:
+  switchailocal:
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+```
+
+---
+
+## Updating
+
+<Steps>
+  <Step title="Pull Latest Image">
+    ```bash
+    docker-compose pull
+    ```
+  </Step>
+  
+  <Step title="Restart Services">
+    ```bash
+    docker-compose up -d
+    ```
+  </Step>
+  
+  <Step title="Verify Update">
+    ```bash
+    docker logs switchailocal
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Troubleshooting
+
+### View Logs
+
+```bash
+docker-compose logs -f switchailocal
+```
+
+### Check Container Status
+
+```bash
+docker-compose ps
+```
+
+### Restart Container
+
+```bash
+docker-compose restart switchailocal
+```
+
+### Execute Commands Inside Container
+
+```bash
+docker exec -it switchailocal sh
+```
+
+### Permission Issues
+
+If you encounter permission errors with mounted volumes:
+
+```bash
+# Fix ownership
+sudo chown -R 1000:1000 ~/.switchailocal
+sudo chown -R 1000:1000 ./logs
+```
+
+---
+
+## Production Considerations
+
+<Accordion title="Security">
+  - Always use TLS in production (`tls.enable: true` in config.yaml)
+  - Store API keys securely (use Docker secrets or environment variables)
+  - Restrict management API access (`remote-management.allow-remote: false`)
+  - Use strong `api-keys` and `secret-key` values
+</Accordion>
+
+<Accordion title="Performance">
+  - Enable usage statistics for monitoring (`usage-statistics-enabled: true`)
+  - Configure appropriate `request-retry` values
+  - Use `streaming.keepalive-seconds` for long-running connections
+  - Set `logs-max-total-size-mb` to prevent disk exhaustion
+</Accordion>
+
+<Accordion title="Monitoring">
+  - Monitor container health with `docker-compose ps`
+  - Check logs regularly with `docker-compose logs`
+  - Use the Management Dashboard at `http://localhost:18080/management`
+  - Set up alerts for provider failures using hooks
+</Accordion>
+
+---
+
+## Next Steps
+
+<Card title="Management Dashboard" icon="gauge" href="/guides/guides/management-dashboard">
+  Configure providers and monitor performance through the web UI
+</Card>
+
+<Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+  Resolve common deployment and runtime issues
+</Card>

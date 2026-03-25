@@ -1,0 +1,322 @@
+---
+title: Quickstart
+description: Get switchAILocal running in 5 minutes
+---
+
+Get switchAILocal up and running with your first AI request in minutes. This guide will help you install, configure, and test your unified AI gateway.
+
+## What You'll Build
+
+By the end of this guide, you'll have:
+- switchAILocal server running on `http://localhost:18080`
+- At least one AI provider configured (CLI, API, or local)
+- Made your first successful API request
+
+<Steps>
+
+### Clone the Repository
+
+Get the latest version of switchAILocal:
+
+```bash
+git clone https://github.com/traylinx/switchAILocal.git
+cd switchAILocal
+```
+
+### Start the Server
+
+Use the unified hub script to start switchAILocal. It automatically builds and runs the server:
+
+<CodeGroup>
+
+```bash Local (Recommended)
+./ail.sh start
+```
+
+```bash Docker
+./ail.sh start --docker --build
+```
+
+```bash Local with Logs
+./ail.sh start -f
+```
+
+</CodeGroup>
+
+The server will start on `http://localhost:18080` by default.
+
+<Note>
+  **First time running?** The hub script will automatically check for Go dependencies and build the binary for you.
+</Note>
+
+### Choose Your Provider
+
+Select one of three authentication methods to connect AI providers:
+
+<CodeGroup>
+
+```yaml CLI Wrappers (Zero Setup)
+# If you have gemini, claude, or vibe CLI tools installed,
+# switchAILocal uses them automatically - no configuration needed!
+
+# Just use the CLI prefix in your requests:
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+```yaml API Keys
+# Add API keys to config.yaml
+cp config.example.yaml config.yaml
+
+# Edit config.yaml:
+gemini-api-key:
+  - api-key: "AIzaSy..."
+
+claude-api-key:
+  - api-key: "sk-ant-..."
+
+codex-api-key:
+  - api-key: "sk-..."
+```
+
+```yaml Local Models
+# Enable Ollama or LM Studio in config.yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+
+lmstudio:
+  enabled: true
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+```
+
+</CodeGroup>
+
+<Warning>
+  The default API key `sk-test-123` is for testing only. Update `api-keys` in `config.yaml` for production use.
+</Warning>
+
+### Make Your First Request
+
+Test your setup with a simple API call:
+
+<CodeGroup>
+
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "What is the meaning of life?"}
+    ]
+  }'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "What is the meaning of life?"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+```javascript JavaScript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [
+    { role: 'user', content: 'What is the meaning of life?' }
+  ]
+});
+
+console.log(response.choices[0].message.content);
+```
+
+</CodeGroup>
+
+### Verify Server Status
+
+Check that everything is running smoothly:
+
+```bash
+./ail.sh status
+```
+
+Expected output:
+```
+--- Local Status ---
+[OK]   Running (PID 12345)
+
+--- Docker Status ---
+Not running locally.
+
+Bridge: Not running.
+```
+
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure Providers" icon="plug" href="/providers">
+  Set up multiple AI providers and accounts for load balancing
+</Card>
+
+<Card title="API Reference" icon="code" href="/api-reference">
+  Explore the full OpenAI-compatible API
+</Card>
+
+<Card title="Intelligent Routing" icon="brain" href="/intelligent-routing">
+  Enable Cortex Router for automatic model selection
+</Card>
+
+<Card title="Management Dashboard" icon="chart-line" href="/guides/management-dashboard">
+  Use the web UI to configure and monitor your gateway
+</Card>
+
+</CardGroup>
+
+## Quick Tips
+
+<AccordionGroup>
+
+<Accordion title="How do I use a specific provider?">
+  Use the `provider:model` format to route to a specific provider:
+  
+  ```bash
+  # Force Gemini CLI
+  model="geminicli:gemini-2.5-pro"
+  
+  # Force Ollama
+  model="ollama:llama3.2"
+  
+  # Force Claude API
+  model="claude:claude-sonnet-4"
+  ```
+  
+  Without a prefix, switchAILocal auto-routes to any available provider.
+</Accordion>
+
+<Accordion title="How do I enable streaming?">
+  Add `"stream": true` to your request:
+  
+  ```python
+  stream = client.chat.completions.create(
+      model="gemini-2.5-pro",
+      messages=[{"role": "user", "content": "Tell me a story"}],
+      stream=True
+  )
+  
+  for chunk in stream:
+      if chunk.choices[0].delta.content:
+          print(chunk.choices[0].delta.content, end="", flush=True)
+  ```
+</Accordion>
+
+<Accordion title="How do I list available models?">
+  Query the `/v1/models` endpoint:
+  
+  ```bash
+  curl http://localhost:18080/v1/models \
+    -H "Authorization: Bearer sk-test-123"
+  ```
+  
+  This returns all models from all configured providers.
+</Accordion>
+
+<Accordion title="Server not starting?">
+  Run diagnostics:
+  
+  ```bash
+  # Check dependencies
+  ./ail.sh check
+  
+  # View logs
+  ./ail.sh logs -f
+  
+  # Verify Go installation
+  go version  # Should be 1.24+
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Troubleshooting
+
+<CardGroup cols={2}>
+
+<Card title="Connection Refused" icon="xmark">
+  **Problem:** `curl: (7) Failed to connect`
+  
+  **Solution:**
+  - Check if server is running: `./ail.sh status`
+  - Verify port 18080 is not in use: `lsof -i :18080`
+  - Review logs: `./ail.sh logs`
+</Card>
+
+<Card title="401 Unauthorized" icon="lock">
+  **Problem:** API key rejected
+  
+  **Solution:**
+  - Ensure your API key matches one in `config.yaml`:
+    ```yaml
+    api-keys:
+      - "sk-test-123"
+    ```
+  - Restart server after config changes: `./ail.sh restart`
+</Card>
+
+<Card title="No Models Available" icon="database">
+  **Problem:** Empty models list or "model not found"
+  
+  **Solution:**
+  - Verify provider is enabled in `config.yaml`
+  - Check CLI tools are installed: `which gemini claude`
+  - Enable auto-discovery for local providers:
+    ```yaml
+    ollama:
+      enabled: true
+      auto-discover: true
+    ```
+</Card>
+
+<Card title="Build Failed" icon="hammer">
+  **Problem:** Go build errors
+  
+  **Solution:**
+  - Update Go to 1.24+: `go version`
+  - Clean modules: `go clean -modcache`
+  - Re-download dependencies: `go mod download`
+</Card>
+
+</CardGroup>
+
+<Note>
+  Need more help? Check the [Installation Guide](/installation) for detailed setup instructions or visit our [GitHub Issues](https://github.com/traylinx/switchAILocal/issues).
+</Note>

@@ -1,0 +1,317 @@
+---
+title: 'Server Configuration'
+description: 'Configure host, port, TLS, logging, and core server behavior'
+icon: 'server'
+---
+
+## Basic Server Settings
+
+### Host and Port
+
+Control which network interface and port the server binds to:
+
+```yaml config.yaml
+host: ""        # Bind all interfaces (default)
+port: 18080      # Server port (default: 18080)
+```
+
+<ParamField path="host" type="string" default="">
+  Network interface to bind. Empty string binds all interfaces (IPv4 + IPv6). Use `"127.0.0.1"` or `"localhost"` to restrict to local-only access.
+</ParamField>
+
+<ParamField path="port" type="integer" default="18080">
+  TCP port for the HTTP/HTTPS server.
+</ParamField>
+
+**Examples:**
+
+```yaml
+# Local development (localhost only)
+host: "127.0.0.1"
+port: 18080
+```
+
+```yaml
+# Production (all interfaces)
+host: ""
+port: 443  # Requires TLS
+```
+
+## TLS Configuration
+
+Enable HTTPS with TLS certificates:
+
+```yaml config.yaml
+tls:
+  enable: false
+  cert: ""
+  key: ""
+```
+
+<ParamField path="tls.enable" type="boolean" default="false">
+  Enable HTTPS mode. When `true`, server listens with TLS.
+</ParamField>
+
+<ParamField path="tls.cert" type="string">
+  Path to TLS certificate file (PEM format). Required when TLS is enabled.
+</ParamField>
+
+<ParamField path="tls.key" type="string">
+  Path to TLS private key file (PEM format). Required when TLS is enabled.
+</ParamField>
+
+**Example with Let's Encrypt:**
+
+```yaml
+tls:
+  enable: true
+  cert: "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
+  key: "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
+```
+
+<Warning>
+  Changing TLS settings requires a server restart. Hot reload does not apply to certificate paths.
+</Warning>
+
+## Authentication Directory
+
+Specify where authentication tokens and session data are stored:
+
+```yaml config.yaml
+auth-dir: "~/.switchailocal"
+```
+
+<ParamField path="auth-dir" type="string" default="~/.switchailocal">
+  Directory for authentication token files and session data. Supports `~` for home directory expansion.
+</ParamField>
+
+This directory stores:
+- OAuth tokens for providers (Google Gemini, etc.)
+- Session state
+- Authentication cache
+
+## Logging Configuration
+
+### Debug Mode
+
+```yaml config.yaml
+debug: false
+```
+
+<ParamField path="debug" type="boolean" default="false">
+  Enable debug-level logging and detailed error messages. Useful for troubleshooting but verbose in production.
+</ParamField>
+
+### File Logging
+
+```yaml config.yaml
+logging-to-file: false
+logs-max-total-size-mb: 0
+```
+
+<ParamField path="logging-to-file" type="boolean" default="false">
+  When `true`, write logs to rotating files in `./logs/` instead of stdout.
+</ParamField>
+
+<ParamField path="logs-max-total-size-mb" type="integer" default="0">
+  Maximum total size (MB) of log files. Oldest logs are deleted when limit is exceeded. Set to `0` to disable limit.
+</ParamField>
+
+**Example production logging:**
+
+```yaml
+debug: false
+logging-to-file: true
+logs-max-total-size-mb: 1000  # 1GB total log retention
+```
+
+## WebSocket Configuration
+
+```yaml config.yaml
+ws-auth: true
+```
+
+<ParamField path="ws-auth" type="boolean" default="true">
+  Enable authentication for WebSocket API (`/v1/ws`). Recommended to keep enabled for security.
+</ParamField>
+
+## Usage Statistics
+
+```yaml config.yaml
+usage-statistics-enabled: false
+```
+
+<ParamField path="usage-statistics-enabled" type="boolean" default="false">
+  Enable in-memory usage statistics aggregation. When `false`, usage data is discarded.
+</ParamField>
+
+When enabled, usage stats are available via the Management API dashboard.
+
+## Proxy Settings
+
+Configure a global proxy for outbound requests:
+
+```yaml config.yaml
+proxy-url: ""
+```
+
+<ParamField path="proxy-url" type="string">
+  Global proxy URL. Supports `socks5://`, `http://`, and `https://` protocols.
+</ParamField>
+
+**Examples:**
+
+```yaml
+# SOCKS5 proxy with authentication
+proxy-url: "socks5://user:pass@192.168.1.1:1080/"
+```
+
+```yaml
+# HTTP proxy
+proxy-url: "http://proxy.company.com:8080"
+```
+
+<Note>
+  Individual providers can override the global proxy using their own `proxy-url` setting.
+</Note>
+
+## Request Retry Configuration
+
+```yaml config.yaml
+request-retry: 3
+max-retry-interval: 0
+```
+
+<ParamField path="request-retry" type="integer" default="3">
+  Number of retry attempts for requests that fail with specific HTTP errors (403, 408, 500, 502, 503, 504).
+</ParamField>
+
+<ParamField path="max-retry-interval" type="integer" default="0">
+  Maximum wait time in seconds before retrying a cooled-down credential. `0` means no limit.
+</ParamField>
+
+## Streaming Configuration
+
+Control SSE heartbeats and bootstrap retry behavior:
+
+```yaml config.yaml
+streaming:
+  keepalive-seconds: 15
+  bootstrap-retries: 2
+```
+
+<ParamField path="streaming.keepalive-seconds" type="integer" default="15">
+  Heartbeat interval in seconds for SSE streams. Set to `0` to disable keepalive messages.
+</ParamField>
+
+<ParamField path="streaming.bootstrap-retries" type="integer" default="2">
+  Number of retries before the first byte is sent to handle auth rotation. `0` disables bootstrap retries.
+</ParamField>
+
+Bootstrap retries allow switchAILocal to transparently recover from transient auth failures before streaming begins.
+
+## Quota Exceeded Behavior
+
+Configure automatic failover when API quotas are hit:
+
+```yaml config.yaml
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+```
+
+<ParamField path="quota-exceeded.switch-project" type="boolean" default="true">
+  Automatically switch to the next available project/credential when quota is exceeded.
+</ParamField>
+
+<ParamField path="quota-exceeded.switch-preview-model" type="boolean" default="true">
+  Fallback to preview models (if available) when quota is exceeded on stable models.
+</ParamField>
+
+## Routing Strategy
+
+Configure how credentials are selected when multiple match:
+
+```yaml config.yaml
+routing:
+  strategy: "round-robin"
+  # auto-model-priority:
+  #   - "ollama:gpt-oss:120b-cloud"
+  #   - "switchai-chat"
+  #   - "gemini-2.5-flash"
+```
+
+<ParamField path="routing.strategy" type="string" default="round-robin">
+  Credential selection strategy. Options:
+  - `round-robin`: Distribute requests evenly across credentials
+  - `fill-first`: Use first credential until quota/error, then move to next
+</ParamField>
+
+<ParamField path="routing.auto-model-priority" type="array">
+  Priority list for "auto" model resolution. System checks models in order and picks the first active one. Supports `provider:model` syntax.
+</ParamField>
+
+## Model Prefix Enforcement
+
+```yaml config.yaml
+force-model-prefix: false
+```
+
+<ParamField path="force-model-prefix" type="boolean" default="false">
+  When `true`, unprefixed model requests only use credentials without a prefix. When `false`, unprefixed requests can match any available credential.
+</ParamField>
+
+**Example:**
+
+With `force-model-prefix: true`:
+- Request for `gemini-pro` → Only uses unprefixed Gemini credentials
+- Request for `team-a/gemini-pro` → Only uses credentials with `prefix: "team-a"`
+
+## Complete Example
+
+```yaml config.yaml
+# Production server configuration
+host: ""
+port: 443
+
+tls:
+  enable: true
+  cert: "/etc/ssl/certs/switchai.pem"
+  key: "/etc/ssl/private/switchai.key"
+
+auth-dir: "~/.switchailocal"
+
+# Logging
+debug: false
+logging-to-file: true
+logs-max-total-size-mb: 2000
+
+# Security
+ws-auth: true
+
+# Performance
+usage-statistics-enabled: true
+request-retry: 3
+
+streaming:
+  keepalive-seconds: 30
+  bootstrap-retries: 3
+
+routing:
+  strategy: "round-robin"
+
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Configuration" icon="plug" href="/configuration/providers">
+    Configure API keys for cloud and local AI providers
+  </Card>
+  <Card title="Security Settings" icon="shield" href="/configuration/security">
+    Set up API authentication and management access
+  </Card>
+</CardGroup>

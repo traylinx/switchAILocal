@@ -1,0 +1,518 @@
+---
+title: Lua Plugin System
+description: Intercept and modify requests and responses in real-time with sandboxed Lua scripts
+icon: code
+---
+
+The **Lua Plugin System** enables you to intercept and modify requests and responses in real-time using sandboxed Lua scripts. This is the foundation of the **Cortex Router** intelligent routing engine and enables powerful customization without modifying switchAILocal's core code.
+
+## Overview
+
+Plugins run in a **sandboxed Lua environment** with access to the `switchai` host API for logging, caching, LLM classification, and intelligent routing features.
+
+### Key Capabilities
+
+- **Request/Response Interception**: Modify requests before they reach providers
+- **Intelligent Routing**: Route requests to optimal models based on content analysis
+- **Skill-Based Augmentation**: Enhance prompts with domain-specific expertise
+- **Multi-Tier Routing**: Reflex → Semantic → Cognitive routing with verification
+- **Semantic Caching**: Sub-millisecond routing for repeated queries
+
+<Warning>
+Plugins are **explicitly enabled** in `config.yaml`. They are disabled by default for security.
+</Warning>
+
+## Quick Start
+
+### 1. Enable Plugins
+
+Add the `plugin` section to your `config.yaml`:
+
+```yaml
+plugin:
+  enabled: true
+  plugin-dir: "./plugins"
+  enabled-plugins:
+    - "cortex-router"  # The intelligent routing plugin
+```
+
+### 2. Enable Intelligence Services (Optional)
+
+For Phase 2 features (semantic matching, skill matching, cascading):
+
+```yaml
+intelligence:
+  enabled: true
+  
+  # Phase 2 features
+  discovery:
+    enabled: true
+  embedding:
+    enabled: true
+  semantic-tier:
+    enabled: true
+  skill-matching:
+    enabled: true
+```
+
+<Tip>
+See [Intelligent Systems](/intelligent-systems/cortex-router) for complete configuration options.
+</Tip>
+
+### 3. Restart switchAILocal
+
+```bash
+./switchAILocal
+```
+
+You should see:
+
+```
+[INFO] Loaded plugin: cortex-router v2.0.0
+[INFO] Cortex Router: Phase 2 features enabled
+```
+
+## Plugin Structure
+
+Plugins are **folder-based** with a standardized structure:
+
+```
+plugins/
+└── my-plugin/
+    ├── schema.lua      # Plugin metadata
+    ├── handler.lua     # Plugin logic
+    └── skills/         # Optional: Domain-specific skills
+        └── my-skill/
+            └── SKILL.md
+```
+
+### schema.lua (Metadata)
+
+Defines the plugin's identity:
+
+```lua
+return {
+    name = "my-plugin",              -- Must match folder name
+    display_name = "My Plugin",      -- Human-readable name
+    version = "1.0.0",
+    description = "What this plugin does"
+}
+```
+
+### handler.lua (Logic)
+
+Implements the plugin hooks:
+
+```lua
+local Schema = require("schema")
+
+local Plugin = {}
+
+function Plugin:on_request(req)
+    -- Modify request before it's sent
+    -- req.model, req.body, req.metadata
+    
+    switchai.log("Processing request for: " .. req.model)
+    
+    -- Example: Route based on content
+    local body_str = req.body
+    if string.find(body_str, "code") then
+        req.model = "gpt-4-turbo"
+    end
+    
+    return req  -- or nil to skip
+end
+
+function Plugin:on_response(res)
+    -- Process response after it's received
+    -- res.body, res.model, res.metadata
+    
+    return res  -- or nil to skip
+end
+
+return Plugin
+```
+
+## The Cortex Router Plugin
+
+The **cortex-router** plugin implements intelligent multi-tier routing with 21 pre-built skills.
+
+### Routing Tiers
+
+1. **Cache Tier** (&lt;1ms): Semantic cache lookup
+2. **Reflex Tier** (&lt;1ms): Fast pattern matching (PII, code, images)
+3. **Semantic Tier** (&lt;20ms): Embedding-based intent matching
+4. **Cognitive Tier** (200-500ms): LLM classification with confidence
+5. **Verification**: Cross-validates results
+6. **Cascade**: Quality-based model escalation
+
+<Accordion title="How Cortex Router Works">
+
+**Phase 1: Fast Path**
+- **Semantic Cache**: Check for similar previous queries (95% similarity threshold)
+- **Reflex Tier**: Pattern-match for PII, code blocks, images, language detection
+
+**Phase 2: Intelligent Path**
+- **Semantic Tier**: Embed query and match against intent vectors (85% confidence)
+- **Cognitive Tier**: LLM classification with confidence scoring
+- **Verification**: Cross-validate low-confidence classifications
+
+**Phase 3: Quality Path**
+- **Cascade**: Evaluate response quality and escalate to higher-tier model if needed
+- **Feedback**: Record outcomes for continuous learning
+
+</Accordion>
+
+### Pre-Built Skills
+
+Cortex Router includes 21 domain-specific skills:
+
+<CodeGroup>
+```text Language Skills
+go-expert
+python-expert
+typescript-expert
+rust-expert
+java-expert
+javascript-expert
+```
+
+```text Infrastructure Skills
+security-expert
+devops-expert
+docker-expert
+kubernetes-expert
+terraform-expert
+```
+
+```text Development Skills
+frontend-expert
+backend-expert
+vision-expert
+testing-expert
+data-expert
+cloud-expert
+```
+</CodeGroup>
+
+Each skill provides:
+- **Intent patterns** for semantic matching
+- **System prompts** for domain-specific augmentation
+- **Model preferences** for optimal routing
+
+## The `switchai` Host API
+
+Plugins access host functionality through the `switchai` bridge:
+
+### Core Functions (Phase 1)
+
+```lua
+-- Logging
+switchai.log("Processing request...")
+
+-- LLM Classification
+local json, err = switchai.classify("User wants to write Python code")
+if json then
+    local intent = json.intent  -- "coding"
+    local confidence = json.confidence  -- 0.95
+end
+
+-- Configuration
+local router_model = switchai.config.router_model  -- "ollama:gpt-oss:20b-cloud"
+local matrix = switchai.config.matrix  -- {coding = "gpt-4", ...}
+
+-- Cache
+switchai.set_cache("key", "value")
+local value = switchai.get_cache("key")
+
+-- Prompt Injection
+local system_prompt = "You are a Go expert."
+local new_body = switchai.json_inject(req.body, system_prompt)
+```
+
+### Intelligence Functions (Phase 2)
+
+```lua
+-- Model Discovery
+local models, err = switchai.get_available_models()
+local available = switchai.is_model_available("openai:gpt-4")
+
+-- Dynamic Matrix
+local matrix, err = switchai.get_dynamic_matrix()
+
+-- Embedding
+local embedding, err = switchai.embed("User query text")
+local similarity = switchai.cosine_similarity(vec_a, vec_b)
+
+-- Semantic Matching
+local result, err = switchai.semantic_match_intent("Write Python code")
+-- Returns: {intent = "coding", confidence = 0.92, latency_ms = 12}
+
+-- Skill Matching
+local result, err = switchai.match_skill("Debug Kubernetes pod")
+-- Returns: {
+--   skill = {id = "kubernetes-expert", name = "Kubernetes Expert", system_prompt = "..."},
+--   confidence = 0.88
+-- }
+
+-- Semantic Cache
+local cached, err = switchai.cache_lookup("User query")
+if cached then
+    return cached.decision
+end
+switchai.cache_store("User query", {intent = "coding", model = "gpt-4"}, metadata)
+
+-- Confidence Scoring
+local decision, err = switchai.parse_confidence(json_response)
+-- Returns: {intent = "coding", complexity = "medium", confidence = 0.85}
+
+-- Verification
+local match = switchai.verify_intent("coding", "programming")  -- true
+
+-- Cascade Evaluation
+local eval, err = switchai.evaluate_response(response_body, "fast")
+-- Returns: {
+--   should_cascade = true,
+--   next_tier = "reasoning",
+--   quality_score = 0.65,
+--   reason = "Response lacks depth",
+--   signals = {incomplete = true, short_response = true}
+-- }
+
+-- Feedback
+switchai.record_feedback({
+    query = "Write Python code",
+    intent = "coding",
+    selected_model = "gpt-4-turbo",
+    success = true
+})
+```
+
+## Creating Custom Plugins
+
+### 1. Create Plugin Directory
+
+```bash
+mkdir -p plugins/my-plugin
+```
+
+### 2. Create schema.lua
+
+```lua
+return {
+    name = "my-plugin",
+    display_name = "My Custom Plugin",
+    version = "1.0.0",
+    description = "Custom routing logic"
+}
+```
+
+### 3. Create handler.lua
+
+```lua
+local Schema = require("schema")
+
+local Plugin = {}
+
+function Plugin:on_request(req)
+    switchai.log("[my-plugin] Processing: " .. req.model)
+    
+    -- Example: Inject system prompt for specific models
+    if string.find(req.model, "gpt") then
+        local system_prompt = "You are a helpful assistant."
+        req.body = switchai.json_inject(req.body, system_prompt)
+    end
+    
+    return req
+end
+
+function Plugin:on_response(res)
+    -- Example: Log successful completions
+    if res.metadata and res.metadata.status == 200 then
+        switchai.log("[my-plugin] Success: " .. res.model)
+    end
+    
+    return res
+end
+
+return Plugin
+```
+
+### 4. Enable in config.yaml
+
+```yaml
+plugin:
+  enabled: true
+  plugin-dir: "./plugins"
+  enabled-plugins:
+    - "my-plugin"
+```
+
+### 5. Test
+
+```bash
+./switchAILocal
+```
+
+```
+[INFO] Loaded plugin: my-plugin v1.0.0
+```
+
+## Advanced Examples
+
+### Content-Based Routing
+
+```lua
+function Plugin:on_request(req)
+    local body_str = req.body
+    
+    -- Route coding questions to specialized model
+    if string.find(body_str, "function") or 
+       string.find(body_str, "class") or
+       string.find(body_str, "def ") then
+        req.model = "gpt-4-turbo"
+        switchai.log("[router] Detected code, routing to gpt-4-turbo")
+    end
+    
+    -- Route long context to models with large windows
+    if #body_str > 10000 then
+        req.model = "claude-3-opus"
+        switchai.log("[router] Large context, routing to claude-3-opus")
+    end
+    
+    return req
+end
+```
+
+### User-Based Model Selection
+
+```lua
+function Plugin:on_request(req)
+    -- Extract user from metadata
+    local user = req.metadata["x-user-id"] or "default"
+    
+    -- Route premium users to better models
+    local premium_users = {"user123", "user456"}
+    for _, premium in ipairs(premium_users) do
+        if user == premium then
+            req.model = "gpt-4"
+            switchai.log("[router] Premium user, routing to gpt-4")
+            return req
+        end
+    end
+    
+    -- Standard users get fast model
+    req.model = "gpt-3.5-turbo"
+    return req
+end
+```
+
+### Response Caching
+
+```lua
+function Plugin:on_request(req)
+    -- Check cache for this request
+    local cache_key = req.model .. ":" .. req.body
+    local cached = switchai.get_cache(cache_key)
+    
+    if cached then
+        switchai.log("[cache] Cache hit for: " .. req.model)
+        -- Return cached response immediately
+        return nil  -- Skip upstream request
+    end
+    
+    return req
+end
+
+function Plugin:on_response(res)
+    -- Cache successful responses
+    if res.metadata.status == 200 then
+        local cache_key = res.model .. ":" .. res.metadata.request_body
+        switchai.set_cache(cache_key, res.body)
+        switchai.log("[cache] Cached response for: " .. res.model)
+    end
+    
+    return res
+end
+```
+
+### Load Balancing
+
+```lua
+local counter = 0
+local models = {"gpt-3.5-turbo", "gpt-4-turbo", "claude-3-sonnet"}
+
+function Plugin:on_request(req)
+    -- Round-robin across models
+    counter = counter + 1
+    local index = (counter % #models) + 1
+    req.model = models[index]
+    
+    switchai.log("[lb] Routing to: " .. req.model)
+    return req
+end
+```
+
+## Security & Isolation
+
+Plugins run in a **sandboxed Lua environment** with restricted capabilities:
+
+- **Sandboxed Execution**: Plugins run in a restricted Lua VM
+- **No Direct I/O**: Cannot access network or filesystem directly
+- **Allowlisted Commands**: Only safe commands available via `switchai.exec()`
+- **Timeout Protection**: Execution bound by request context timeout
+- **No Dangerous Globals**: `dofile`, `loadfile`, `os.execute` are disabled
+
+<Warning>
+Plugins have access to request bodies, which may contain sensitive data. Only use trusted plugins in production.
+</Warning>
+
+## Debugging
+
+### Enable Debug Logging
+
+```yaml
+debug: true
+```
+
+### View Plugin Logs
+
+```bash
+tail -f switchailocal.log | grep "\[plugin\]"
+```
+
+### Test Plugin Logic
+
+Create a test script:
+
+```lua
+-- test_plugin.lua
+local Plugin = require("plugins/my-plugin/handler")
+
+local req = {
+    model = "gpt-4",
+    body = '{"messages":[{"role":"user","content":"Hello"}]}',
+    metadata = {}
+}
+
+local result = Plugin:on_request(req)
+print("Result model: " .. result.model)
+```
+
+## Performance Considerations
+
+- **Keep plugins fast**: Each plugin adds latency to every request
+- **Cache expensive operations**: Use `switchai.set_cache()` for repeated computations
+- **Avoid blocking calls**: Never use sleep or long-running operations
+- **Use Reflex Tier for patterns**: Pattern matching is faster than LLM classification
+- **Enable Semantic Cache**: Bypass classification for repeated queries
+
+<Tip>
+The Cortex Router uses a multi-tier approach to minimize latency: Cache (&lt;1ms) → Reflex (&lt;1ms) → Semantic (&lt;20ms) → Cognitive (200-500ms)
+</Tip>
+
+## See Also
+
+- [Intelligent Systems](/intelligent-systems/cortex-router) - Cortex Router configuration
+- [Payload Injection](/advanced/payload-injection) - Static parameter injection
+- [API Reference](/api/overview) - HTTP API documentation

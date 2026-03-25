@@ -1,0 +1,390 @@
+---
+title: Using the Embedding SDK
+description: Generate embeddings and compute semantic similarity in Go
+icon: code
+---
+
+## Installation
+
+The embedding SDK is part of the main switchAILocal package:
+
+```bash
+go get github.com/traylinx/switchAILocal/internal/intelligence/embedding
+```
+
+## Basic Usage
+
+### Initialize the Engine
+
+```go
+package main
+
+import (
+    "log"
+    
+    "github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+)
+
+func main() {
+    // Create engine configuration
+    cfg := embedding.Config{
+        ModelPath:         "~/.switchailocal/models/model.onnx",
+        VocabPath:         "~/.switchailocal/models/vocab.txt",
+        SharedLibraryPath: "",  // Auto-detected
+    }
+
+    // Create the engine
+    engine, err := embedding.NewEngine(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Initialize (loads the model)
+    if err := engine.Initialize(""); err != nil {
+        log.Fatal(err)
+    }
+    defer engine.Shutdown()
+
+    log.Println("Embedding engine ready")
+}
+```
+
+### Generate Single Embedding
+
+```go
+text := "What is machine learning?"
+
+vector, err := engine.Embed(text)
+if err != nil {
+    log.Fatal(err)
+}
+
+log.Printf("Generated %d-dimensional embedding", len(vector))
+// Output: Generated 384-dimensional embedding
+```
+
+### Generate Batch Embeddings
+
+```go
+texts := []string{
+    "What is machine learning?",
+    "Explain neural networks",
+    "How does deep learning work?",
+}
+
+vectors, err := engine.BatchEmbed(texts)
+if err != nil {
+    log.Fatal(err)
+}
+
+log.Printf("Generated %d embeddings", len(vectors))
+// Output: Generated 3 embeddings
+```
+
+### Compute Similarity
+
+```go
+// Generate embeddings for two texts
+vec1, _ := engine.Embed("What is machine learning?")
+vec2, _ := engine.Embed("Explain artificial intelligence")
+vec3, _ := engine.Embed("How to bake a cake?")
+
+// Compute cosine similarity
+sim1 := engine.CosineSimilarity(vec1, vec2)
+sim2 := engine.CosineSimilarity(vec1, vec3)
+
+log.Printf("Similarity (ML vs AI): %.3f", sim1)
+log.Printf("Similarity (ML vs Baking): %.3f", sim2)
+
+// Output:
+// Similarity (ML vs AI): 0.876
+// Similarity (ML vs Baking): 0.123
+```
+
+## Complete Example: Semantic Search
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "sort"
+
+    "github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+)
+
+type Document struct {
+    ID        string
+    Text      string
+    Embedding []float32
+}
+
+type SearchResult struct {
+    Document   *Document
+    Similarity float64
+}
+
+func main() {
+    // Initialize embedding engine
+    cfg := embedding.Config{
+        ModelPath: "~/.switchailocal/models/model.onnx",
+        VocabPath: "~/.switchailocal/models/vocab.txt",
+    }
+    engine, err := embedding.NewEngine(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := engine.Initialize(""); err != nil {
+        log.Fatal(err)
+    }
+    defer engine.Shutdown()
+
+    // Create document corpus
+    documents := []*Document{
+        {ID: "doc1", Text: "Python is a programming language"},
+        {ID: "doc2", Text: "Machine learning uses neural networks"},
+        {ID: "doc3", Text: "The weather is sunny today"},
+        {ID: "doc4", Text: "Deep learning is a subset of AI"},
+    }
+
+    // Generate embeddings for all documents
+    for _, doc := range documents {
+        vec, err := engine.Embed(doc.Text)
+        if err != nil {
+            log.Fatal(err)
+        }
+        doc.Embedding = vec
+    }
+
+    // Perform semantic search
+    query := "artificial intelligence and neural networks"
+    queryVec, err := engine.Embed(query)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Compute similarities
+    results := make([]SearchResult, 0, len(documents))
+    for _, doc := range documents {
+        sim := engine.CosineSimilarity(queryVec, doc.Embedding)
+        results = append(results, SearchResult{
+            Document:   doc,
+            Similarity: sim,
+        })
+    }
+
+    // Sort by similarity (descending)
+    sort.Slice(results, func(i, j int) bool {
+        return results[i].Similarity > results[j].Similarity
+    })
+
+    // Display top results
+    fmt.Printf("Search results for: %s\n\n", query)
+    for i, result := range results {
+        fmt.Printf("%d. [%.3f] %s\n",
+            i+1,
+            result.Similarity,
+            result.Document.Text,
+        )
+    }
+}
+```
+
+**Output:**
+```
+Search results for: artificial intelligence and neural networks
+
+1. [0.876] Machine learning uses neural networks
+2. [0.823] Deep learning is a subset of AI
+3. [0.234] Python is a programming language
+4. [0.098] The weather is sunny today
+```
+
+## API Reference
+
+### Engine Methods
+
+#### `NewEngine(cfg Config) (*Engine, error)`
+
+Creates a new embedding engine instance.
+
+**Parameters:**
+- `cfg`: Configuration with model and vocabulary paths
+
+**Returns:**
+- `*Engine`: The engine instance
+- `error`: Any error during creation
+
+---
+
+#### `Initialize(sharedLibPath string) error`
+
+Loads the ONNX model and prepares for inference.
+
+**Parameters:**
+- `sharedLibPath`: Path to ONNX Runtime library (empty for auto-detect)
+
+**Returns:**
+- `error`: Any error during initialization
+
+---
+
+#### `Embed(text string) ([]float32, error)`
+
+Generates embedding for a single text.
+
+**Parameters:**
+- `text`: Input text to embed
+
+**Returns:**
+- `[]float32`: 384-dimensional embedding vector
+- `error`: Any error during embedding
+
+---
+
+#### `BatchEmbed(texts []string) ([][]float32, error)`
+
+Generates embeddings for multiple texts efficiently.
+
+**Parameters:**
+- `texts`: Slice of input texts
+
+**Returns:**
+- `[][]float32`: Slice of embedding vectors
+- `error`: Any error during embedding
+
+---
+
+#### `CosineSimilarity(a, b []float32) float64`
+
+Computes cosine similarity between two vectors.
+
+**Parameters:**
+- `a`: First embedding vector
+- `b`: Second embedding vector
+
+**Returns:**
+- `float64`: Similarity score (0.0 to 1.0)
+
+---
+
+#### `IsEnabled() bool`
+
+Checks if the engine is initialized and ready.
+
+**Returns:**
+- `bool`: true if ready for inference
+
+---
+
+#### `GetDimension() int`
+
+Returns the embedding output dimension.
+
+**Returns:**
+- `int`: Dimension (384 for MiniLM)
+
+---
+
+#### `Shutdown() error`
+
+Gracefully shuts down the engine and releases resources.
+
+**Returns:**
+- `error`: Any error during shutdown
+
+## Configuration
+
+### Config Struct
+
+```go
+type Config struct {
+    // ModelPath is the path to the ONNX model file
+    ModelPath string
+
+    // VocabPath is the path to the vocabulary file
+    VocabPath string
+
+    // SharedLibraryPath is the path to ONNX Runtime (optional)
+    SharedLibraryPath string
+}
+```
+
+### Default Paths
+
+```go
+cfg := embedding.Config{
+    ModelPath: "~/.switchailocal/models/model.onnx",
+    VocabPath: "~/.switchailocal/models/vocab.txt",
+}
+```
+
+## Constants
+
+```go
+const (
+    // DefaultModelName is the default embedding model
+    DefaultModelName = "all-MiniLM-L6-v2"
+
+    // EmbeddingDimension is the output dimension
+    EmbeddingDimension = 384
+
+    // MaxSequenceLength is the max input tokens
+    MaxSequenceLength = 256
+)
+```
+
+## Error Handling
+
+```go
+vector, err := engine.Embed(text)
+if err != nil {
+    switch {
+    case strings.Contains(err.Error(), "not initialized"):
+        log.Println("Engine not initialized")
+    case strings.Contains(err.Error(), "tokenization failed"):
+        log.Println("Invalid input text")
+    case strings.Contains(err.Error(), "inference failed"):
+        log.Println("Model inference error")
+    default:
+        log.Printf("Unexpected error: %v", err)
+    }
+    return
+}
+```
+
+## Performance Tips
+
+<Tip>
+**Use BatchEmbed for multiple texts** - It's more efficient than calling Embed() multiple times.
+</Tip>
+
+<Tip>
+**Pre-compute embeddings** - Generate and cache embeddings for static content at startup.
+</Tip>
+
+<Tip>
+**Normalize vectors** - The engine automatically L2-normalizes outputs for optimal similarity computation.
+</Tip>
+
+<Warning>
+**Thread Safety** - The engine is thread-safe and can handle concurrent requests, but avoid creating multiple engine instances.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Providers" icon="plug" href="/sdk/embedding/custom-providers">
+    Integrate custom embedding models
+  </Card>
+  <Card title="Semantic Tier" icon="brain" href="/features/intelligent-routing">
+    Use embeddings for intelligent routing
+  </Card>
+  <Card title="Overview" icon="book" href="/sdk/embedding/overview">
+    Learn about embedding fundamentals
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdk/go">
+    Embed switchAILocal in Go apps
+  </Card>
+</CardGroup>

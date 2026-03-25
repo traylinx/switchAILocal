@@ -1,0 +1,426 @@
+---
+title: 'Chat Completions'
+description: 'Send messages and receive AI-generated responses'
+---
+
+## Endpoint
+
+```
+POST /v1/chat/completions
+```
+
+Send a conversation to an AI model and receive a text response. Compatible with the OpenAI Chat Completions API.
+
+## Request Body
+
+<ParamField body="model" type="string" required>
+  The model to use for completion. Use provider prefix for explicit routing (e.g., `geminicli:gemini-2.5-pro`) or omit prefix for auto-routing.
+</ParamField>
+
+<ParamField body="messages" type="array" required>
+  Array of message objects forming the conversation.
+  
+  <Expandable title="Message Object Properties">
+    <ParamField body="role" type="string" required>
+      The role of the message author: `system`, `user`, or `assistant`
+    </ParamField>
+    <ParamField body="content" type="string | array" required>
+      The message content. Can be a string or array of content parts for multimodal inputs.
+    </ParamField>
+    <ParamField body="name" type="string">
+      Optional name for the message author
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="stream" type="boolean" default={false}>
+  If true, returns a stream of server-sent events instead of a single response.
+</ParamField>
+
+<ParamField body="temperature" type="number" default={1.0}>
+  Sampling temperature between 0 and 2. Higher values make output more random.
+</ParamField>
+
+<ParamField body="max_tokens" type="integer">
+  Maximum number of tokens to generate in the completion.
+</ParamField>
+
+<ParamField body="top_p" type="number" default={1.0}>
+  Nucleus sampling parameter. Alternative to temperature.
+</ParamField>
+
+<ParamField body="frequency_penalty" type="number" default={0}>
+  Penalize tokens based on frequency in the text so far (-2.0 to 2.0).
+</ParamField>
+
+<ParamField body="presence_penalty" type="number" default={0}>
+  Penalize tokens based on presence in the text so far (-2.0 to 2.0).
+</ParamField>
+
+<ParamField body="stop" type="string | array">
+  Up to 4 sequences where the API will stop generating tokens.
+</ParamField>
+
+<ParamField body="tools" type="array">
+  List of tools the model may call. Currently supports function calling.
+</ParamField>
+
+<ParamField body="extra_body" type="object">
+  Provider-specific extensions. See [CLI Attachments](/api/cli-attachments) for CLI provider options.
+</ParamField>
+
+## Response Format
+
+<ResponseField name="id" type="string">
+  Unique identifier for the completion
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Object type, always `chat.completion` or `chat.completion.chunk` for streaming
+</ResponseField>
+
+<ResponseField name="created" type="integer">
+  Unix timestamp of when the completion was created
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The model used for completion
+</ResponseField>
+
+<ResponseField name="choices" type="array">
+  Array of completion choices
+  
+  <Expandable title="Choice Object Properties">
+    <ResponseField name="index" type="integer">
+      The index of this choice in the array
+    </ResponseField>
+    <ResponseField name="message" type="object">
+      The generated message
+      <Expandable title="Message Properties">
+        <ResponseField name="role" type="string">
+          Always `assistant`
+        </ResponseField>
+        <ResponseField name="content" type="string">
+          The generated text content
+        </ResponseField>
+        <ResponseField name="tool_calls" type="array">
+          Tool calls made by the model, if any
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="finish_reason" type="string">
+      Why the completion stopped: `stop`, `length`, `tool_calls`, or `content_filter`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage statistics
+  
+  <Expandable title="Usage Properties">
+    <ResponseField name="prompt_tokens" type="integer">
+      Number of tokens in the prompt
+    </ResponseField>
+    <ResponseField name="completion_tokens" type="integer">
+      Number of tokens in the completion
+    </ResponseField>
+    <ResponseField name="total_tokens" type="integer">
+      Total tokens used
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Basic Request
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "What is the capital of France?"}
+    ]
+  }'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "What is the capital of France?"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [
+    { role: 'user', content: 'What is the capital of France?' }
+  ]
+});
+
+console.log(response.choices[0].message.content);
+```
+</CodeGroup>
+
+### Streaming Response
+
+<CodeGroup>
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+stream = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+    stream=True
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const stream = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Tell me a story' }],
+  stream: true
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content || '');
+}
+```
+
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Tell me a story"}],
+    "stream": true
+  }'
+```
+</CodeGroup>
+
+### Multi-Turn Conversation
+
+<CodeGroup>
+```python Python
+messages = [
+    {"role": "system", "content": "You are a helpful coding assistant."},
+    {"role": "user", "content": "Write a Python function to calculate fibonacci."},
+    {"role": "assistant", "content": "Here's a recursive implementation..."},
+    {"role": "user", "content": "Now make it iterative."}
+]
+
+response = client.chat.completions.create(
+    model="geminicli:gemini-2.5-pro",
+    messages=messages
+)
+```
+
+```javascript Node.js
+const messages = [
+  { role: 'system', content: 'You are a helpful coding assistant.' },
+  { role: 'user', content: 'Write a Python function to calculate fibonacci.' },
+  { role: 'assistant', content: "Here's a recursive implementation..." },
+  { role: 'user', content: 'Now make it iterative.' }
+];
+
+const response = await client.chat.completions.create({
+  model: 'geminicli:gemini-2.5-pro',
+  messages
+});
+```
+</CodeGroup>
+
+### Provider-Specific Routing
+
+<Tabs>
+  <Tab title="Auto-Routing">
+    ```bash
+    # Let switchAILocal choose the best provider
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "gemini-2.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="Gemini CLI">
+    ```bash
+    # Route to Gemini CLI (uses your CLI subscription)
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "geminicli:gemini-2.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="Claude CLI">
+    ```bash
+    # Route to Claude CLI
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "claudecli:claude-sonnet-4",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+  
+  <Tab title="Ollama">
+    ```bash
+    # Route to local Ollama
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "ollama:llama3.2",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Features
+
+### Temperature Control
+
+Adjust randomness of responses:
+
+```python
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Write a creative story"}],
+    temperature=1.5  # Higher = more creative
+)
+```
+
+### Token Limits
+
+Constrain response length:
+
+```python
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Summarize quantum physics"}],
+    max_tokens=100  # Limit to 100 tokens
+)
+```
+
+### Stop Sequences
+
+Stop generation at specific strings:
+
+```python
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "List 5 colors:"}],
+    stop=["\n\n", "6."]  # Stop at double newline or "6."
+)
+```
+
+## Error Handling
+
+<CodeGroup>
+```python Python
+from openai import OpenAI, APIError, RateLimitError
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+try:
+    response = client.chat.completions.create(
+        model="invalid-model",
+        messages=[{"role": "user", "content": "Hello"}]
+    )
+except RateLimitError:
+    print("Rate limit exceeded")
+except APIError as e:
+    print(f"API error: {e.message}")
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+try {
+  const response = await client.chat.completions.create({
+    model: 'invalid-model',
+    messages: [{ role: 'user', content: 'Hello' }]
+  });
+} catch (error) {
+  if (error.status === 404) {
+    console.log('Model not found');
+  } else {
+    console.error('API error:', error.message);
+  }
+}
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
+    Learn about routing to specific providers
+  </Card>
+  <Card title="CLI Attachments" icon="paperclip" href="/api/cli-attachments">
+    Pass files and folders to CLI providers
+  </Card>
+  <Card title="Models" icon="cube" href="/api/models">
+    List and discover available models
+  </Card>
+  <Card title="WebSocket" icon="bolt" href="/api/websocket">
+    Use real-time bidirectional streaming
+  </Card>
+</CardGroup>

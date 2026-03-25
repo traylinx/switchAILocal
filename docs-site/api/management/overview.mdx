@@ -1,0 +1,413 @@
+---
+title: 'Management API Overview'
+description: 'Programmatic access to server configuration and intelligent systems'
+---
+
+## Introduction
+
+The Management API provides programmatic control over switchAILocal's configuration, monitoring, and intelligent systems. Use it to automate operations, build management dashboards, or integrate with DevOps tools.
+
+## Base URL
+
+```
+http://localhost:18080/v0/management
+```
+
+All management endpoints use the `/v0/management` prefix.
+
+## Authentication
+
+Management endpoints require a secret key for authentication:
+
+```bash
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Initialize Secret
+
+On first run, initialize your management secret:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/initialize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "password": "your-secure-password"
+  }'
+```
+
+See [Authentication](/api/authentication) for details.
+
+## Endpoint Categories
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear">
+    Manage server configuration and settings
+    - Get/update `config.yaml`
+    - Manage API keys
+    - Configure providers
+  </Card>
+  
+  <Card title="Monitoring" icon="chart-line">
+    Track usage and performance
+    - Usage statistics
+    - Provider health
+    - Request logs
+  </Card>
+  
+  <Card title="Intelligent Systems" icon="brain">
+    Access advanced AI capabilities
+    - Memory statistics
+    - Steering rules
+    - Hook status
+    - Analytics
+  </Card>
+  
+  <Card title="Provider Management" icon="layer-group">
+    Control AI providers
+    - Test connectivity
+    - Discover models
+    - Manage credentials
+  </Card>
+</CardGroup>
+
+## Quick Examples
+
+### Get Server Configuration
+
+```bash
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Update Configuration
+
+```bash
+curl -X PUT http://localhost:18080/v0/management/config.yaml \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @config.yaml
+```
+
+### Get Usage Statistics
+
+```bash
+curl http://localhost:18080/v0/management/usage \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Test Provider
+
+```bash
+curl -X POST http://localhost:18080/v0/management/providers/test \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "geminicli",
+    "model": "gemini-2.5-pro"
+  }'
+```
+
+## Setup Workflow
+
+New installations can use the setup flow:
+
+### 1. Check Setup Status
+
+```bash
+curl http://localhost:18080/v0/management/setup-status
+```
+
+**Response**:
+```json
+{
+  "initialized": false,
+  "skipped": false,
+  "allow_remote": false
+}
+```
+
+### 2. Initialize or Skip
+
+```bash
+# Option A: Initialize with secret
+curl -X POST http://localhost:18080/v0/management/initialize \
+  -H "Content-Type: application/json" \
+  -d '{"password": "secure-password"}'
+
+# Option B: Skip setup (localhost-only access)
+curl -X POST http://localhost:18080/v0/management/skip
+```
+
+### 3. Access Management Endpoints
+
+After initialization, use the secret key:
+
+```bash
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+## Localhost Bypass
+
+When accessing from `localhost` and remote management is disabled:
+
+```yaml config.yaml
+remote_management:
+  allow_remote: false  # Default
+```
+
+Management endpoints allow **unauthenticated** access from localhost for better UX.
+
+<Warning>
+Only enable `allow_remote: true` when you need external access. Always use strong secret keys for remote access.
+</Warning>
+
+## Remote Access
+
+To enable remote management:
+
+```yaml config.yaml
+remote_management:
+  allow_remote: true
+  secret_key: "<bcrypt-hashed-password>"  # Set via initialize endpoint
+```
+
+Or use environment variable:
+
+```bash
+export MANAGEMENT_PASSWORD="your-password"
+./switchAILocal
+```
+
+## Security Features
+
+### Rate Limiting
+
+Failed authentication attempts trigger temporary IP bans:
+
+- **Max failures**: 5 attempts
+- **Ban duration**: 30 minutes
+- **Scope**: Per remote IP
+
+### CORS Disabled
+
+Management endpoints disable CORS to prevent browser-based attacks.
+
+### Localhost Restriction
+
+Optionally restrict management to localhost only:
+
+```yaml config.yaml
+ampcode:
+  restrict_management_to_localhost: true
+```
+
+## Response Format
+
+All management endpoints return JSON:
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+### Error Response
+
+```json
+{
+  "error": "Invalid management key"
+}
+```
+
+## Common Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Management-Key` | Yes | Management secret key |
+| `Content-Type` | Varies | `application/json` or `application/yaml` |
+| `Authorization` | No | Alternative to X-Management-Key: `Bearer <key>` |
+
+## Version Information
+
+All responses include version headers:
+
+```
+X-CPA-VERSION: 1.0.0
+X-CPA-COMMIT: abc123def
+X-CPA-BUILD-DATE: 2026-03-09T10:00:00Z
+```
+
+## Available Endpoints
+
+### Configuration Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/config` | GET | Get JSON configuration |
+| `/config.yaml` | GET | Get YAML configuration |
+| `/config.yaml` | PUT | Update configuration |
+| `/debug` | GET/PUT | Get/set debug mode |
+| `/logging-to-file` | GET/PUT | Get/set file logging |
+| `/usage-statistics-enabled` | GET/PUT | Get/set usage tracking |
+| `/proxy-url` | GET/PUT/DELETE | Manage proxy settings |
+
+### Provider Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/providers/test` | POST | Test provider connectivity |
+| `/providers/discover-models` | POST | Discover available models |
+| `/gemini-api-key` | GET/PUT/PATCH/DELETE | Manage Gemini keys |
+| `/claude-api-key` | GET/PUT/PATCH/DELETE | Manage Claude keys |
+| `/switchai-api-key` | GET/PUT/PATCH/DELETE | Manage switchAI keys |
+| `/codex-api-key` | GET/PUT/PATCH/DELETE | Manage Codex keys |
+
+### Monitoring
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/usage` | GET | Usage statistics |
+| `/metrics` | GET | Superbrain metrics |
+| `/logs` | GET | Server logs |
+| `/request-error-logs` | GET | Error logs |
+| `/request-log-by-id/:id` | GET | Specific request log |
+
+### Intelligent Systems
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/memory/stats` | GET | Memory system statistics |
+| `/heartbeat/status` | GET | Provider health status |
+| `/steering/rules` | GET | Loaded steering rules |
+| `/steering/reload` | POST | Reload steering rules |
+| `/hooks/status` | GET | Hook execution status |
+| `/hooks/reload` | POST | Reload hooks |
+| `/analytics` | GET | Computed analytics |
+
+### Advanced
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/cache/metrics` | GET | Cache statistics |
+| `/cache/clear` | POST | Clear semantic cache |
+| `/state-box/status` | GET | State directory info |
+| `/latest-version` | GET | Check for updates |
+
+## Python Client Example
+
+```python
+import requests
+
+class ManagementClient:
+    def __init__(self, base_url="http://localhost:18080", secret_key=None):
+        self.base_url = base_url
+        self.headers = {}
+        if secret_key:
+            self.headers["X-Management-Key"] = secret_key
+    
+    def get_config(self):
+        response = requests.get(
+            f"{self.base_url}/v0/management/config",
+            headers=self.headers
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_usage(self):
+        response = requests.get(
+            f"{self.base_url}/v0/management/usage",
+            headers=self.headers
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def test_provider(self, provider, model):
+        response = requests.post(
+            f"{self.base_url}/v0/management/providers/test",
+            headers=self.headers,
+            json={"provider": provider, "model": model}
+        )
+        response.raise_for_status()
+        return response.json()
+
+# Usage
+client = ManagementClient(secret_key="your-secret-key")
+config = client.get_config()
+print(f"Debug mode: {config['debug']}")
+
+usage = client.get_usage()
+print(f"Total requests: {usage['total_requests']}")
+```
+
+## JavaScript Client Example
+
+```javascript
+class ManagementClient {
+  constructor(baseURL = 'http://localhost:18080', secretKey = null) {
+    this.baseURL = baseURL;
+    this.headers = secretKey ? { 'X-Management-Key': secretKey } : {};
+  }
+
+  async getConfig() {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/config`,
+      { headers: this.headers }
+    );
+    if (!response.ok) throw new Error('Failed to get config');
+    return response.json();
+  }
+
+  async getUsage() {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/usage`,
+      { headers: this.headers }
+    );
+    if (!response.ok) throw new Error('Failed to get usage');
+    return response.json();
+  }
+
+  async testProvider(provider, model) {
+    const response = await fetch(
+      `${this.baseURL}/v0/management/providers/test`,
+      {
+        method: 'POST',
+        headers: { ...this.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, model })
+      }
+    );
+    if (!response.ok) throw new Error('Failed to test provider');
+    return response.json();
+  }
+}
+
+// Usage
+const client = new ManagementClient(
+  'http://localhost:18080',
+  'your-secret-key'
+);
+
+const config = await client.getConfig();
+console.log(`Debug mode: ${config.debug}`);
+
+const usage = await client.getUsage();
+console.log(`Total requests: ${usage.total_requests}`);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/api/management/config">
+    Manage server configuration
+  </Card>
+  <Card title="Providers" icon="layer-group" href="/api/management/providers">
+    Control AI provider settings
+  </Card>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Set up management authentication
+  </Card>
+</CardGroup>

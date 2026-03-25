@@ -1,0 +1,563 @@
+---
+title: 'Provider Management'
+description: 'Manage AI provider credentials, test connectivity, and discover models'
+---
+
+## Overview
+
+The Provider Management API allows you to configure, test, and manage AI provider credentials programmatically.
+
+## Test Provider
+
+```
+POST /v0/management/providers/test
+```
+
+Test connectivity and authentication for a provider:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/providers/test \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "geminicli",
+    "model": "gemini-2.5-pro"
+  }'
+```
+
+**Request Body**:
+<ParamField body="provider" type="string" required>
+  Provider ID (e.g., `geminicli`, `ollama`, `claude`)
+</ParamField>
+
+<ParamField body="model" type="string">
+  Optional model to test with
+</ParamField>
+
+**Response**:
+```json
+{
+  "success": true,
+  "provider": "geminicli",
+  "model": "gemini-2.5-pro",
+  "message": "Provider test successful",
+  "latency_ms": 250
+}
+```
+
+**Error Response**:
+```json
+{
+  "success": false,
+  "provider": "geminicli",
+  "error": "CLI not authenticated",
+  "details": "Run 'gemini auth login' to authenticate"
+}
+```
+
+## Discover Models
+
+```
+POST /v0/management/providers/discover-models
+```
+
+Trigger model discovery for a specific provider:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/providers/discover-models \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "ollama"
+  }'
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "provider": "ollama",
+  "models_found": 5,
+  "models": [
+    "ollama:llama3.2",
+    "ollama:mistral",
+    "ollama:codellama"
+  ]
+}
+```
+
+## Gemini API Keys
+
+### List Keys
+
+```
+GET /v0/management/gemini-api-key
+```
+
+```bash
+curl http://localhost:18080/v0/management/gemini-api-key \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "keys": [
+    {
+      "name": "Production",
+      "key": "***abc123"  // Masked
+    },
+    {
+      "name": "Development",
+      "key": "***def456"
+    }
+  ]
+}
+```
+
+### Add Key
+
+```
+PUT /v0/management/gemini-api-key
+```
+
+```bash
+curl -X PUT http://localhost:18080/v0/management/gemini-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "keys": [
+      {"name": "Production", "key": "your-gemini-api-key"},
+      {"name": "Development", "key": "your-dev-key"}
+    ]
+  }'
+```
+
+### Update Single Key
+
+```
+PATCH /v0/management/gemini-api-key
+```
+
+```bash
+curl -X PATCH http://localhost:18080/v0/management/gemini-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production",
+    "key": "new-gemini-api-key"
+  }'
+```
+
+### Delete Key
+
+```
+DELETE /v0/management/gemini-api-key
+```
+
+```bash
+curl -X DELETE http://localhost:18080/v0/management/gemini-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Development"}'
+```
+
+## Claude API Keys
+
+Same endpoints as Gemini, using `/claude-api-key`:
+
+```bash
+# List
+curl http://localhost:18080/v0/management/claude-api-key \
+  -H "X-Management-Key: your-secret-key"
+
+# Add/Update
+curl -X PUT http://localhost:18080/v0/management/claude-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"keys": [{"name": "Production", "key": "sk-ant-..."}]}'
+
+# Delete
+curl -X DELETE http://localhost:18080/v0/management/claude-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"name": "Production"}'
+```
+
+## switchAI API Keys
+
+Same endpoints as Gemini, using `/switchai-api-key`:
+
+```bash
+# List
+curl http://localhost:18080/v0/management/switchai-api-key \
+  -H "X-Management-Key: your-secret-key"
+
+# Add/Update
+curl -X PUT http://localhost:18080/v0/management/switchai-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"keys": [{"name": "Production", "key": "sal_..."}]}'
+```
+
+## Codex API Keys
+
+Same endpoints as Gemini, using `/codex-api-key`:
+
+```bash
+# List
+curl http://localhost:18080/v0/management/codex-api-key \
+  -H "X-Management-Key: your-secret-key"
+
+# Add/Update
+curl -X PUT http://localhost:18080/v0/management/codex-api-key \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"keys": [{"name": "Production", "key": "codex_..."}]}'
+```
+
+## OpenAI Compatibility
+
+Manage OpenAI-compatible provider configurations:
+
+### List Configurations
+
+```
+GET /v0/management/openai-compatibility
+```
+
+```bash
+curl http://localhost:18080/v0/management/openai-compatibility \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "providers": [
+    {
+      "name": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "***abc123"
+    }
+  ]
+}
+```
+
+### Add Provider
+
+```
+PUT /v0/management/openai-compatibility
+```
+
+```bash
+curl -X PUT http://localhost:18080/v0/management/openai-compatibility \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "providers": [
+      {
+        "name": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "your-openrouter-key"
+      }
+    ]
+  }'
+```
+
+### Delete Provider
+
+```
+DELETE /v0/management/openai-compatibility
+```
+
+```bash
+curl -X DELETE http://localhost:18080/v0/management/openai-compatibility \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"name": "openrouter"}'
+```
+
+## OAuth Management
+
+### Request OAuth URL
+
+Generate OAuth authorization URLs for CLI providers:
+
+#### Anthropic
+
+```
+GET /v0/management/anthropic-auth-url
+```
+
+```bash
+curl http://localhost:18080/v0/management/anthropic-auth-url \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "auth_url": "https://console.anthropic.com/oauth/authorize?...",
+  "state": "random-state-token"
+}
+```
+
+#### Gemini CLI
+
+```
+GET /v0/management/gemini-cli-auth-url
+```
+
+```bash
+curl http://localhost:18080/v0/management/gemini-cli-auth-url \
+  -H "X-Management-Key: your-secret-key"
+```
+
+#### Codex
+
+```
+GET /v0/management/codex-auth-url
+```
+
+### OAuth Callback
+
+```
+POST /v0/management/oauth-callback
+```
+
+Handle OAuth callback (used internally):
+
+```bash
+curl -X POST http://localhost:18080/v0/management/oauth-callback \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{
+    "provider": "anthropic",
+    "code": "auth-code",
+    "state": "random-state-token"
+  }'
+```
+
+### Get Auth Status
+
+```
+GET /v0/management/get-auth-status
+```
+
+Check authentication status for all providers:
+
+```bash
+curl http://localhost:18080/v0/management/get-auth-status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "providers": [
+    {
+      "id": "geminicli",
+      "name": "Gemini CLI",
+      "authenticated": true,
+      "method": "cli"
+    },
+    {
+      "id": "claudecli",
+      "name": "Claude CLI",
+      "authenticated": false,
+      "method": "cli"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini API",
+      "authenticated": true,
+      "method": "api_key",
+      "key_count": 2
+    }
+  ]
+}
+```
+
+## Auth Files
+
+### List Auth Files
+
+```
+GET /v0/management/auth-files
+```
+
+List all authentication files:
+
+```bash
+curl http://localhost:18080/v0/management/auth-files \
+  -H "X-Management-Key: your-secret-key"
+```
+
+**Response**:
+```json
+{
+  "files": [
+    {
+      "name": "gemini-production.json",
+      "provider": "gemini",
+      "type": "service_account",
+      "created": "2026-03-09T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Get Auth File Models
+
+```
+GET /v0/management/auth-files/models
+```
+
+Get models available from an auth file:
+
+```bash
+curl "http://localhost:18080/v0/management/auth-files/models?file=gemini-production.json" \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Upload Auth File
+
+```
+POST /v0/management/auth-files
+```
+
+Upload a service account JSON:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/auth-files \
+  -H "X-Management-Key: your-secret-key" \
+  -F "file=@service-account.json" \
+  -F "provider=gemini"
+```
+
+### Download Auth File
+
+```
+GET /v0/management/auth-files/download
+```
+
+```bash
+curl "http://localhost:18080/v0/management/auth-files/download?file=gemini-production.json" \
+  -H "X-Management-Key: your-secret-key" \
+  -O
+```
+
+### Delete Auth File
+
+```
+DELETE /v0/management/auth-files
+```
+
+```bash
+curl -X DELETE http://localhost:18080/v0/management/auth-files \
+  -H "X-Management-Key: your-secret-key" \
+  -d '{"file": "gemini-production.json"}'
+```
+
+## Vertex AI Import
+
+```
+POST /v0/management/vertex/import
+```
+
+Import Vertex AI credentials:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/vertex/import \
+  -H "X-Management-Key: your-secret-key" \
+  -F "file=@vertex-credentials.json" \
+  -F "project_id=my-project"
+```
+
+## Python Examples
+
+```python
+import requests
+
+class ProviderManager:
+    def __init__(self, base_url, secret_key):
+        self.base_url = base_url
+        self.headers = {"X-Management-Key": secret_key}
+    
+    def test_provider(self, provider, model=None):
+        """Test provider connectivity"""
+        data = {"provider": provider}
+        if model:
+            data["model"] = model
+        
+        response = requests.post(
+            f"{self.base_url}/v0/management/providers/test",
+            headers=self.headers,
+            json=data
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def add_gemini_key(self, name, key):
+        """Add Gemini API key"""
+        response = requests.put(
+            f"{self.base_url}/v0/management/gemini-api-key",
+            headers=self.headers,
+            json={"keys": [{"name": name, "key": key}]}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_auth_status(self):
+        """Get authentication status for all providers"""
+        response = requests.get(
+            f"{self.base_url}/v0/management/get-auth-status",
+            headers=self.headers
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def discover_models(self, provider):
+        """Discover models for a provider"""
+        response = requests.post(
+            f"{self.base_url}/v0/management/providers/discover-models",
+            headers=self.headers,
+            json={"provider": provider}
+        )
+        response.raise_for_status()
+        return response.json()
+
+# Usage
+manager = ProviderManager(
+    "http://localhost:18080",
+    "your-secret-key"
+)
+
+# Test Gemini CLI
+result = manager.test_provider("geminicli", "gemini-2.5-pro")
+if result["success"]:
+    print(f"Provider healthy (latency: {result['latency_ms']}ms)")
+else:
+    print(f"Provider error: {result['error']}")
+
+# Add API key
+manager.add_gemini_key("Production", "your-api-key")
+
+# Check auth status
+status = manager.get_auth_status()
+for provider in status["providers"]:
+    print(f"{provider['name']}: {provider['authenticated']}")
+
+# Discover Ollama models
+models = manager.discover_models("ollama")
+print(f"Found {models['models_found']} models")
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/api/management/config">
+    Manage server configuration
+  </Card>
+  <Card title="Provider Setup" icon="book" href="/guides/setup-providers">
+    Guide to setting up providers
+  </Card>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Learn about API authentication
+  </Card>
+</CardGroup>

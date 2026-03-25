@@ -1,0 +1,348 @@
+---
+title: 'Models'
+description: 'List and discover available AI models from all providers'
+---
+
+## List Models
+
+```
+GET /v1/models
+```
+
+Returns all available models from all connected providers. Compatible with the OpenAI Models API.
+
+## Request
+
+No parameters required. Include authentication header.
+
+```bash
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+## Response Format
+
+<ResponseField name="object" type="string">
+  Always `list`
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of model objects
+  
+  <Expandable title="Model Object Properties">
+    <ResponseField name="id" type="string">
+      Model identifier (e.g., `gemini-2.5-pro`, `geminicli:gemini-2.5-pro`)
+    </ResponseField>
+    <ResponseField name="object" type="string">
+      Always `model`
+    </ResponseField>
+    <ResponseField name="created" type="integer">
+      Unix timestamp of model registration
+    </ResponseField>
+    <ResponseField name="owned_by" type="string">
+      Provider name (e.g., `google`, `anthropic`, `ollama`)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Response Example
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemini-2.5-pro",
+      "object": "model",
+      "created": 1709251200,
+      "owned_by": "google"
+    },
+    {
+      "id": "geminicli:gemini-2.5-pro",
+      "object": "model",
+      "created": 1709251200,
+      "owned_by": "google-cli"
+    },
+    {
+      "id": "claude-sonnet-4",
+      "object": "model",
+      "created": 1709251200,
+      "owned_by": "anthropic"
+    },
+    {
+      "id": "ollama:llama3.2",
+      "object": "model",
+      "created": 1709251200,
+      "owned_by": "ollama"
+    }
+  ]
+}
+```
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+models = client.models.list()
+for model in models.data:
+    print(f"{model.id} - {model.owned_by}")
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const models = await client.models.list();
+models.data.forEach(model => {
+  console.log(`${model.id} - ${model.owned_by}`);
+});
+```
+
+```go Go
+import "github.com/sashabaranov/go-openai"
+
+client := openai.NewClient("sk-test-123")
+client.BaseURL = "http://localhost:18080/v1"
+
+models, err := client.ListModels(context.Background())
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, model := range models.Models {
+    fmt.Printf("%s - %s\n", model.ID, model.OwnedBy)
+}
+```
+</CodeGroup>
+
+## Model Naming Convention
+
+### With Provider Prefix
+
+Models with provider prefixes explicitly route to that provider:
+
+```
+geminicli:gemini-2.5-pro  → Gemini CLI
+claudecli:claude-sonnet-4 → Claude CLI
+ollama:llama3.2           → Ollama
+switchai:auto             → switchAI with auto-routing
+```
+
+### Without Provider Prefix
+
+Models without prefixes allow auto-routing:
+
+```
+gemini-2.5-pro   → Any Gemini provider (CLI, API, or switchAI)
+claude-sonnet-4  → Any Claude provider
+llama3.2         → Auto-detect local provider
+```
+
+See [Provider Prefixes](/api/provider-prefixes) for details.
+
+## Refresh Models
+
+```
+POST /v1/models/refresh
+```
+
+Trigger model re-discovery from all providers. Useful after adding new providers or models.
+
+### Request
+
+<ParamField query="provider" type="string">
+  Optional: Refresh only a specific provider (e.g., `ollama`, `geminicli`)
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Refresh All
+curl -X POST http://localhost:18080/v1/models/refresh \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+```bash Refresh Provider
+curl -X POST "http://localhost:18080/v1/models/refresh?provider=ollama" \
+  -H "Authorization: Bearer sk-test-123"
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "message": "Model refresh completed",
+  "provider": "ollama"
+}
+```
+
+## Gemini Native API
+
+For Gemini-specific clients, use the native endpoint:
+
+```
+GET /v1beta/models
+```
+
+Returns models in Gemini format with `supportedGenerationMethods`:
+
+```json
+{
+  "models": [
+    {
+      "name": "models/gemini-2.5-pro",
+      "displayName": "Gemini 2.5 Pro",
+      "description": "Stable release of Gemini 2.5 Pro",
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ]
+    }
+  ]
+}
+```
+
+## Filter by Provider Type
+
+Use the provider status endpoint to filter models:
+
+```
+GET /v1/providers?filter=active
+```
+
+See [Provider Prefixes](/api/provider-prefixes) for filtering options.
+
+## Model Capabilities
+
+Different models support different features:
+
+| Capability | Gemini | Claude | Ollama | switchAI |
+|------------|--------|--------|--------|----------|
+| Chat Completions | ✅ | ✅ | ✅ | ✅ |
+| Streaming | ✅ | ✅ | ✅ | ✅ |
+| Function Calling | ✅ | ✅ | ⚠️ | ✅ |
+| Vision | ✅ | ✅ | ⚠️ | ✅ |
+| JSON Mode | ✅ | ✅ | ✅ | ✅ |
+| Embeddings | ✅ | ❌ | ✅ | ✅ |
+
+⚠️ = Model-dependent
+
+## Model Discovery
+
+switchAILocal automatically discovers models from:
+
+1. **Configuration File**: Models defined in `config.yaml`
+2. **CLI Providers**: Models detected from installed CLI tools
+3. **Local Servers**: Models from Ollama, LM Studio
+4. **API Providers**: Models from authenticated API providers
+5. **Dynamic Registration**: Models registered at runtime
+
+### Discovery Sources
+
+<Tabs>
+  <Tab title="CLI Discovery">
+    ```bash
+    # Gemini CLI models discovered from:
+    gemini models list
+    
+    # Claude CLI models discovered from:
+    claude models
+    
+    # Results cached for performance
+    ```
+  </Tab>
+  
+  <Tab title="Ollama Discovery">
+    ```bash
+    # Ollama models queried from:
+    curl http://localhost:11434/api/tags
+    
+    # Auto-prefixed with 'ollama:'
+    ```
+  </Tab>
+  
+  <Tab title="API Discovery">
+    ```bash
+    # API provider models fetched from:
+    # - Google AI Studio: /v1beta/models
+    # - Anthropic: Static model list
+    # - OpenAI: /v1/models
+    ```
+  </Tab>
+  
+  <Tab title="Manual Config">
+    ```yaml config.yaml
+    # Manually define custom models
+    models:
+      - id: custom-model
+        provider: openai-compat
+        endpoint: https://api.example.com/v1
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### No Models Returned
+
+**Cause**: No providers configured or authenticated
+
+**Solution**:
+1. Verify provider setup: Check `config.yaml` for API keys
+2. Test CLI tools: Run `gemini --version`, `claude --version`
+3. Check logs: Look for provider initialization errors
+4. Try refresh: `POST /v1/models/refresh`
+
+### Missing Specific Model
+
+**Cause**: Provider not authenticated or model not available
+
+**Solution**:
+1. Verify provider access: Test CLI tool directly
+2. Check subscription: Ensure model is in your plan
+3. Refresh models: Force re-discovery
+4. Check spelling: Model IDs are case-sensitive
+
+### Stale Model List
+
+**Cause**: Models cached from previous discovery
+
+**Solution**:
+```bash
+# Force refresh all providers
+curl -X POST http://localhost:18080/v1/models/refresh \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
+    Learn model routing and provider selection
+  </Card>
+  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
+    Use models for chat completions
+  </Card>
+  <Card title="Auto-Routing" icon="route" href="/api/auto-routing">
+    Let switchAILocal choose the best provider
+  </Card>
+</CardGroup>

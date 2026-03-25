@@ -1,0 +1,153 @@
+---
+title: 'API Overview'
+description: 'OpenAI-compatible API gateway for unified AI provider access'
+---
+
+## Introduction
+
+switchAILocal provides an OpenAI-compatible HTTP API that works with any OpenAI SDK or tool. Point your client to `http://localhost:18080/v1` and use your existing code without modifications.
+
+## Base URL
+
+```
+http://localhost:18080/v1
+```
+
+All API endpoints use this base URL. The server runs locally on your machine by default.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="OpenAI Compatible" icon="code">
+    Works with OpenAI SDKs in Python, Node.js, and more without code changes
+  </Card>
+  <Card title="Multi-Provider" icon="layer-group">
+    Access Gemini, Claude, Ollama, and other providers through a single endpoint
+  </Card>
+  <Card title="Auto-Routing" icon="route">
+    Omit provider prefixes to let switchAILocal choose the best available provider
+  </Card>
+  <Card title="Local-First" icon="shield">
+    Everything runs on your machine - your data never leaves
+  </Card>
+</CardGroup>
+
+## Quick Example
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:18080/v1",
+    api_key="sk-test-123"
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response.choices[0].message.content)
+```
+
+```javascript Node.js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+
+console.log(response.choices[0].message.content);
+```
+</CodeGroup>
+
+## Available Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/chat/completions` | POST | Send chat messages and receive completions |
+| `/v1/completions` | POST | Legacy completions endpoint |
+| `/v1/models` | GET | List all available models |
+| `/v1/providers` | GET | List provider status and capabilities |
+| `/v1/embeddings` | POST | Generate text embeddings |
+| `/v1/ws` | WebSocket | Real-time bidirectional streaming |
+| `/v1/messages` | POST | Claude-compatible messages endpoint |
+
+## Provider Support
+
+switchAILocal supports multiple AI providers through a unified interface:
+
+### CLI Providers (Use Your Subscriptions)
+- **Gemini CLI** (`geminicli:`) - Google Gemini via local CLI
+- **Claude CLI** (`claudecli:`) - Anthropic Claude via local CLI  
+- **Codex** (`codex:`) - OpenAI Codex
+- **Vibe** (`vibe:`) - Mistral Vibe CLI
+- **OpenCode** (`opencode:`) - OpenCode CLI
+
+### Local Models
+- **Ollama** (`ollama:`) - Local open-source models
+- **LM Studio** (`lmstudio:`) - Local model hosting
+
+### Cloud APIs
+- **switchAI** (`switchai:`) - Traylinx unified gateway
+- **Gemini API** (`gemini:`) - Google AI Studio
+- **Claude API** (`claude:`) - Anthropic API
+- **OpenAI API** (`openai:`) - OpenAI platform
+- **OpenAI Compatible** (`openai-compat:`) - OpenRouter, etc.
+
+## Error Handling
+
+All errors follow the OpenAI error format:
+
+```json
+{
+  "error": {
+    "message": "Invalid API key provided",
+    "type": "authentication_error",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+### Common Error Types
+
+| Type | HTTP Code | Description |
+|------|-----------|-------------|
+| `authentication_error` | 401 | Invalid or missing API key |
+| `invalid_request_error` | 400 | Malformed request body |
+| `permission_error` | 403 | Insufficient quota or permissions |
+| `rate_limit_error` | 429 | Too many requests |
+| `server_error` | 500 | Internal server error |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Learn how to authenticate API requests
+  </Card>
+  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
+    Send messages and receive AI responses
+  </Card>
+  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
+    Route requests to specific providers
+  </Card>
+  <Card title="Management API" icon="gear" href="/api/management/overview">
+    Configure and monitor your server
+  </Card>
+</CardGroup>

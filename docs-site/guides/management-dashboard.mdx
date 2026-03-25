@@ -1,0 +1,467 @@
+---
+title: Management Dashboard
+description: Use the web-based control panel to configure and monitor switchAILocal
+---
+
+## Overview
+
+The Management Dashboard is a modern, single-file React web UI (226 KB, zero dependencies) that provides visual configuration and monitoring for switchAILocal.
+
+## Accessing the Dashboard
+
+The dashboard is available at:
+
+```
+http://localhost:18080/management
+```
+
+<Note>
+  The dashboard requires authentication using your management secret key configured in `config.yaml`.
+</Note>
+
+---
+
+## Configuration
+
+### Enable Management API
+
+Configure the management API in `config.yaml`:
+
+```yaml config.yaml
+remote-management:
+  # Whether to allow remote (non-localhost) management access
+  allow-remote: false
+  
+  # Management key (will be hashed on startup)
+  secret-key: "your-secure-secret-key"
+  
+  # Disable the bundled management control panel
+  disable-control-panel: false
+  
+  # GitHub repository for control panel assets
+  panel-github-repository: "https://github.com/traylinx/switchAILocal-Management-Center"
+```
+
+<Accordion title="Security Settings">
+  **allow-remote:**
+  - `false` (default): Only localhost can access management endpoints
+  - `true`: Allow remote access (requires authentication)
+  
+  **secret-key:**
+  - Used for all management API requests
+  - Stored as a hash after first startup
+  - Leave empty to disable Management API entirely (404 for all routes)
+  
+  **disable-control-panel:**
+  - `false` (default): Dashboard is available
+  - `true`: Disable the web UI (API endpoints still work)
+</Accordion>
+
+### First-Time Setup
+
+<Steps>
+  <Step title="Set Management Key">
+    Edit `config.yaml` and set a strong secret key:
+    
+    ```yaml
+    remote-management:
+      secret-key: "your-secure-random-key-here"
+    ```
+  </Step>
+  
+  <Step title="Start Server">
+    ```bash
+    ./switchAILocal
+    ```
+    
+    Or with Docker:
+    
+    ```bash
+    docker-compose up -d
+    ```
+  </Step>
+  
+  <Step title="Access Dashboard">
+    Navigate to `http://localhost:18080/management` and enter your secret key.
+  </Step>
+</Steps>
+
+---
+
+## Dashboard Features
+
+### Provider Configuration
+
+Visually manage AI provider credentials and settings:
+
+- **Add Provider Credentials**: Configure API keys for Gemini, Claude, OpenAI, and more
+- **OAuth Management**: View and manage OAuth sessions
+- **Model Discovery**: Trigger automatic model discovery
+- **Load Balancing**: Configure multiple credentials per provider
+
+### Model Routing
+
+Configure intelligent routing behavior:
+
+- **Routing Strategy**: Choose between round-robin and fill-first
+- **Model Aliases**: Create friendly names for models
+- **Auto Model Priority**: Set fallback order for `auto` model selection
+- **Cortex Router Matrix**: Map intents to specific models
+
+### Real-Time Monitoring
+
+#### Provider Health Status
+
+Monitor the health of all configured providers:
+
+```bash
+GET /v0/management/heartbeat/status
+```
+
+Displays:
+- Provider availability
+- Response latency
+- Last successful request
+- Error rates
+- Quota usage
+
+#### Performance Analytics
+
+View detailed performance metrics:
+
+```bash
+GET /v0/management/analytics
+```
+
+Metrics include:
+- **Total Requests**: Count per provider and model
+- **Success Rates**: Percentage of successful completions
+- **Average Latency**: Response time statistics
+- **Error Rates**: Failure analysis
+- **Cost Tracking**: Token usage and estimated costs
+
+#### Memory System Stats
+
+Monitor the learning system:
+
+```bash
+GET /v0/management/memory/stats
+```
+
+Shows:
+- User preferences per API key
+- Provider bias scores
+- Model performance history
+- Routing decision cache
+
+### Live Log Streaming
+
+View real-time application logs directly in the dashboard:
+
+- Filter by log level (DEBUG, INFO, WARN, ERROR)
+- Search log content
+- Auto-scroll to latest entries
+- Download log files
+
+### Configuration Editor
+
+Edit configuration settings through the web UI:
+
+```bash
+# Get current config
+GET /v0/management/config
+
+# Update specific fields
+PATCH /v0/management/config
+```
+
+Supported operations:
+- Update basic settings (port, debug mode)
+- Modify provider credentials
+- Adjust routing strategies
+- Configure intelligence features
+
+---
+
+## Management API Reference
+
+All dashboard features are backed by REST endpoints.
+
+<Note>
+  All management endpoints require the `X-Management-Key` header with your secret key.
+</Note>
+
+### Monitoring Endpoints
+
+<CodeGroup>
+```bash Global Analytics
+curl http://localhost:18080/v0/management/analytics \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Provider Health
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Memory Stats
+curl http://localhost:18080/v0/management/memory/stats \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Steering Rules
+curl http://localhost:18080/v0/management/steering/rules \
+  -H "X-Management-Key: your-secret-key"
+```
+</CodeGroup>
+
+### Operations Endpoints
+
+<CodeGroup>
+```bash Reload Steering Rules
+curl -X POST http://localhost:18080/v0/management/steering/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Reload Hooks
+curl -X POST http://localhost:18080/v0/management/hooks/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Trigger Model Discovery
+curl -X POST http://localhost:18080/v0/management/discover_models \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Clear Semantic Cache
+curl -X POST http://localhost:18080/v0/management/cache/clear \
+  -H "X-Management-Key: your-secret-key"
+```
+</CodeGroup>
+
+### Configuration Endpoints
+
+<CodeGroup>
+```bash Get Current Config
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key"
+```
+
+```bash Update Config Field
+curl -X PATCH http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "debug": true,
+    "routing.strategy": "round-robin"
+  }'
+```
+</CodeGroup>
+
+---
+
+## OAuth Session Management
+
+Manage OAuth tokens for CLI and cloud providers:
+
+### View Active Sessions
+
+```bash
+curl http://localhost:18080/v0/management/oauth/sessions \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Response:
+```json
+{
+  "sessions": [
+    {
+      "provider": "gemini",
+      "authenticated": true,
+      "expires_at": "2026-04-09T10:00:00Z",
+      "scopes": ["https://www.googleapis.com/auth/generative-language"]
+    }
+  ]
+}
+```
+
+### Revoke Session
+
+```bash
+curl -X DELETE http://localhost:18080/v0/management/oauth/sessions/gemini \
+  -H "X-Management-Key: your-secret-key"
+```
+
+---
+
+## Feedback and Learning
+
+Provide feedback to improve routing decisions:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/feedback \
+  -H "X-Management-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request_id": "req_abc123",
+    "rating": 5,
+    "comment": "Excellent response quality",
+    "helpful": true
+  }'
+```
+
+Feedback is used to:
+- Adjust provider bias scores
+- Improve model selection confidence
+- Identify provider quirks
+- Optimize routing decisions
+
+---
+
+## Intelligence System Controls
+
+### Cortex Router Status
+
+View the current state of intelligent routing:
+
+```bash
+curl http://localhost:18080/v0/management/intelligence/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Shows:
+- Router model status
+- Semantic tier performance
+- Skill matching statistics
+- Cache hit rates
+- Cascade activations
+
+### Reload Skills
+
+Hot-reload Cortex Router skills without restarting:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/intelligence/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+---
+
+## Hooks and Automation
+
+View and manage webhook hooks:
+
+### List Active Hooks
+
+```bash
+curl http://localhost:18080/v0/management/hooks/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+### Reload Hook Configuration
+
+```bash
+curl -X POST http://localhost:18080/v0/management/hooks/reload \
+  -H "X-Management-Key: your-secret-key"
+```
+
+---
+
+## Usage Analytics
+
+Detailed usage statistics when enabled:
+
+```yaml config.yaml
+usage-statistics-enabled: true
+```
+
+```bash
+curl http://localhost:18080/v0/management/usage \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Response includes:
+- Request volume per provider
+- Token consumption
+- Cost estimates
+- Peak usage times
+- Model distribution
+
+---
+
+## Quota Monitoring
+
+Track provider quota usage:
+
+```bash
+curl http://localhost:18080/v0/management/quota \
+  -H "X-Management-Key: your-secret-key"
+```
+
+Displays:
+- Current quota used per provider
+- Quota limits
+- Reset times
+- Usage trends
+
+---
+
+## Security Best Practices
+
+<Accordion title="Production Deployment">
+  1. **Strong Secret Key**: Use a cryptographically random key (32+ characters)
+  2. **Restrict Remote Access**: Set `allow-remote: false` for local-only access
+  3. **Enable TLS**: Use HTTPS in production with valid certificates
+  4. **Regular Key Rotation**: Change the secret key periodically
+  5. **Monitor Access Logs**: Review management API access logs
+</Accordion>
+
+<Accordion title="Network Security">
+  1. **Firewall Rules**: Block port 18080 from external networks if not needed
+  2. **Reverse Proxy**: Use nginx or Caddy with authentication
+  3. **VPN Access**: Require VPN for remote management access
+  4. **API Rate Limiting**: Implement rate limits on management endpoints
+</Accordion>
+
+---
+
+## Troubleshooting
+
+### Dashboard Won't Load
+
+**Issue**: Dashboard returns 404 or fails to load.
+
+**Solution**:
+1. Verify `disable-control-panel: false` in config.yaml
+2. Check that `secret-key` is set (not empty)
+3. Ensure server is running: `curl http://localhost:18080/health`
+
+### Authentication Fails
+
+**Issue**: Invalid management key error.
+
+**Solution**:
+1. Verify the key matches `config.yaml`
+2. Restart server if you changed the key
+3. Check logs for hashing errors
+
+### Remote Access Denied
+
+**Issue**: Cannot access dashboard from another machine.
+
+**Solution**:
+1. Set `allow-remote: true` in config.yaml
+2. Restart the server
+3. Verify firewall allows port 18080
+
+---
+
+## Next Steps
+
+<Card title="Setup Providers" icon="plug" href="/guides/setup-providers">
+  Configure AI providers through the dashboard
+</Card>
+
+<Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+  Resolve common issues
+</Card>

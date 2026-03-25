@@ -1,0 +1,427 @@
+---
+title: Cortex Router
+description: Intelligent request routing with multi-tier classification and semantic matching
+icon: brain
+---
+
+Cortex Router transforms switchAILocal from a static router into an intelligent orchestrator that automatically selects the optimal model for each request using multi-tier classification and semantic matching.
+
+## Overview
+
+Cortex Router uses a **four-tier routing architecture** to match requests with the best available model:
+
+<Steps>
+  <Step title="Reflex Tier">
+    Pattern matching for instant routing (< 1ms)
+    - PII detection → secure models
+    - Code blocks → coding models
+    - Image URLs → vision models
+  </Step>
+  <Step title="Semantic Tier">
+    Embedding-based intent matching (< 20ms)
+    - Uses local embedding models
+    - Bypasses LLM for high-confidence matches
+    - Matches against 21 pre-built skills
+  </Step>
+  <Step title="Cognitive Tier">
+    LLM-powered classification (200-500ms)
+    - Uses lightweight router model
+    - Returns confidence scores
+    - Falls back to semantic verification
+  </Step>
+  <Step title="Cascade Tier">
+    Quality-based model escalation
+    - Detects incomplete responses
+    - Automatically retries with stronger models
+    - Preserves context across attempts
+  </Step>
+</Steps>
+
+## Quick Start
+
+### Basic Configuration
+
+Add the `intelligence` section to your `config.yaml`:
+
+```yaml config.yaml
+intelligence:
+  enabled: true
+  
+  # Core routing models
+  router-model: "ollama:qwen:0.5b"
+  router-fallback: "openai:gpt-4o-mini"
+  
+  # Intent-to-model mapping
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    creative: "switchai-chat"
+    fast: "switchai-fast"
+    secure: "ollama:llama3.2"  # Local for privacy
+    vision: "switchai-chat"
+```
+
+### Enable Phase 2 Features
+
+<Accordion title="Advanced Phase 2 Configuration">
+```yaml config.yaml
+intelligence:
+  enabled: true
+  
+  # Automatic model discovery
+  discovery:
+    enabled: true
+    refresh-interval: 3600  # seconds
+    cache-dir: "~/.switchailocal/cache/discovery"
+  
+  # Local embedding for semantic matching
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+  
+  # Semantic tier routing
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+  
+  # Skill-based prompt augmentation
+  skills:
+    enabled: true
+    directory: "plugins/cortex-router/skills"
+  
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80
+  
+  # Semantic caching
+  semantic-cache:
+    enabled: true
+    similarity-threshold: 0.95
+    max-size: 10000
+  
+  # Confidence scoring
+  confidence:
+    enabled: true
+  
+  # Cross-verification
+  verification:
+    enabled: true
+    confidence-threshold-low: 0.60
+    confidence-threshold-high: 0.90
+  
+  # Automatic quality-based cascading
+  cascade:
+    enabled: true
+    quality-threshold: 0.70
+  
+  # Feedback collection
+  feedback:
+    enabled: true
+    retention-days: 90
+```
+</Accordion>
+
+### Download Embedding Model
+
+Before using semantic features, download the embedding model:
+
+```bash
+./scripts/download-embedding-model.sh
+```
+
+## Usage
+
+Use `model: "auto"` or `model: "cortex"` to enable intelligent routing:
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "auto",
+        "messages": [{
+          "role": "user",
+          "content": "Write a Python function to parse JSON"
+        }]
+      }'
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from openai import OpenAI
+    
+    client = OpenAI(
+        api_key="sk-test-123",
+        base_url="http://localhost:18080/v1"
+    )
+    
+    response = client.chat.completions.create(
+        model="auto",  # Intelligent routing
+        messages=[{
+            "role": "user",
+            "content": "Write a Python function to parse JSON"
+        }]
+    )
+    
+    print(response.choices[0].message.content)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    import OpenAI from 'openai';
+    
+    const client = new OpenAI({
+      apiKey: 'sk-test-123',
+      baseURL: 'http://localhost:18080/v1'
+    });
+    
+    const response = await client.chat.completions.create({
+      model: 'auto',  // Intelligent routing
+      messages: [{
+        role: 'user',
+        content: 'Write a Python function to parse JSON'
+      }]
+    });
+    
+    console.log(response.choices[0].message.content);
+    ```
+  </Tab>
+</Tabs>
+
+## Intent Classification
+
+Cortex Router automatically detects request intent and routes to specialized models:
+
+| Intent | Description | Example Queries |
+|--------|-------------|----------------|
+| **coding** | Code generation, debugging | "Write a Go function", "Fix this TypeScript error" |
+| **reasoning** | Complex analysis, math | "Analyze these trends", "Solve this logic puzzle" |
+| **creative** | Writing, brainstorming | "Write a blog post", "Generate product names" |
+| **fast** | Quick factual questions | "What is the capital of France?", "Convert 100 USD to EUR" |
+| **secure** | Sensitive data handling | "Analyze this medical record", "Review financial data" |
+| **vision** | Image analysis | "Describe this image", "Extract text from screenshot" |
+
+## Dynamic Matrix
+
+Phase 2 introduces **automatic model discovery** that builds optimal routing tables based on available models:
+
+```yaml config.yaml
+auto-assign:
+  enabled: true
+  prefer-local: true       # Prefer local models for 'secure' slot
+  cost-optimization: true  # Favor cheaper models when quality is similar
+  overrides:
+    secure: "ollama:llama3.2"  # Manual override
+```
+
+### Capability Scoring
+
+Models are scored and assigned to capability slots:
+
+<Accordion title="Capability Slot Scoring Criteria">
+| Slot | Priority Factors |
+|------|------------------|
+| `coding` | Coding capability, context window size, code quality |
+| `reasoning` | Reasoning capability, accuracy, mathematical ability |
+| `creative` | General capability, context window, creativity score |
+| `fast` | Low latency, low cost, acceptable quality |
+| `secure` | Local models preferred, privacy features |
+| `vision` | Vision capability required, image understanding |
+</Accordion>
+
+## Pre-Built Skills
+
+Cortex Router includes 21 domain-specific skills that augment prompts with expert instructions:
+
+<Tabs>
+  <Tab title="Coding Skills">
+    - **api-designer**: REST API design, OpenAPI specifications
+    - **devops-expert**: CI/CD, infrastructure as code, monitoring
+    - **docker-expert**: Containerization, Dockerfile optimization
+    - **frontend-expert**: React, TailwindCSS, modern frontend
+    - **go-expert**: Go/Golang development for switchAILocal
+    - **k8s-expert**: Kubernetes, Helm, cloud native
+    - **mcp-builder**: Model Context Protocol server development
+    - **python-expert**: Python with async, type hints, pytest
+    - **typescript-expert**: TypeScript type system, advanced patterns
+    - **testing-expert**: Testing methodologies, TDD, Vitest
+  </Tab>
+  <Tab title="Creative Skills">
+    - **blog-optimizer**: Blog writing and SEO optimization
+    - **frontend-design**: Distinctive UI design, avoiding AI aesthetics
+    - **web-artifacts-builder**: React artifacts with shadcn/ui
+  </Tab>
+  <Tab title="Analysis Skills">
+    - **debugging-expert**: Systematic debugging and root cause analysis
+    - **security-expert**: Security auditing, vulnerability analysis
+    - **sql-expert**: SQL queries, optimization, database design
+    - **switchai-architect**: switchAILocal architecture expertise
+  </Tab>
+  <Tab title="Other Skills">
+    - **git-expert**: Git workflows, conventional commits
+    - **vision-expert**: Image analysis, UI-to-code conversion
+    - **webapp-testing**: Playwright web application testing
+    - **skill-creator**: Creating new custom skills
+  </Tab>
+</Tabs>
+
+## Semantic Cache
+
+The semantic cache stores routing decisions based on **embedding similarity**, enabling sub-millisecond routing for repeated queries:
+
+```yaml config.yaml
+semantic-cache:
+  enabled: true
+  similarity-threshold: 0.95  # Cache hit if similarity >= this
+  max-size: 10000             # Maximum cache entries
+```
+
+**Performance:** Cache hits return in < 1ms vs 200-500ms for LLM classification.
+
+## Quality-Based Cascading
+
+Cortex automatically escalates to stronger models when response quality is insufficient:
+
+```yaml config.yaml
+cascade:
+  enabled: true
+  quality-threshold: 0.70  # Cascade if quality score < this
+```
+
+### Cascade Flow
+
+```
+fast → standard → reasoning
+  ↓        ↓          ↓
+✗ Low   ✗ Low    ✓ Success
+```
+
+**Quality signals detected:**
+- Abrupt endings
+- Missing sections
+- Incomplete code blocks
+- Error patterns
+- Very short responses
+
+<Warning>
+Cascading increases cost and latency. Set `quality-threshold` carefully based on your requirements.
+</Warning>
+
+## Performance Tuning
+
+<Tabs>
+  <Tab title="Optimize for Speed">
+    ```yaml config.yaml
+    intelligence:
+      semantic-tier:
+        confidence-threshold: 0.80  # Lower = more semantic routing
+      semantic-cache:
+        enabled: true
+        max-size: 50000  # Larger cache
+      cascade:
+        enabled: false   # Disable for speed
+    ```
+  </Tab>
+  <Tab title="Optimize for Quality">
+    ```yaml config.yaml
+    intelligence:
+      semantic-tier:
+        confidence-threshold: 0.90  # Higher = more LLM verification
+      verification:
+        enabled: true
+      cascade:
+        enabled: true
+        quality-threshold: 0.80  # Higher = more cascades
+    ```
+  </Tab>
+  <Tab title="Optimize for Cost">
+    ```yaml config.yaml
+    intelligence:
+      auto-assign:
+        cost-optimization: true
+      cascade:
+        enabled: true  # Start cheap, escalate if needed
+      router-model: "ollama:qwen:0.5b"  # Free local model
+    ```
+  </Tab>
+</Tabs>
+
+## Management API
+
+Phase 2 adds management endpoints for monitoring and control:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v0/management/skills` | GET | List all loaded skills |
+| `/v0/management/feedback` | GET | Get routing feedback statistics |
+| `/v0/management/feedback` | POST | Submit explicit feedback |
+| `/v0/management/steering/reload` | POST | Reload configuration without restart |
+
+## Troubleshooting
+
+<Accordion title="Semantic tier not working">
+1. Check embedding model is downloaded:
+   ```bash
+   ls ~/.switchailocal/models/all-MiniLM-L6-v2/
+   ```
+
+2. Verify embedding is enabled:
+   ```yaml
+   embedding:
+     enabled: true
+   ```
+
+3. Check logs for initialization errors
+</Accordion>
+
+<Accordion title="Skills not matching">
+1. Verify skills directory exists:
+   ```bash
+   ls plugins/cortex-router/skills/
+   ```
+
+2. Lower the confidence threshold:
+   ```yaml
+   skill-matching:
+     confidence-threshold: 0.70  # Lower from 0.80
+   ```
+
+3. Check skill descriptions are descriptive enough
+</Accordion>
+
+<Accordion title="Cache not helping">
+1. Lower similarity threshold for more hits:
+   ```yaml
+   semantic-cache:
+     similarity-threshold: 0.90  # Lower from 0.95
+   ```
+
+2. Increase cache size:
+   ```yaml
+   semantic-cache:
+     max-size: 50000  # Increase from 10000
+   ```
+</Accordion>
+
+<Accordion title="Discovery not finding models">
+1. Check provider credentials are configured
+2. Verify network connectivity to providers
+3. Check discovery cache directory is writable:
+   ```bash
+   mkdir -p ~/.switchailocal/cache/discovery
+   chmod 0700 ~/.switchailocal/cache/discovery
+   ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Superbrain" icon="brain-circuit" href="/intelligent-systems/superbrain">
+    Add autonomous self-healing to your gateway
+  </Card>
+  <Card title="Memory System" icon="database" href="/intelligent-systems/memory">
+    Enable learning from routing history
+  </Card>
+</CardGroup>

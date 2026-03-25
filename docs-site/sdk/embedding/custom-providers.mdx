@@ -1,0 +1,440 @@
+---
+title: Custom Embedding Providers
+description: Integrate your own embedding models with switchAILocal
+icon: plug
+---
+
+## Overview
+
+While switchAILocal uses MiniLM by default, you can integrate custom embedding providers for specialized use cases like:
+
+- Domain-specific models (medical, legal, code)
+- Multilingual embeddings
+- Higher-dimensional vectors
+- Cloud embedding APIs
+
+## Embedding Engine Interface
+
+The semantic tier expects an implementation of the `EmbeddingEngine` interface:
+
+```go
+type EmbeddingEngine interface {
+    // Embed computes the embedding vector for a text
+    Embed(text string) ([]float32, error)
+
+    // CosineSimilarity computes similarity between two vectors
+    CosineSimilarity(a, b []float32) float64
+
+    // IsEnabled returns whether the engine is ready
+    IsEnabled() bool
+}
+```
+
+## Custom ONNX Model
+
+Replace the default MiniLM model with your own ONNX model.
+
+### Step 1: Export Your Model
+
+```python
+# Example: Export a SentenceTransformer model to ONNX
+from sentence_transformers import SentenceTransformer
+import torch
+
+# Load your model
+model = SentenceTransformer('your-custom-model')
+
+# Export to ONNX
+dummy_input = {
+    'input_ids': torch.randint(0, 1000, (1, 128)),
+    'attention_mask': torch.ones(1, 128, dtype=torch.long),
+    'token_type_ids': torch.zeros(1, 128, dtype=torch.long)
+}
+
+torch.onnx.export(
+    model,
+    (dummy_input,),
+    'custom_model.onnx',
+    input_names=['input_ids', 'attention_mask', 'token_type_ids'],
+    output_names=['last_hidden_state'],
+    dynamic_axes={
+        'input_ids': {0: 'batch', 1: 'sequence'},
+        'attention_mask': {0: 'batch', 1: 'sequence'},
+        'token_type_ids': {0: 'batch', 1: 'sequence'},
+        'last_hidden_state': {0: 'batch', 1: 'sequence'}
+    }
+)
+```
+
+### Step 2: Configure switchAILocal
+
+```yaml
+intelligence:
+  embedding:
+    enabled: true
+    model-path: "/path/to/custom_model.onnx"
+    vocab-path: "/path/to/custom_vocab.txt"
+```
+
+### Step 3: Verify Compatibility
+
+Ensure your model:
+- Accepts `input_ids`, `attention_mask`, `token_type_ids` as inputs
+- Outputs `last_hidden_state` tensor
+- Uses BERT-style tokenization
+
+## Custom Go Implementation
+
+Implement a completely custom embedding engine.
+
+### Step 1: Implement the Interface
+
+```go
+package customembed
+
+import (
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "io"
+    "math"
+    "net/http"
+    "sync"
+)
+
+// CloudEmbeddingEngine calls an external embedding API
+type CloudEmbeddingEngine struct {
+    apiURL    string
+    apiKey    string
+    dimension int
+    enabled   bool
+    mu        sync.RWMutex
+}
+
+func NewCloudEmbeddingEngine(apiURL, apiKey string, dimension int) *CloudEmbeddingEngine {
+    return &CloudEmbeddingEngine{
+        apiURL:    apiURL,
+        apiKey:    apiKey,
+        dimension: dimension,
+        enabled:   true,
+    }
+}
+
+func (e *CloudEmbeddingEngine) Embed(text string) ([]float32, error) {
+    e.mu.RLock()
+    defer e.mu.RUnlock()
+
+    if !e.enabled {
+        return nil, fmt.Errorf("engine not enabled")
+    }
+
+    // Prepare request
+    reqBody, _ := json.Marshal(map[string]interface{}{
+        "input": text,
+        "model": "text-embedding-ada-002",
+    })
+
+    req, err := http.NewRequest("POST", e.apiURL, bytes.NewReader(reqBody))
+    if err != nil {
+        return nil, err
+    }
+
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", "Bearer "+e.apiKey)
+
+    // Make request
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    // Parse response
+    body, _ := io.ReadAll(resp.Body)
+    var result struct {
+        Data []struct {
+            Embedding []float32 `json:"embedding"`
+        } `json:"data"`
+    }
+
+    if err := json.Unmarshal(body, &result); err != nil {
+        return nil, err
+    }
+
+    if len(result.Data) == 0 {
+        return nil, fmt.Errorf("no embedding returned")
+    }
+
+    return result.Data[0].Embedding, nil
+}
+
+func (e *CloudEmbeddingEngine) CosineSimilarity(a, b []float32) float64 {
+    if len(a) != len(b) || len(a) == 0 {
+        return 0.0
+    }
+
+    var dotProduct, normA, normB float64
+    for i := range a {
+        dotProduct += float64(a[i]) * float64(b[i])
+        normA += float64(a[i]) * float64(a[i])
+        normB += float64(b[i]) * float64(b[i])
+    }
+
+    normA = math.Sqrt(normA)
+    normB = math.Sqrt(normB)
+
+    if normA == 0 || normB == 0 {
+        return 0.0
+    }
+
+    return dotProduct / (normA * normB)
+}
+
+func (e *CloudEmbeddingEngine) IsEnabled() bool {
+    e.mu.RLock()
+    defer e.mu.RUnlock()
+    return e.enabled
+}
+```
+
+### Step 2: Integrate with Intelligence Service
+
+```go
+package main
+
+import (
+    "github.com/traylinx/switchAILocal/internal/intelligence"
+    "github.com/traylinx/switchAILocal/internal/intelligence/semantic"
+    "yourpackage/customembed"
+)
+
+func main() {
+    // Create custom embedding engine
+    embedEngine := customembed.NewCloudEmbeddingEngine(
+        "https://api.openai.com/v1/embeddings",
+        "your-api-key",
+        1536, // OpenAI ada-002 dimension
+    )
+
+    // Create semantic tier with custom engine
+    semanticTier := semantic.NewTier(embedEngine, 0.85)
+    if err := semanticTier.Initialize("intents.yaml"); err != nil {
+        log.Fatal(err)
+    }
+
+    // Use in intelligence service
+    // (Implementation depends on your integration approach)
+}
+```
+
+## Hybrid Approach
+
+Combine local and cloud embeddings for different use cases.
+
+```go
+package hybridembed
+
+import (
+    "github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+    "yourpackage/customembed"
+)
+
+type HybridEngine struct {
+    local  *embedding.Engine
+    cloud  *customembed.CloudEmbeddingEngine
+    useCloud bool
+}
+
+func (e *HybridEngine) Embed(text string) ([]float32, error) {
+    // Use local engine for short texts
+    if len(text) < 500 {
+        return e.local.Embed(text)
+    }
+    
+    // Use cloud for complex/long texts
+    if e.useCloud {
+        return e.cloud.Embed(text)
+    }
+    
+    return e.local.Embed(text)
+}
+
+func (e *HybridEngine) CosineSimilarity(a, b []float32) float64 {
+    // Delegate to local engine (same algorithm)
+    return e.local.CosineSimilarity(a, b)
+}
+
+func (e *HybridEngine) IsEnabled() bool {
+    return e.local.IsEnabled() || e.cloud.IsEnabled()
+}
+```
+
+## Caching Layer
+
+Add caching to reduce API calls:
+
+```go
+package cachedembed
+
+import (
+    "crypto/sha256"
+    "fmt"
+    "sync"
+)
+
+type CachedEmbeddingEngine struct {
+    engine EmbeddingEngine
+    cache  map[string][]float32
+    mu     sync.RWMutex
+    maxSize int
+}
+
+func NewCachedEmbeddingEngine(engine EmbeddingEngine, maxSize int) *CachedEmbeddingEngine {
+    return &CachedEmbeddingEngine{
+        engine:  engine,
+        cache:   make(map[string][]float32),
+        maxSize: maxSize,
+    }
+}
+
+func (e *CachedEmbeddingEngine) Embed(text string) ([]float32, error) {
+    // Generate cache key
+    hash := sha256.Sum256([]byte(text))
+    key := fmt.Sprintf("%x", hash)
+
+    // Check cache
+    e.mu.RLock()
+    if vec, ok := e.cache[key]; ok {
+        e.mu.RUnlock()
+        return vec, nil
+    }
+    e.mu.RUnlock()
+
+    // Generate embedding
+    vec, err := e.engine.Embed(text)
+    if err != nil {
+        return nil, err
+    }
+
+    // Store in cache
+    e.mu.Lock()
+    if len(e.cache) >= e.maxSize {
+        // Simple eviction: clear entire cache
+        e.cache = make(map[string][]float32)
+    }
+    e.cache[key] = vec
+    e.mu.Unlock()
+
+    return vec, nil
+}
+
+func (e *CachedEmbeddingEngine) CosineSimilarity(a, b []float32) float64 {
+    return e.engine.CosineSimilarity(a, b)
+}
+
+func (e *CachedEmbeddingEngine) IsEnabled() bool {
+    return e.engine.IsEnabled()
+}
+```
+
+## Popular Models
+
+### Multilingual Models
+
+| Model | Dimensions | Languages | Use Case |
+|-------|------------|-----------|----------|
+| `paraphrase-multilingual-MiniLM-L12-v2` | 384 | 50+ | General multilingual |
+| `LaBSE` | 768 | 109 | Cross-lingual search |
+| `multilingual-e5-large` | 1024 | 100+ | High-quality multilingual |
+
+### Domain-Specific Models
+
+| Model | Dimensions | Domain | Use Case |
+|-------|------------|--------|----------|
+| `BiomedNLP-PubMedBERT` | 768 | Medical | Biomedical text |
+| `legal-bert-base-uncased` | 768 | Legal | Legal documents |
+| `codebert-base` | 768 | Code | Source code similarity |
+
+### High-Dimensional Models
+
+| Model | Dimensions | Performance | Use Case |
+|-------|------------|-------------|----------|
+| `text-embedding-ada-002` (OpenAI) | 1536 | Cloud API | General-purpose |
+| `gte-large` | 1024 | Local ONNX | High accuracy |
+| `e5-large-v2` | 1024 | Local ONNX | Balanced quality |
+
+## Testing Your Custom Engine
+
+```go
+package customembed_test
+
+import (
+    "testing"
+    "yourpackage/customembed"
+)
+
+func TestCustomEngine(t *testing.T) {
+    engine := customembed.NewCloudEmbeddingEngine(
+        "https://api.openai.com/v1/embeddings",
+        "test-key",
+        1536,
+    )
+
+    // Test embedding generation
+    vec, err := engine.Embed("test query")
+    if err != nil {
+        t.Fatalf("Failed to generate embedding: %v", err)
+    }
+
+    if len(vec) != 1536 {
+        t.Errorf("Expected 1536 dimensions, got %d", len(vec))
+    }
+
+    // Test similarity computation
+    vec1, _ := engine.Embed("machine learning")
+    vec2, _ := engine.Embed("artificial intelligence")
+    vec3, _ := engine.Embed("baking recipes")
+
+    sim1 := engine.CosineSimilarity(vec1, vec2)
+    sim2 := engine.CosineSimilarity(vec1, vec3)
+
+    if sim1 <= sim2 {
+        t.Errorf("Expected higher similarity for related texts")
+    }
+}
+```
+
+## Best Practices
+
+<Tip>
+**Match Dimensions** - Ensure all embeddings have the same dimensionality for valid comparisons.
+</Tip>
+
+<Tip>
+**Normalize Vectors** - Apply L2 normalization for optimal cosine similarity computation.
+</Tip>
+
+<Warning>
+**API Rate Limits** - Implement caching and rate limiting when using cloud embedding APIs.
+</Warning>
+
+<Warning>
+**Performance** - Local models (5-10ms) are significantly faster than API calls (50-200ms).
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="book" href="/sdk/embedding/overview">
+    Learn embedding fundamentals
+  </Card>
+  <Card title="Usage Guide" icon="code" href="/sdk/embedding/usage">
+    Use the default embedding SDK
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdk/go">
+    Embed switchAILocal in Go apps
+  </Card>
+  <Card title="Intelligent Routing" icon="brain" href="/features/intelligent-routing">
+    Configure semantic routing
+  </Card>
+</CardGroup>

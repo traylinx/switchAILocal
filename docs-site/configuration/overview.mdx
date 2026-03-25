@@ -1,0 +1,145 @@
+---
+title: 'Configuration Overview'
+description: 'Complete guide to configuring switchAILocal'
+icon: 'sliders'
+---
+
+## Introduction
+
+switchAILocal uses a YAML configuration file (`config.yaml`) to control all aspects of server behavior, provider integration, routing, and security. The configuration system is designed to be flexible, supporting everything from simple local setups to complex enterprise deployments.
+
+## Configuration File Location
+
+By default, switchAILocal looks for `config.yaml` in the current working directory. You can specify a custom location:
+
+```bash
+switchailocal --config /path/to/config.yaml
+```
+
+## Getting Started
+
+switchAILocal includes a comprehensive example configuration file that documents all available options:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Edit `config.yaml` to customize settings for your environment.
+
+<Note>
+  The example configuration includes inline comments explaining each setting. Use it as a reference when building your own configuration.
+</Note>
+
+## Configuration Structure
+
+The configuration file is organized into logical sections:
+
+### Core Sections
+
+<CardGroup cols={2}>
+  <Card title="Server Settings" icon="server" href="/configuration/server">
+    Host, port, TLS, authentication, and core server behavior
+  </Card>
+  <Card title="Provider Configuration" icon="plug" href="/configuration/providers">
+    API keys and settings for cloud and local AI providers
+  </Card>
+  <Card title="Security & Access" icon="shield" href="/configuration/security">
+    API keys, management access, authentication, and TLS
+  </Card>
+  <Card title="Intelligent Routing" icon="brain" href="/features/intelligent-routing">
+    Cortex router with semantic matching and auto-discovery
+  </Card>
+</CardGroup>
+
+## YAML Basics
+
+switchAILocal configuration uses standard YAML syntax:
+
+```yaml
+# Comments start with hash
+host: ""           # Empty string binds all interfaces
+port: 18080         # Integer value
+debug: false        # Boolean value
+
+# Nested objects
+tls:
+  enable: false
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+
+# Lists/Arrays
+api-keys:
+  - "sk-test-123"
+  - "sk-prod-456"
+
+# Provider with models
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    prefix: "google"
+    models:
+      - name: "gemini-2.0-flash-exp"
+        alias: "flash"
+```
+
+## Environment-Specific Overrides
+
+While switchAILocal doesn't directly support environment variable overrides, you can:
+
+1. **Use multiple config files** for different environments:
+   ```bash
+   switchailocal --config config.production.yaml
+   ```
+
+2. **Template with environment variables** (using external tools):
+   ```bash
+   envsubst < config.template.yaml > config.yaml
+   switchailocal
+   ```
+
+## Hot Reload
+
+switchAILocal automatically detects configuration changes and reloads most settings without requiring a restart:
+
+<Accordion title="Hot-reloadable settings">
+  - Provider API keys and credentials
+  - Model aliases and mappings
+  - Routing strategy changes
+  - Intelligence matrix updates
+  - Proxy settings
+  - OAuth excluded models
+</Accordion>
+
+<Warning>
+  Settings that require a restart:
+  - Server host and port
+  - TLS certificate paths (when TLS is enabled)
+  - Authentication directory
+  - Management secret key
+</Warning>
+
+## Validation
+
+switchAILocal validates configuration on startup and during hot reload:
+
+- **Missing required fields**: Logged as warnings, defaults applied
+- **Invalid values**: Configuration loading fails with detailed error
+- **Deprecated settings**: Automatically migrated to new format
+
+## Configuration Persistence
+
+When certain settings are updated (like management secret key hashing), switchAILocal automatically persists the changes back to `config.yaml` while preserving:
+
+- Comments and formatting
+- Key ordering
+- YAML structure
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Configuration" icon="server" href="/configuration/server">
+    Configure host, port, TLS, logging, and core server settings
+  </Card>
+  <Card title="Provider Setup" icon="plug" href="/configuration/providers">
+    Add API keys and configure cloud and local AI providers
+  </Card>
+</CardGroup>

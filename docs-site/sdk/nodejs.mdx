@@ -1,0 +1,353 @@
+---
+title: Node.js SDK
+description: Use switchAILocal with the OpenAI Node.js SDK for seamless AI provider access
+icon: node-js
+---
+
+## Overview
+
+switchAILocal is fully compatible with the OpenAI Node.js SDK. Point the SDK to your local switchAILocal instance to access all configured providers through one unified API.
+
+## Installation
+
+Install the official OpenAI Node.js SDK:
+
+```bash
+npm install openai
+# or
+yarn add openai
+# or
+pnpm add openai
+```
+
+## Quick Start
+
+<CodeGroup>
+
+```javascript Basic Usage
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123', // Must match a key in config.yaml
+});
+
+async function main() {
+  // Auto-routing: switchAILocal picks the best available provider
+  const completion = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages: [
+      { role: 'user', content: 'What is the meaning of life?' }
+    ],
+  });
+
+  console.log(completion.choices[0].message.content);
+}
+
+main();
+```
+
+```javascript Streaming
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function main() {
+  const stream = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Tell me a story' }],
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) {
+      process.stdout.write(content);
+    }
+  }
+}
+
+main();
+```
+
+```javascript Provider Selection
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function main() {
+  // Force Ollama provider
+  const ollamaResponse = await client.chat.completions.create({
+    model: 'ollama:llama3.2',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+
+  // Force Gemini CLI
+  const geminiResponse = await client.chat.completions.create({
+    model: 'geminicli:gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+
+  // Use switchAI cloud provider
+  const switchaiResponse = await client.chat.completions.create({
+    model: 'switchai:switchai-fast',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+}
+
+main();
+```
+
+</CodeGroup>
+
+## Advanced Features
+
+### Multi-turn Conversations
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function conversation() {
+  const messages = [
+    { role: 'system', content: 'You are a helpful coding assistant.' },
+    { role: 'user', content: 'Write a JavaScript function to calculate factorial' }
+  ];
+
+  const response = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages,
+  });
+
+  // Add assistant response to conversation
+  messages.push({
+    role: 'assistant',
+    content: response.choices[0].message.content
+  });
+
+  // Continue conversation
+  messages.push({
+    role: 'user',
+    content: 'Now add TypeScript types'
+  });
+
+  const followUp = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages,
+  });
+
+  console.log(followUp.choices[0].message.content);
+}
+
+conversation();
+```
+
+### Temperature and Parameters
+
+```javascript
+const completion = await client.chat.completions.create({
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Write a creative story' }],
+  temperature: 0.9,      // Higher = more creative
+  max_tokens: 1000,      // Limit response length
+  top_p: 0.95,           // Nucleus sampling
+});
+```
+
+### CLI Attachments (Files & Folders)
+
+Pass local files and folders to CLI providers:
+
+```javascript
+const completion = await client.chat.completions.create({
+  model: 'geminicli:gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Explain the logic in this file' }],
+  extra_body: {
+    cli: {
+      attachments: [
+        { type: 'file', path: '/path/to/script.js' },
+        { type: 'folder', path: './src/internal' }
+      ]
+    }
+  }
+});
+```
+
+### CLI Flags (Auto-approve, Sandbox)
+
+```javascript
+const completion = await client.chat.completions.create({
+  model: 'vibe:mistral-large',
+  messages: [{ role: 'user', content: 'Update the version in package.json' }],
+  extra_body: {
+    cli: {
+      flags: {
+        auto_approve: true,  // Auto-approve actions
+        sandbox: true        // Run in sandbox mode
+      }
+    }
+  }
+});
+```
+
+### Session Management
+
+```javascript
+const completion = await client.chat.completions.create({
+  model: 'geminicli:gemini-2.5-pro',
+  messages: [{ role: 'user', content: 'Continue our previous discussion' }],
+  extra_body: {
+    cli: {
+      session_id: 'latest'  // Or use a custom session name
+    }
+  }
+});
+```
+
+## List Available Models
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function listModels() {
+  const models = await client.models.list();
+  
+  for (const model of models.data) {
+    console.log(`${model.id} (${model.owned_by})`);
+  }
+}
+
+listModels();
+```
+
+## Error Handling
+
+```javascript
+import OpenAI from 'openai';
+import { APIConnectionError, APIError } from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function handleErrors() {
+  try {
+    const completion = await client.chat.completions.create({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', content: 'Hello!' }],
+    });
+    console.log(completion.choices[0].message.content);
+  } catch (error) {
+    if (error instanceof APIConnectionError) {
+      console.error(`Connection error: ${error.message}`);
+    } else if (error instanceof APIError) {
+      console.error(`API error: ${error.status} - ${error.message}`);
+    } else {
+      console.error(`Unexpected error: ${error}`);
+    }
+  }
+}
+
+handleErrors();
+```
+
+## TypeScript Support
+
+The OpenAI SDK includes built-in TypeScript types:
+
+```typescript
+import OpenAI from 'openai';
+import type { ChatCompletion, ChatCompletionMessageParam } from 'openai/resources/chat';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+async function typedExample(): Promise<string> {
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'user', content: 'What is TypeScript?' }
+  ];
+
+  const completion: ChatCompletion = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages,
+  });
+
+  return completion.choices[0].message.content || '';
+}
+```
+
+## Provider Prefixes
+
+| Prefix | Provider | Example |
+|--------|----------|----------|
+| `geminicli:` | Google Gemini CLI | `geminicli:gemini-2.5-pro` |
+| `claudecli:` | Anthropic Claude CLI | `claudecli:claude-sonnet-4` |
+| `ollama:` | Ollama (local) | `ollama:llama3.2` |
+| `lmstudio:` | LM Studio (local) | `lmstudio:mistral-7b` |
+| `switchai:` | Traylinx switchAI | `switchai:switchai-fast` |
+| `gemini:` | Google AI Studio | `gemini:gemini-2.5-pro` |
+| `claude:` | Anthropic API | `claude:claude-3-5-sonnet` |
+| `openai:` | OpenAI API | `openai:gpt-4` |
+
+<Tip>
+Omit the prefix to let switchAILocal automatically route to the best available provider.
+</Tip>
+
+## Environment Variables
+
+```javascript
+import OpenAI from 'openai';
+
+// Set environment variables before importing
+process.env.OPENAI_BASE_URL = 'http://localhost:18080/v1';
+process.env.OPENAI_API_KEY = 'sk-test-123';
+
+// Client automatically uses environment variables
+const client = new OpenAI();
+
+async function main() {
+  const completion = await client.chat.completions.create({
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+  
+  console.log(completion.choices[0].message.content);
+}
+
+main();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python SDK" icon="python" href="/sdk/python">
+    Use switchAILocal with Python
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdk/go">
+    Embed switchAILocal in Go applications
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/basic-usage">
+    See more usage examples
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Complete API documentation
+  </Card>
+</CardGroup>

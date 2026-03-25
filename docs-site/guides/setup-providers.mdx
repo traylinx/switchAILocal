@@ -1,0 +1,338 @@
+---
+title: Provider Setup Guide
+description: Configure AI providers to work with switchAILocal
+---
+
+## Overview
+
+switchAILocal supports multiple AI providers through three authentication methods. Choose the method that works best for your use case.
+
+## Authentication Methods
+
+<Note>
+  Most users should start with **CLI Wrappers** (Option A) for the fastest setup with zero configuration.
+</Note>
+
+### Option A: CLI Wrappers (Recommended)
+
+If you already have `gemini`, `claude`, `codex`, or `vibe` CLI tools installed and authenticated, switchAILocal uses them automatically.
+
+<Steps>
+  <Step title="Verify CLI Installation">
+    Check that your CLI tools are installed and working:
+    
+    ```bash
+    gemini --version
+    claude --version
+    codex --version
+    ```
+  </Step>
+  
+  <Step title="Use CLI Prefix">
+    Reference the CLI provider using the `cli` suffix in your model name:
+    
+    <CodeGroup>
+    ```bash cURL
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{
+        "model": "geminicli:gemini-2.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+    
+    ```python Python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url="http://localhost:18080/v1",
+        api_key="sk-test-123"
+    )
+
+    response = client.chat.completions.create(
+        model="geminicli:gemini-2.5-pro",
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    ```
+    
+    ```javascript JavaScript
+    import OpenAI from 'openai';
+
+    const client = new OpenAI({
+      baseURL: 'http://localhost:18080/v1',
+      apiKey: 'sk-test-123'
+    });
+
+    const response = await client.chat.completions.create({
+      model: 'geminicli:gemini-2.5-pro',
+      messages: [{ role: 'user', content: 'Hello!' }]
+    });
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Supported Providers">
+    Available CLI providers:
+    
+    | Provider | CLI Tool | Prefix | Example Model |
+    |----------|----------|--------|---------------|
+    | Google Gemini | `gemini` | `geminicli:` | `geminicli:gemini-2.5-pro` |
+    | Anthropic Claude | `claude` | `claudecli:` | `claudecli:claude-sonnet-4` |
+    | OpenAI Codex | `codex` | `codex:` | `codex:gpt-4` |
+    | Mistral Vibe | `vibe` | `vibe:` | `vibe:mistral-large` |
+    | OpenCode | `opencode` | `opencode:` | `opencode:build` |
+  </Step>
+</Steps>
+
+---
+
+### Option B: API Keys (Standard)
+
+For cloud API providers, add API keys directly to your `config.yaml`.
+
+<Steps>
+  <Step title="Copy Example Config">
+    ```bash
+    cp config.example.yaml config.yaml
+    ```
+  </Step>
+  
+  <Step title="Add Provider Credentials">
+    Edit `config.yaml` and add your API keys:
+    
+    <CodeGroup>
+    ```yaml Google Gemini
+    gemini-api-key:
+      - api-key: "AIzaSy..."
+        prefix: "google"
+        base-url: "https://generativelanguage.googleapis.com"
+    ```
+    
+    ```yaml Anthropic Claude
+    claude-api-key:
+      - api-key: "sk-ant-..."
+        models:
+          - name: "claude-3-5-sonnet-20241022"
+            alias: "sonnet"
+    ```
+    
+    ```yaml OpenAI
+    codex-api-key:
+      - api-key: "sk-..."
+        base-url: "https://api.openai.com/v1"
+    ```
+    
+    ```yaml Traylinx SwitchAI
+    switchai-api-key:
+      - api-key: "sk-lf-..."
+        base-url: "https://switchai.traylinx.com/v1"
+        models:
+          - name: "openai/gpt-oss-120b"
+            alias: "switchai-fast"
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Use Without CLI Suffix">
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{"model": "gemini:gemini-2.5-pro", "messages": [...]}'
+    ```
+  </Step>
+</Steps>
+
+---
+
+### Option C: OAuth Login (Advanced)
+
+For users who want switchAILocal to manage OAuth tokens directly without CLI tools.
+
+<Note>
+  This method requires `GEMINI_CLIENT_ID` and `GEMINI_CLIENT_SECRET` environment variables. Most users should use **Option A** or **Option B** instead.
+</Note>
+
+<Steps>
+  <Step title="Set Environment Variables">
+    ```bash
+    export GEMINI_CLIENT_ID="your-client-id"
+    export GEMINI_CLIENT_SECRET="your-client-secret"
+    ```
+  </Step>
+  
+  <Step title="Run OAuth Login">
+    <CodeGroup>
+    ```bash Google Gemini
+    ./switchAILocal --login
+    ```
+    
+    ```bash Anthropic Claude
+    ./switchAILocal --claude-login
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Complete Browser Authentication">
+    A browser window will open for you to authorize switchAILocal. After approval, tokens are stored in `~/.switchailocal/`.
+  </Step>
+</Steps>
+
+---
+
+## Local Model Providers
+
+### Ollama
+
+Connect to locally running Ollama models.
+
+<Steps>
+  <Step title="Enable Ollama in Config">
+    ```yaml config.yaml
+    ollama:
+      enabled: true
+      base-url: "http://localhost:11434"
+      auto-discover: true  # Automatically fetch available models
+    ```
+  </Step>
+  
+  <Step title="Start Ollama">
+    ```bash
+    ollama serve
+    ```
+  </Step>
+  
+  <Step title="Pull Models">
+    ```bash
+    ollama pull llama3.2
+    ollama pull qwen:0.5b
+    ```
+  </Step>
+  
+  <Step title="Use Ollama Models">
+    ```bash
+    curl http://localhost:18080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer sk-test-123" \
+      -d '{"model": "ollama:llama3.2", "messages": [...]}'
+    ```
+  </Step>
+</Steps>
+
+### LM Studio
+
+Connect to LM Studio for local model hosting.
+
+```yaml config.yaml
+lmstudio:
+  enabled: true
+  base-url: "http://localhost:1234/v1"
+  auto-discover: true
+```
+
+### OpenCode
+
+Integrate with OpenCode for specialized development tasks.
+
+```yaml config.yaml
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"
+  default-agent: "build"
+```
+
+---
+
+## OpenAI-Compatible Providers
+
+Connect any OpenAI-compatible API endpoint.
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+  
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+```
+
+---
+
+## Load Balancing
+
+Configure multiple credentials per provider for automatic load balancing.
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy...account1"
+  - api-key: "AIzaSy...account2"
+  - api-key: "AIzaSy...account3"
+
+routing:
+  strategy: "round-robin"  # or "fill-first"
+```
+
+<Accordion title="Routing Strategies">
+  - **round-robin**: Distributes requests evenly across all credentials
+  - **fill-first**: Uses the first credential until quota is exhausted, then moves to the next
+</Accordion>
+
+---
+
+## Model Aliasing
+
+Create friendly aliases for frequently used models.
+
+```yaml config.yaml
+switchai-api-key:
+  - api-key: "sk-lf-..."
+    models:
+      - name: "openai/gpt-oss-120b"
+        alias: "fast"
+      - name: "deepseek-reasoner"
+        alias: "reasoner"
+```
+
+Use aliases in requests:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -d '{"model": "fast", "messages": [...]}'
+```
+
+---
+
+## Verification
+
+List all available models to verify provider setup:
+
+```bash
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+Check provider health status:
+
+```bash
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: your-secret-key"
+```
+
+---
+
+## Next Steps
+
+<Card title="Docker Deployment" icon="docker" href="/guides/docker-deployment">
+  Deploy switchAILocal with Docker for production use
+</Card>
+
+<Card title="Management Dashboard" icon="gauge" href="/guides/guides/management-dashboard">
+  Use the web UI to configure providers visually
+</Card>

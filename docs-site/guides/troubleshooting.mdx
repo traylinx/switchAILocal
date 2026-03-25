@@ -1,0 +1,805 @@
+---
+title: Troubleshooting Guide
+description: Solutions for common issues and error messages
+---
+
+## Quick Diagnostics
+
+<Steps>
+  <Step title="Check Server Status">
+    ```bash
+    curl http://localhost:18080/health
+    ```
+    
+    Expected response:
+    ```json
+    {"status": "ok"}
+    ```
+  </Step>
+  
+  <Step title="Verify Provider Health">
+    ```bash
+    curl http://localhost:18080/v0/management/heartbeat/status \
+      -H "X-Management-Key: your-secret-key"
+    ```
+  </Step>
+  
+  <Step title="List Available Models">
+    ```bash
+    curl http://localhost:18080/v1/models \
+      -H "Authorization: Bearer sk-test-123"
+    ```
+  </Step>
+  
+  <Step title="Check Logs">
+    ```bash
+    # Local deployment
+    tail -f logs/switchailocal.log
+    
+    # Docker deployment
+    docker-compose logs -f switchailocal
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Connection Issues
+
+### Server Won't Start
+
+<Accordion title="Error: Port Already in Use">
+  **Symptom**: `bind: address already in use` or port 18080 conflict.
+  
+  **Cause**: Another process is using port 18080.
+  
+  **Solution**:
+  
+  1. Find the process using the port:
+     ```bash
+     # Linux/Mac
+     lsof -i :18080
+     
+     # Windows
+     netstat -ano | findstr :18080
+     ```
+  
+  2. Kill the conflicting process or change switchAILocal's port:
+     ```yaml config.yaml
+     port: 18081  # Use a different port
+     ```
+  
+  3. Restart switchAILocal:
+     ```bash
+     ./switchAILocal
+     ```
+</Accordion>
+
+<Accordion title="Error: Config File Not Found">
+  **Symptom**: `config.yaml not found` or configuration errors.
+  
+  **Cause**: Missing or incorrectly named configuration file.
+  
+  **Solution**:
+  
+  ```bash
+  # Copy the example config
+  cp config.example.yaml config.yaml
+  
+  # Edit with your settings
+  nano config.yaml
+  ```
+</Accordion>
+
+<Accordion title="Error: Permission Denied on Auth Directory">
+  **Symptom**: `failed to create auth directory` or permission errors.
+  
+  **Cause**: Insufficient permissions for `~/.switchailocal/`.
+  
+  **Solution**:
+  
+  ```bash
+  # Fix permissions
+  mkdir -p ~/.switchailocal
+  chmod 700 ~/.switchailocal
+  
+  # Docker: Fix ownership
+  sudo chown -R 1000:1000 ~/.switchailocal
+  ```
+</Accordion>
+
+### Connection Refused
+
+<Accordion title="Cannot Connect to Localhost">
+  **Symptom**: `connection refused` when making requests.
+  
+  **Checklist**:
+  
+  - [ ] Is the server running? Check with `ps aux | grep switchAILocal`
+  - [ ] Is it listening on the correct port? Verify with `lsof -i :18080`
+  - [ ] Are you using the correct host? Try `127.0.0.1` instead of `localhost`
+  - [ ] Check firewall rules: `sudo ufw status`
+  
+  **Solution**:
+  
+  ```bash
+  # Verify server is running
+  ./ail.sh status
+  
+  # Restart if needed
+  ./ail.sh restart
+  ```
+</Accordion>
+
+<Accordion title="Cannot Connect to Ollama">
+  **Symptom**: `failed to connect to Ollama` or timeout errors.
+  
+  **Solution**:
+  
+  1. Verify Ollama is running:
+     ```bash
+     curl http://localhost:11434/api/tags
+     ```
+  
+  2. Check config.yaml:
+     ```yaml
+     ollama:
+       enabled: true
+       base-url: "http://localhost:11434"
+     ```
+  
+  3. For Docker deployments, use host gateway:
+     ```yaml
+     ollama:
+       base-url: "http://host.docker.internal:11434"
+     ```
+</Accordion>
+
+---
+
+## Authentication Errors
+
+### OAuth Failures
+
+<Accordion title="Error: OAuth Callback Timeout">
+  **Symptom**: `timeout waiting for OAuth callback`.
+  
+  **Cause**: Browser didn't complete the OAuth flow within the timeout period.
+  
+  **Solution**:
+  
+  1. Ensure port 3000 is available for the callback server
+  2. Try the login command again
+  3. Complete the browser authorization quickly
+  4. Check firewall isn't blocking localhost:3000
+  
+  ```bash
+  # Verify port 3000 is free
+  lsof -i :3000
+  
+  # Retry OAuth login
+  ./switchAILocal --login
+  ```
+</Accordion>
+
+<Accordion title="Error: Invalid State Parameter">
+  **Symptom**: `OAuth state parameter is invalid`.
+  
+  **Cause**: CSRF token mismatch or expired session.
+  
+  **Solution**:
+  
+  1. Clear OAuth state files:
+     ```bash
+     rm -f ~/.switchailocal/oauth_*
+     ```
+  
+  2. Retry the login:
+     ```bash
+     ./switchAILocal --login
+     ```
+</Accordion>
+
+<Accordion title="Error: Client ID/Secret Not Set">
+  **Symptom**: `GEMINI_CLIENT_ID not found` or missing credentials.
+  
+  **Cause**: OAuth environment variables not configured.
+  
+  **Solution**:
+  
+  **Option 1**: Use CLI wrappers instead (recommended):
+  ```bash
+  # No OAuth setup needed
+  # Just use: geminicli:gemini-2.5-pro
+  ```
+  
+  **Option 2**: Set environment variables:
+  ```bash
+  export GEMINI_CLIENT_ID="your-client-id"
+  export GEMINI_CLIENT_SECRET="your-client-secret"
+  ./switchAILocal --login
+  ```
+</Accordion>
+
+### API Key Errors
+
+<Accordion title="Error: Invalid API Key">
+  **Symptom**: `401 Unauthorized` or `invalid api key`.
+  
+  **Cause**: Incorrect or missing API key in requests.
+  
+  **Solution**:
+  
+  1. Verify the API key matches `config.yaml`:
+     ```yaml
+     api-keys:
+       - "sk-test-123"
+     ```
+  
+  2. Include the key in your request:
+     ```bash
+     curl http://localhost:18080/v1/chat/completions \
+       -H "Authorization: Bearer sk-test-123" \
+       ...
+     ```
+  
+  3. For provider API keys, check they're correctly formatted:
+     ```yaml
+     gemini-api-key:
+       - api-key: "AIzaSy..."  # Must start with AIzaSy
+     
+     claude-api-key:
+       - api-key: "sk-ant-..."  # Must start with sk-ant-
+     ```
+</Accordion>
+
+<Accordion title="Error: Authentication Required">
+  **Symptom**: Requests fail with authentication errors.
+  
+  **Solution**:
+  
+  Check which authentication method is configured:
+  
+  <CodeGroup>
+  ```yaml CLI Wrapper (No Auth Needed)
+  # No config needed - uses CLI tool's auth
+  # Just use: geminicli:gemini-2.5-pro
+  ```
+  
+  ```yaml API Key
+  gemini-api-key:
+    - api-key: "AIzaSy..."
+  ```
+  
+  ```bash OAuth
+  ./switchAILocal --login
+  ```
+  </CodeGroup>
+</Accordion>
+
+---
+
+## Provider Errors
+
+### Model Not Found
+
+<Accordion title="Error: Model Not Available">
+  **Symptom**: `model not found` or `no matching provider`.
+  
+  **Cause**: Model not configured or provider prefix incorrect.
+  
+  **Solution**:
+  
+  1. List available models:
+     ```bash
+     curl http://localhost:18080/v1/models \
+       -H "Authorization: Bearer sk-test-123"
+     ```
+  
+  2. Use correct provider prefix:
+     ```bash
+     # CLI providers
+     geminicli:gemini-2.5-pro
+     claudecli:claude-sonnet-4
+     ollama:llama3.2
+     
+     # API providers
+     gemini:gemini-2.5-pro
+     claude:claude-3-5-sonnet-20241022
+     ```
+  
+  3. Trigger model discovery:
+     ```bash
+     curl -X POST http://localhost:18080/v0/management/discover_models \
+       -H "X-Management-Key: your-secret-key"
+     ```
+</Accordion>
+
+<Accordion title="Error: CLI Command Not Found">
+  **Symptom**: `gemini: command not found` or CLI tool errors.
+  
+  **Cause**: CLI tool not installed or not in PATH.
+  
+  **Solution**:
+  
+  1. Install the CLI tool:
+     ```bash
+     # Google Gemini CLI
+     npm install -g @google/gemini-cli
+     
+     # Anthropic Claude CLI
+     npm install -g @anthropic-ai/claude-cli
+     
+     # OpenAI Codex CLI
+     npm install -g @openai/codex-cli
+     ```
+  
+  2. Verify installation:
+     ```bash
+     which gemini
+     gemini --version
+     ```
+  
+  3. Authenticate the CLI:
+     ```bash
+     gemini auth login
+     ```
+</Accordion>
+
+### Rate Limiting
+
+<Accordion title="Error: Rate Limit Exceeded">
+  **Symptom**: `429 Too Many Requests` or rate limit errors.
+  
+  **Cause**: Exceeded provider API rate limits.
+  
+  **Solution**:
+  
+  1. Configure multiple credentials for load balancing:
+     ```yaml config.yaml
+     gemini-api-key:
+       - api-key: "AIzaSy...account1"
+       - api-key: "AIzaSy...account2"
+       - api-key: "AIzaSy...account3"
+     
+     routing:
+       strategy: "round-robin"
+     ```
+  
+  2. Enable automatic quota rotation:
+     ```yaml config.yaml
+     quota-exceeded:
+       switch-project: true
+       switch-preview-model: true
+     ```
+  
+  3. Implement retry logic:
+     ```yaml config.yaml
+     request-retry: 3
+     ```
+</Accordion>
+
+<Accordion title="Error: Quota Exceeded">
+  **Symptom**: `quota exceeded` or billing errors.
+  
+  **Cause**: API quota limits reached.
+  
+  **Solution**:
+  
+  1. Check quota status:
+     ```bash
+     curl http://localhost:18080/v0/management/quota \
+       -H "X-Management-Key: your-secret-key"
+     ```
+  
+  2. Add fallback providers:
+     ```yaml config.yaml
+     intelligence:
+       enabled: true
+       router-fallback: "ollama:llama3.2"  # Free local fallback
+     ```
+  
+  3. Monitor usage:
+     ```yaml config.yaml
+     usage-statistics-enabled: true
+     ```
+</Accordion>
+
+---
+
+## Request Failures
+
+### Timeout Errors
+
+<Accordion title="Error: Request Timeout">
+  **Symptom**: Requests timeout before completion.
+  
+  **Cause**: Slow provider response or network issues.
+  
+  **Solution**:
+  
+  1. Increase client timeout:
+     ```python
+     from openai import OpenAI
+     
+     client = OpenAI(
+         base_url="http://localhost:18080/v1",
+         api_key="sk-test-123",
+         timeout=120.0  # 2 minutes
+     )
+     ```
+  
+  2. Check provider health:
+     ```bash
+     curl http://localhost:18080/v0/management/heartbeat/status \
+       -H "X-Management-Key: your-secret-key"
+     ```
+  
+  3. Use faster models:
+     ```yaml config.yaml
+     intelligence:
+       matrix:
+         fast: "gemini-2.0-flash"  # Faster model
+     ```
+</Accordion>
+
+<Accordion title="Error: Streaming Connection Dropped">
+  **Symptom**: Streaming responses stop mid-completion.
+  
+  **Cause**: SSE connection lost or provider timeout.
+  
+  **Solution**:
+  
+  1. Enable keepalive:
+     ```yaml config.yaml
+     streaming:
+       keepalive-seconds: 15
+       bootstrap-retries: 2
+     ```
+  
+  2. Check network stability
+  
+  3. Reduce request complexity (shorter prompts, smaller context)
+</Accordion>
+
+### Response Errors
+
+<Accordion title="Error: Malformed JSON Response">
+  **Symptom**: JSON parsing errors or incomplete responses.
+  
+  **Cause**: Provider returned invalid JSON or protocol mismatch.
+  
+  **Solution**:
+  
+  1. Enable debug logging:
+     ```yaml config.yaml
+     debug: true
+     logging-to-file: true
+     ```
+  
+  2. Check logs for raw responses:
+     ```bash
+     tail -f logs/switchailocal.log | grep "response:"
+     ```
+  
+  3. Verify model supports the requested format
+</Accordion>
+
+<Accordion title="Error: Empty or Null Response">
+  **Symptom**: API returns empty content or null values.
+  
+  **Cause**: Provider error, rate limit, or safety filter.
+  
+  **Solution**:
+  
+  1. Check provider status:
+     ```bash
+     curl http://localhost:18080/v0/management/heartbeat/status \
+       -H "X-Management-Key: your-secret-key"
+     ```
+  
+  2. Review the request for safety issues (if using content filters)
+  
+  3. Try a different provider:
+     ```bash
+     # Original request
+     {"model": "gemini:gemini-2.5-pro", ...}
+     
+     # Try alternative
+     {"model": "claude:claude-3-5-sonnet-20241022", ...}
+     ```
+</Accordion>
+
+---
+
+## Cortex Router Issues
+
+### Intelligence System
+
+<Accordion title="Error: Router Model Not Available">
+  **Symptom**: `router model failed` or classification errors.
+  
+  **Cause**: Configured router model is not available.
+  
+  **Solution**:
+  
+  1. Verify router model exists:
+     ```bash
+     curl http://localhost:18080/v1/models | grep "router-model"
+     ```
+  
+  2. Update router model in config:
+     ```yaml config.yaml
+     intelligence:
+       router-model: "ollama:qwen:0.5b"
+       router-fallback: "gemini:gemini-2.0-flash"
+     ```
+  
+  3. Use a local model for faster classification:
+     ```bash
+     ollama pull qwen:0.5b
+     ```
+</Accordion>
+
+<Accordion title="Error: Semantic Tier Failed">
+  **Symptom**: Embedding errors or semantic matching failures.
+  
+  **Cause**: Embedding model not loaded or ONNX runtime missing.
+  
+  **Solution**:
+  
+  1. Download embedding model:
+     ```bash
+     ./scripts/download-embedding-model.sh
+     ```
+  
+  2. Disable semantic tier if not needed:
+     ```yaml config.yaml
+     intelligence:
+       embedding:
+         enabled: false
+       semantic-tier:
+         enabled: false
+     ```
+  
+  3. Check ONNX runtime installation:
+     ```bash
+     # Linux
+     sudo apt-get install libonnxruntime
+     
+     # macOS
+     brew install onnxruntime
+     ```
+</Accordion>
+
+<Accordion title="Skills Not Loading">
+  **Symptom**: Skills directory errors or skill matching failures.
+  
+  **Cause**: Skills directory not found or misconfigured.
+  
+  **Solution**:
+  
+  1. Verify skills directory exists:
+     ```bash
+     ls -la plugins/cortex-router/skills/
+     ```
+  
+  2. Check config path:
+     ```yaml config.yaml
+     intelligence:
+       skills:
+         enabled: true
+         directory: "plugins/cortex-router/skills"
+     ```
+  
+  3. Reload skills:
+     ```bash
+     curl -X POST http://localhost:18080/v0/management/intelligence/reload \
+       -H "X-Management-Key: your-secret-key"
+     ```
+</Accordion>
+
+---
+
+## Docker-Specific Issues
+
+<Accordion title="Container Won't Start">
+  **Symptom**: Docker container exits immediately.
+  
+  **Solution**:
+  
+  1. Check logs:
+     ```bash
+     docker-compose logs switchailocal
+     ```
+  
+  2. Verify config.yaml is mounted:
+     ```bash
+     docker-compose exec switchailocal ls -la /app/config.yaml
+     ```
+  
+  3. Check volume permissions:
+     ```bash
+     sudo chown -R 1000:1000 ~/.switchailocal
+     ```
+</Accordion>
+
+<Accordion title="Cannot Access Host Services">
+  **Symptom**: Container can't connect to Ollama/LM Studio on host.
+  
+  **Solution**:
+  
+  Use `host.docker.internal` instead of `localhost`:
+  
+  ```yaml config.yaml
+  ollama:
+    enabled: true
+    base-url: "http://host.docker.internal:11434"
+  
+  lmstudio:
+    enabled: true
+    base-url: "http://host.docker.internal:1234/v1"
+  ```
+</Accordion>
+
+<Accordion title="Volume Permission Errors">
+  **Symptom**: Permission denied on mounted volumes.
+  
+  **Solution**:
+  
+  ```bash
+  # Fix ownership (UID 1000 is the container user)
+  sudo chown -R 1000:1000 ~/.switchailocal
+  sudo chown -R 1000:1000 ./logs
+  sudo chown -R 1000:1000 ./plugins
+  
+  # Restart container
+  docker-compose restart switchailocal
+  ```
+</Accordion>
+
+---
+
+## Memory System Issues
+
+<Accordion title="Memory Stats Not Updating">
+  **Symptom**: Analytics show stale data or zero values.
+  
+  **Cause**: Memory system disabled or directory permissions.
+  
+  **Solution**:
+  
+  1. Verify auth directory is writable:
+     ```bash
+     ls -la ~/.switchailocal/memory/
+     ```
+  
+  2. Check memory files exist:
+     ```bash
+     ls -la ~/.switchailocal/memory/*.json
+     ```
+  
+  3. Enable usage statistics:
+     ```yaml config.yaml
+     usage-statistics-enabled: true
+     ```
+</Accordion>
+
+---
+
+## Performance Issues
+
+<Accordion title="Slow Response Times">
+  **Symptom**: Requests take longer than expected.
+  
+  **Solution**:
+  
+  1. Use local models for routing:
+     ```yaml config.yaml
+     intelligence:
+       router-model: "ollama:qwen:0.5b"  # Fast local classifier
+     ```
+  
+  2. Enable semantic cache:
+     ```yaml config.yaml
+     intelligence:
+       semantic-cache:
+         enabled: true
+         max-size: 10000
+     ```
+  
+  3. Reduce classification overhead:
+     ```yaml config.yaml
+     intelligence:
+       semantic-tier:
+         enabled: true  # Bypass LLM classification for known patterns
+     ```
+</Accordion>
+
+<Accordion title="High Memory Usage">
+  **Symptom**: Process consumes excessive RAM.
+  
+  **Solution**:
+  
+  1. Limit cache sizes:
+     ```yaml config.yaml
+     intelligence:
+       semantic-cache:
+         max-size: 1000  # Reduce from 10000
+     ```
+  
+  2. Disable unused features:
+     ```yaml config.yaml
+     intelligence:
+       embedding:
+         enabled: false
+       semantic-tier:
+         enabled: false
+     ```
+  
+  3. Set Docker resource limits:
+     ```yaml docker-compose.yml
+     deploy:
+       resources:
+         limits:
+           memory: 2G
+     ```
+</Accordion>
+
+---
+
+## Getting Help
+
+### Debug Mode
+
+Enable verbose logging:
+
+```yaml config.yaml
+debug: true
+logging-to-file: true
+```
+
+### Collect Diagnostic Information
+
+```bash
+# System info
+uname -a
+
+# Server version
+./switchAILocal --version
+
+# Recent logs
+tail -100 logs/switchailocal.log
+
+# Provider health
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: your-secret-key"
+
+# Available models
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+### Report Issues
+
+If you encounter a bug, please report it with:
+
+1. **Description**: What happened vs. what you expected
+2. **Steps to Reproduce**: Exact commands or API calls
+3. **Environment**: OS, Docker version, switchAILocal version
+4. **Logs**: Relevant error messages (with sensitive data removed)
+5. **Configuration**: Sanitized config.yaml snippet
+
+**GitHub Issues**: [https://github.com/traylinx/switchAILocal/issues](https://github.com/traylinx/switchAILocal/issues)
+
+---
+
+## Next Steps
+
+<Card title="Setup Providers" icon="plug" href="/guides/setup-providers">
+  Configure your AI providers correctly
+</Card>
+
+<Card title="Management Dashboard" icon="gauge" href="/guides/guides/management-dashboard">
+  Monitor system health and performance
+</Card>

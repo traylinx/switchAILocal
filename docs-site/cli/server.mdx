@@ -1,0 +1,204 @@
+---
+title: "Server Command"
+description: "Start the switchAILocal proxy server with comprehensive configuration options"
+---
+
+## Overview
+
+The main `switchAILocal` command starts the proxy server that provides OpenAI/Gemini/Claude compatible API interfaces for CLI models.
+
+## Usage
+
+```bash
+switchAILocal [flags]
+```
+
+## Server Flags
+
+<ParamField path="--config" type="string" default="config.yaml">
+  Path to the configuration file. The server looks for `config.yaml` in the current working directory by default.
+  
+  ```bash
+  switchAILocal --config /path/to/custom-config.yaml
+  ```
+</ParamField>
+
+<ParamField path="--password" type="string">
+  Server password for authentication. For security, prefer using the `SERVER_PASSWORD` environment variable instead.
+  
+  <Warning>
+    Using `--password` on the command line exposes the password in process listings. Use environment variables for production.
+  </Warning>
+  
+  ```bash
+  export SERVER_PASSWORD="your-secure-password"
+  switchAILocal
+  ```
+</ParamField>
+
+<ParamField path="--project_id" type="string">
+  Google Cloud Project ID for Gemini API access. Only required when using Vertex AI or project-specific Gemini endpoints.
+  
+  ```bash
+  switchAILocal --project_id my-gcp-project-123
+  ```
+</ParamField>
+
+## Environment Variables
+
+The server supports extensive configuration through environment variables, especially for cloud deployments.
+
+### Storage Backends
+
+<AccordionGroup>
+  <Accordion title="PostgreSQL Token Store">
+    Enable centralized token storage using PostgreSQL:
+
+    <ParamField path="PGSTORE_DSN" type="string">
+      PostgreSQL connection string
+      ```bash
+      export PGSTORE_DSN="postgresql://user:pass@localhost:5432/switchai"
+      ```
+    </ParamField>
+
+    <ParamField path="PGSTORE_SCHEMA" type="string">
+      Database schema name (optional)
+    </ParamField>
+
+    <ParamField path="PGSTORE_LOCAL_PATH" type="string">
+      Local spool directory for cached data
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Git Token Store">
+    Enable version-controlled token storage using Git:
+
+    <ParamField path="GITSTORE_GIT_URL" type="string">
+      Git repository URL for token storage
+    </ParamField>
+
+    <ParamField path="GITSTORE_GIT_USERNAME" type="string">
+      Git username for authentication
+    </ParamField>
+
+    <ParamField path="GITSTORE_GIT_TOKEN" type="string">
+      Git access token (personal access token or password)
+    </ParamField>
+
+    <ParamField path="GITSTORE_LOCAL_PATH" type="string">
+      Local path for git repository clone
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Object Store (S3-Compatible)">
+    Enable S3-compatible object storage for tokens:
+
+    <ParamField path="OBJECTSTORE_ENDPOINT" type="string">
+      S3-compatible endpoint URL (supports http:// or https://)
+    </ParamField>
+
+    <ParamField path="OBJECTSTORE_ACCESS_KEY" type="string">
+      Access key ID
+    </ParamField>
+
+    <ParamField path="OBJECTSTORE_SECRET_KEY" type="string">
+      Secret access key
+    </ParamField>
+
+    <ParamField path="OBJECTSTORE_BUCKET" type="string">
+      Bucket name for token storage
+    </ParamField>
+
+    <ParamField path="OBJECTSTORE_LOCAL_PATH" type="string">
+      Local cache directory
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+### Cloud Deployment
+
+<ParamField path="DEPLOY" type="string">
+  Set to `cloud` to enable cloud deployment mode. In this mode, the server waits for configuration before starting.
+  
+  ```bash
+  export DEPLOY="cloud"
+  switchAILocal
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+```bash Local Development
+# Start with default config.yaml in current directory
+switchAILocal
+```
+
+```bash Custom Config
+# Use a specific configuration file
+switchAILocal --config /etc/switchai/production.yaml
+```
+
+```bash PostgreSQL Backend
+# Use PostgreSQL for centralized token storage
+export PGSTORE_DSN="postgresql://admin:secret@db.example.com:5432/switchai"
+export PGSTORE_SCHEMA="public"
+switchAILocal
+```
+
+```bash Cloud Deployment
+# Cloud deployment with object storage
+export DEPLOY="cloud"
+export OBJECTSTORE_ENDPOINT="https://s3.amazonaws.com"
+export OBJECTSTORE_ACCESS_KEY="AKIA..."
+export OBJECTSTORE_SECRET_KEY="..."
+export OBJECTSTORE_BUCKET="switchai-tokens"
+switchAILocal
+```
+
+```bash With Password Auth
+# Secure password authentication
+export SERVER_PASSWORD="$(openssl rand -base64 32)"
+switchAILocal --config config.yaml
+```
+</CodeGroup>
+
+## Output
+
+When the server starts successfully, you'll see:
+
+```
+switchAILocal Version: v1.2.3, Commit: abc123, BuiltAt: 2026-03-09T10:00:00Z
+switchAILocal Version: v1.2.3, Commit: abc123, BuiltAt: 2026-03-09T10:00:00Z
+INFO[0000] Configuration loaded from: /path/to/config.yaml
+INFO[0001] Server listening on http://localhost:8080
+INFO[0001] OpenAI-compatible endpoint: http://localhost:8080/v1
+```
+
+## Security Considerations
+
+<Warning>
+  The server performs security validation on startup:
+  
+  - **File Permissions**: Configuration and auth files should have restrictive permissions (600 or more restrictive)
+  - **Path Traversal**: File paths are validated to prevent directory traversal attacks
+  - **Sensitive Data**: Passwords and tokens in error messages are automatically sanitized
+  - **Environment Variables**: Sensitive environment variables are checked for common security issues
+</Warning>
+
+## Configuration Precedence
+
+The server loads configuration in the following order:
+
+1. **PostgreSQL Store** (if `PGSTORE_DSN` is set)
+2. **Object Store** (if `OBJECTSTORE_ENDPOINT` is set)
+3. **Git Store** (if `GITSTORE_GIT_URL` is set)
+4. **Local File** (specified via `--config` or default `config.yaml`)
+
+When multiple storage backends are configured, PostgreSQL takes highest precedence.
+
+## Related Commands
+
+- [Login Commands](/cli/login) - Authenticate with AI providers
+- [Memory Commands](/cli/memory) - Manage routing history and preferences
+- [Heartbeat Commands](/cli/heartbeat) - Monitor provider health
