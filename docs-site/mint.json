@@ -6,6 +6,7 @@
     "light": "/logo/switchailocal_light.png"
   },
   "favicon": "/favicon.png",
+  "theme": "prism",
   "colors": {
     "primary": "#EC4899",
     "light": "#FBCFE8",
