@@ -29,7 +29,22 @@
     {
       "group": "Get Started",
       "pages": [
-        "introduction"
+        "introduction",
+        "user/installation",
+        "user/configuration",
+        "plugins",
+        "skill"
+      ]
+    },
+    {
+      "group": "User Guides",
+      "pages": [
+        "user/cli-reference",
+        "user/providers",
+        "user/intelligent-systems",
+        "user/state-box",
+        "user/advanced-features",
+        "user/api-reference"
       ]
     },
     {
@@ -37,6 +52,16 @@
       "pages": [
         "architecture/cortex-router",
         "architecture/superbrain"
+      ]
+    },
+    {
+      "group": "Developer SDK",
+      "pages": [
+        "developer/plugin-development",
+        "developer/lua-plugins",
+        "developer/sdk-usage",
+        "developer/sdk-advanced",
+        "developer/sdk-access"
       ]
     }
   ],
