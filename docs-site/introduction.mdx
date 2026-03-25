@@ -1,0 +1,48 @@
+---
+title: "Introduction"
+description: "Welcome to switchAILocal — the intelligent, self-healing proxy router for Local AI agents."
+---
+
+<img
+  className="block dark:hidden"
+  src="/logo/hero-light.svg"
+  alt="Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/logo/hero-dark.svg"
+  alt="Hero Dark"
+/>
+
+## The Intelligent Routing Layer
+
+`switchAILocal` is not just another API proxy. It is an intelligent, latency-optimized, local orchestration layer designed to sit between your automated AI agents (like Claude Code, Cursor, OpenClaw) and the underlying inference models. 
+
+<CardGroup cols={2}>
+  <Card
+    title="Cortex Router"
+    icon="brain-circuit"
+    href="/architecture/cortex-router"
+  >
+    Semantic intent matching. Bypasses expensive LLM classification using embedding similarity to route queries in &lt;20ms.
+  </Card>
+  <Card
+    title="Superbrain Healing"
+    icon="heart-pulse"
+    href="/architecture/superbrain"
+  >
+    Autonomous CI/CD for agents. If an underlying CLI hangs on a prompt, Superbrain detects the silence and safely acts.
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+To deploy the intelligence network locally, refer to our primary installation endpoints.
+
+```bash
+docker-compose up -d switchailocal
+```
+
+<Note>
+This documentation specifically focuses on the deeply architectural systems driving the secondary routing phases.
+</Note>

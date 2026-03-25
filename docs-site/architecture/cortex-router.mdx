@@ -1,0 +1,81 @@
+---
+title: "Cortex Router Phase 2"
+description: "Semantic routing and autonomous model discovery mechanics."
+---
+
+This guide covers the intelligent routing features introduced in Phase 2 of the **Cortex Router**.
+
+## Overview
+
+Phase 2 transforms the Cortex Router from a static routing system into an intelligent, adaptive orchestrator that:
+
+- **Automatically discovers** available models from all configured providers
+- **Semantically matches** user queries to intents and skills
+- **Dynamically assigns** optimal models to capability slots
+- **Cascades** to better models when response quality is insufficient
+
+<Warning>
+Before initializing Semantic features, ensure you have actively downloaded the embedding model into your context layer.
+</Warning>
+
+```bash
+./scripts/download-embedding-model.sh
+```
+
+## Enable Intelligence Architecture
+
+Modify your `config.yaml` to securely inject the routing parameters:
+
+<CodeGroup>
+```yaml Core Routing
+intelligence:
+  enabled: true  # Master switch
+  
+  router-model: "ollama:qwen:0.5b"
+  router-fallback: "openai:gpt-4o-mini"
+  matrix:
+    coding: "switchai-chat"
+    reasoning: "switchai-reasoner"
+    secure: "ollama:llama3.2"  # Enforced Local constraint
+```
+
+```yaml Semantic Extensions
+  discovery:
+    enabled: true
+    refresh-interval: 3600
+    cache-dir: "~/.switchailocal/cache/discovery"
+  
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85
+  
+  cascade:
+    enabled: true
+    quality-threshold: 0.70
+```
+</CodeGroup>
+
+## Semantic Cache Pipeline
+
+The layer actively caches routing decisions based on semantic similarity for massively accelerated responses.
+
+<Steps>
+  <Step title="Lookup Phase">
+    If the semantic cache registers a hit (`> 0.95` similarity), the decision executes in `< 1ms`.
+  </Step>
+  <Step title="Semantic Classification">
+    If it misses, embedding clustering measures intent mathematically in `~20ms`.
+  </Step>
+  <Step title="Cognitive Fallback">
+    In absolute failure conditions, LLM classification spins up taking `200-500ms`.
+  </Step>
+</Steps>
+
+## Confidence Routing Matrix
+
+<Card title="Logical Confidence Scaling" icon="chart-network">
+  Confidence outputs explicitly dictate the flow of execution:
+  - **High confidence (&gt;0.90):** Route immediately structurally
+  - **Medium confidence (0.60-0.90):** Verify symmetrically with the semantic tier
+  - **Low confidence (&lt;0.60):** Failover explicitly to a heavyweight reasoning model
+</Card>

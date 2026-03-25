@@ -1,0 +1,92 @@
+---
+title: "Superbrain Healing"
+description: "Progressive rollout strategy for autonomous agent recovery logic."
+---
+
+This document provides a comprehensive guide for safely enabling **Superbrain** auto-healing capabilities in production. Because Superbrain has the power to inject `stdin` automatically into hung processes, we enforce a highly phased progressive rollout.
+
+## Rollout Progression Structure
+
+The Superbrain algorithm scales explicitly through 5 progressive phases:
+
+<Steps>
+  <Step title="Phase 0: Quick Fix">
+    Immediate value with minimal risk (e.g., auto-injecting `--dangerously-skip-permissions` flags).
+  </Step>
+  <Step title="Phase 1: Observe Mode">
+    Monitor latency, silent hangs, and system failures without executing any autonomous recovery patches.
+  </Step>
+  <Step title="Phase 2: Diagnose Mode">
+    Route failures into the LLM logic layer for explicit diagnosis, keeping the system purely advisory.
+  </Step>
+  <Step title="Phase 3: Conservative Mode">
+    Safe autonomous actions (e.g. automatically restarting the CLI, executing safe `stdin` interrupts on strictly checked whitelists).
+  </Step>
+  <Step title="Phase 4: Autopilot Mode">
+    Total autonomous capability granting the Superbrain architectural autonomy over recovery patterns.
+  </Step>
+</Steps>
+
+---
+
+## Technical Configuration Paths
+
+### Enabling Overwatch (Phase 1)
+
+**Goal**: Enable monitoring and logging completely without autonomous actions.
+
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "observe"
+  
+  component_flags:
+    overwatch_enabled: true      # Explicit metric monitoring
+    doctor_enabled: false        # AI diagnosis disabled
+    injector_enabled: false      # Auto input is disabled
+  
+  overwatch:
+    silence_threshold_ms: 30000
+    log_buffer_size: 50
+```
+
+To actively monitor your environment's health, use standard CLI ingestion:
+
+```bash
+# Monitor the audit logs live
+tail -f ./logs/superbrain_audit.log
+
+# Scan for instances of detected cli silence
+grep "silence_detected" ./logs/superbrain_audit.log
+```
+
+### Entering Conservative Mode (Phase 3)
+
+When upgrading to Phase 3, you are explicitly authorizing switchAILocal to patch streams and forcefully bounce agent applications on failure.
+
+```yaml config.yaml
+superbrain:
+  enabled: true
+  mode: "conservative"
+  
+  stdin_injection:
+    mode: "conservative"
+    forbidden_patterns:
+      - "delete"
+      - "remove"
+      - "sudo"
+```
+
+## Emergency Hot-Rollback
+
+If a CLI agent enters an infinite loop, gracefully degrade by disabling the framework and issuing a `SIGHUP` reload to the binary:
+
+<CodeGroup>
+```bash Shell Reload
+kill -HUP $(pgrep switchAILocal)
+```
+```yaml Disabled Config
+superbrain:
+  mode: "disabled"
+```
+</CodeGroup>

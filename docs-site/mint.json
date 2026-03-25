@@ -1,0 +1,46 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "switchAILocal",
+  "logo": {
+    "dark": "/logo/switchailocal_dark.png",
+    "light": "/logo/switchailocal_light.png"
+  },
+  "favicon": "/favicon.png",
+  "colors": {
+    "primary": "#EC4899",
+    "light": "#FBCFE8",
+    "dark": "#BE185D",
+    "anchors": {
+      "from": "#EC4899",
+      "to": "#8B5CF6"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/traylinx/switchAILocal"
+    }
+  ],
+  "topbarCtaButton": {
+    "type": "github",
+    "url": "https://github.com/traylinx/switchAILocal"
+  },
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "introduction"
+      ]
+    },
+    {
+      "group": "Architectural Nodes",
+      "pages": [
+        "architecture/cortex-router",
+        "architecture/superbrain"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/traylinx/switchAILocal"
+  }
+}
