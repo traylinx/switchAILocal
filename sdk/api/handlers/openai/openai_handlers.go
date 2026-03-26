@@ -74,9 +74,18 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// Get all available models
 	allModels := h.Models()
 
-	// Filter to only include the 4 required fields: id, object, created, owned_by
-	filteredModels := make([]map[string]any, len(allModels))
-	for i, model := range allModels {
+	// Build modality lookup from intelligence.matrix config
+	// Maps model ID → set of modality strings
+	modalityMap := buildModalityMap(h.Cfg.Intelligence.Matrix)
+
+	// Optional: filter by ?modality= query param (text, image, audio, embedding, vision)
+	modalityFilter := strings.ToLower(c.Query("modality"))
+
+	// Filter to only include the 4 required fields + capabilities
+	var filteredModels []map[string]any
+	for _, model := range allModels {
+		modelID, _ := model["id"].(string)
+
 		filteredModel := map[string]any{
 			"id":     model["id"],
 			"object": model["object"],
@@ -92,13 +101,75 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
-		filteredModels[i] = filteredModel
+		// Enrich with capabilities from the matrix
+		capabilities := modalityMap[modelID]
+		if len(capabilities) == 0 {
+			// Default: assume text capability for unlabeled models
+			capabilities = []string{"text"}
+		}
+		filteredModel["capabilities"] = capabilities
+
+		// Apply modality filter if specified
+		if modalityFilter != "" {
+			if !containsModality(capabilities, modalityFilter) {
+				continue
+			}
+		}
+
+		filteredModels = append(filteredModels, filteredModel)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
 		"data":   filteredModels,
 	})
+}
+
+// buildModalityMap creates a reverse lookup: model ID → list of modality strings
+// from the intelligence.matrix config. Multiple matrix keys can map to the same model.
+func buildModalityMap(matrix map[string]string) map[string][]string {
+	// Map matrix keys to modality categories
+	keyToModality := map[string]string{
+		"image_gen":     "image",
+		"vision":        "vision",
+		"transcription": "audio",
+		"speech":        "audio",
+		"audio":         "audio",
+		"embedding":     "embedding",
+		"coding":        "text",
+		"reasoning":     "text",
+		"creative":      "text",
+		"fast":          "text",
+		"secure":        "text",
+		"long_ctx":      "text",
+		"cli":           "text",
+	}
+
+	result := make(map[string][]string)
+	for matrixKey, modelID := range matrix {
+		if modelID == "" {
+			continue
+		}
+		modality, ok := keyToModality[matrixKey]
+		if !ok {
+			modality = "text" // default
+		}
+		// Avoid duplicates
+		if !containsModality(result[modelID], modality) {
+			result[modelID] = append(result[modelID], modality)
+		}
+	}
+	return result
+}
+
+// containsModality checks if a modality string exists in a slice.
+func containsModality(modalities []string, target string) bool {
+	for _, m := range modalities {
+		if m == target {
+			return true
+		}
+	}
+	return false
 }
 
 // ChatCompletions handles the /v1/chat/completions endpoint.
