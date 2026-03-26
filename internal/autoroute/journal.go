@@ -93,7 +93,7 @@ func NewExperimentJournal(workspaceDir string, enabled bool) (*ExperimentJournal
 			"w_avail", "w_quota", "w_lat", "w_succ",
 		}
 		journal.mu.Lock()
-		writer.Write(headers)
+		_ = writer.Write(headers)
 		writer.Flush()
 		journal.mu.Unlock()
 	}
