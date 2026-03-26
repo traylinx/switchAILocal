@@ -38,9 +38,13 @@ type SDKConfig struct {
 
 	// Routing controls credential selection behavior and auto-resolver priority.
 	Routing RoutingConfig `yaml:"routing,omitempty" json:"routing,omitempty"`
+
+	// AutoRouting configures the Phase 2 intelligent routing system.
+	AutoRouting autoroute.Config `yaml:"auto-routing,omitempty" json:"auto-routing,omitempty"`
 }
 
 // RoutingConfig configures how credentials are selected for requests.
+
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "fill-first".

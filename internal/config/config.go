@@ -18,6 +18,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
+
+	"github.com/traylinx/switchAILocal/internal/autoroute"
 )
 
 const DefaultPanelGitHubRepository = "https://github.com/traylinx/switchAILocal-Management-Center"
@@ -711,6 +713,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Intelligence configuration
 	cfg.SDKConfig.SanitizeIntelligence()
 
+	// Sanitize Auto-Routing configuration
+	cfg.SanitizeAutoRouting()
+
 	// Normalize OAuth provider model exclusion map.
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 
@@ -728,6 +733,72 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Return the populated configuration struct.
 	return &cfg, nil
+}
+
+// SanitizeAutoRouting ensures safe defaults for the Phase 2 Auto-Routing system
+// and auto-migrates the legacy AutoModelPriority list into basic model preferences.
+func (cfg *Config) SanitizeAutoRouting() {
+	if cfg == nil {
+		return
+	}
+
+	ar := &cfg.AutoRouting
+
+	// Legacy migration: routing.auto-model-priority -> auto-routing.preferences
+	if len(cfg.Routing.AutoModelPriority) > 0 {
+		for i, model := range cfg.Routing.AutoModelPriority {
+			// Calculate a descending preference based on array index
+			// e.g. first=0.9, second=0.8, etc., lower bound 0.1
+			pref := 0.9 - (float64(i) * 0.1)
+			if pref < 0.1 {
+				pref = 0.1
+			}
+
+			// Add to preferences if not already explicitly defined
+			exists := false
+			for _, p := range ar.Preferences {
+				if p.Model == model {
+					exists = true
+					break
+				}
+			}
+
+			if !exists {
+				ar.Preferences = append(ar.Preferences, autoroute.ModelPreference{
+					Model:      model,
+					Preference: pref,
+					Reason:     "auto-migrated from routing.auto-model-priority",
+				})
+			}
+		}
+		// Clear legacy array to prevent confusion
+		cfg.Routing.AutoModelPriority = nil
+		cfg.legacyMigrationPending = true
+	}
+
+	// Apply safe defaults if structural components are missing
+	if ar.MaxResolution <= 0 {
+		ar.MaxResolution = 5 * time.Millisecond
+	}
+
+	// Scoring weights default to even sum if heavily invalid
+	sum := ar.Weights.Availability + ar.Weights.Quota + ar.Weights.Latency + ar.Weights.SuccessRate
+	if sum < 0.99 || sum > 1.01 {
+		ar.Weights.Availability = 0.35
+		ar.Weights.Quota = 0.25
+		ar.Weights.Latency = 0.20
+		ar.Weights.SuccessRate = 0.20
+	}
+
+	if ar.Discovery.ProbeInterval <= 0 {
+		ar.Discovery.ProbeInterval = 15 * time.Minute
+	}
+	if ar.Discovery.ProbeTimeout <= 0 {
+		ar.Discovery.ProbeTimeout = 5 * time.Second
+	}
+	if ar.Discovery.CacheTTL <= 0 {
+		ar.Discovery.CacheTTL = 24 * time.Hour
+	}
 }
 
 // SanitizeOpenAICompatibility removes OpenAI-compatibility provider entries that are
