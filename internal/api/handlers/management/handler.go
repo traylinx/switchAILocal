@@ -313,7 +313,7 @@ func (h *Handler) GetSetupStatus(c *gin.Context) {
 	if h.cfg != nil {
 		secretHash = h.cfg.RemoteManagement.SecretKey
 	}
-	
+
 	isConfigured := secretHash != "" || h.envSecret != ""
 	authDisabled := false
 

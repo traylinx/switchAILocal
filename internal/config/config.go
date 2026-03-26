@@ -892,17 +892,17 @@ func (cfg *Config) SanitizeSteering() {
 	// Normalize rules directory (support both rules-dir and steering-dir for compatibility)
 	steer.RulesDir = strings.TrimSpace(steer.RulesDir)
 	steer.SteeringDir = strings.TrimSpace(steer.SteeringDir)
-	
+
 	// If RulesDir is empty but SteeringDir is set, use SteeringDir
 	if steer.RulesDir == "" && steer.SteeringDir != "" {
 		steer.RulesDir = steer.SteeringDir
 	}
-	
+
 	// If both are empty, set default
 	if steer.RulesDir == "" {
 		steer.RulesDir = ".switchailocal/steering"
 	}
-	
+
 	// Sync SteeringDir with RulesDir for backwards compatibility
 	steer.SteeringDir = steer.RulesDir
 
@@ -928,7 +928,6 @@ func (cfg *Config) SanitizeHooks() {
 	// Hot-reload defaults to true when hooks are enabled
 	// No additional validation needed for boolean
 }
-
 
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)

@@ -131,7 +131,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		AuthType:  authType,
 		AuthValue: authValue,
 	})
-	
+
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {

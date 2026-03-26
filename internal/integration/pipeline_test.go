@@ -157,13 +157,13 @@ func TestEmitRoutingEvent_NoEventBus(t *testing.T) {
 func TestEmitRoutingEvent_WithEventBus(t *testing.T) {
 	eventBus := hooks.NewEventBus()
 	defer eventBus.Shutdown()
-	
+
 	rpi := NewRequestPipelineIntegrator(nil, nil, eventBus)
 
 	// Subscribe to routing events
 	var eventReceived sync.WaitGroup
 	eventReceived.Add(1)
-	
+
 	eventBus.Subscribe(hooks.EventRoutingDecision, func(ctx *hooks.EventContext) {
 		defer eventReceived.Done()
 
@@ -251,13 +251,13 @@ func TestExtractProvider(t *testing.T) {
 func TestEmitRoutingEvent_WithError(t *testing.T) {
 	eventBus := hooks.NewEventBus()
 	defer eventBus.Shutdown()
-	
+
 	rpi := NewRequestPipelineIntegrator(nil, nil, eventBus)
 
 	// Subscribe to routing events
 	var eventReceived sync.WaitGroup
 	eventReceived.Add(1)
-	
+
 	eventBus.Subscribe(hooks.EventRoutingDecision, func(ctx *hooks.EventContext) {
 		defer eventReceived.Done()
 
