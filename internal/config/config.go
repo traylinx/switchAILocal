@@ -129,7 +129,42 @@ type Config struct {
 	// Billboard configures the shared working directory for CLI provider requests.
 	Billboard BillboardConfig `yaml:"billboard" json:"billboard"`
 
+	// Observability configures logging format, metrics export, and request event streaming.
+	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
+}
+
+// ObservabilityConfig controls logging, metrics, and tracing output for external monitoring tools.
+type ObservabilityConfig struct {
+	// LogFormat sets the global log output format: "text" (default, human-readable) or "json" (structured, for Loki/ELK/Datadog).
+	LogFormat string `yaml:"log-format" json:"log-format"`
+
+	// Metrics configures the Prometheus metrics endpoint.
+	Metrics MetricsConfig `yaml:"metrics" json:"metrics"`
+
+	// RequestEvents configures structured NDJSON event logging for every proxied request.
+	RequestEvents RequestEventsConfig `yaml:"request-events" json:"request-events"`
+}
+
+// MetricsConfig controls the Prometheus /metrics endpoint.
+type MetricsConfig struct {
+	// Enabled toggles the Prometheus metrics server.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Path is the HTTP path to serve metrics on. Default: "/metrics".
+	Path string `yaml:"path" json:"path"`
+}
+
+// RequestEventsConfig controls structured per-request event logging.
+type RequestEventsConfig struct {
+	// Enabled toggles structured request event logging.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Output destination: "stdout" or "file".
+	Output string `yaml:"output" json:"output"`
+	// FilePath is the path for NDJSON event logs when Output is "file".
+	FilePath string `yaml:"file-path" json:"file-path"`
+	// IncludeBody includes request/response bodies in events (warning: large).
+	IncludeBody bool `yaml:"include-body" json:"include-body"`
 }
 
 // OllamaConfig holds local Ollama server settings.
@@ -629,6 +664,14 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Set Billboard defaults
 	cfg.Billboard.Enabled = false // Disabled by default (opt-in)
 	cfg.Billboard.BaseDir = "~/.switchailocal/billboard"
+
+	// Set Observability defaults
+	cfg.Observability.LogFormat = "text" // Default: human-readable text logs
+	cfg.Observability.Metrics.Enabled = false
+	cfg.Observability.Metrics.Path = "/metrics"
+	cfg.Observability.RequestEvents.Enabled = false
+	cfg.Observability.RequestEvents.Output = "stdout"
+	cfg.Observability.RequestEvents.FilePath = "logs/events.ndjson"
 
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {

@@ -160,6 +160,23 @@ Trigger re-discovery of available models from all providers.
 |-------------|-------------|
 | `provider` | Refresh specific provider only |
 
+### Metrics & Observability
+
+```
+GET /metrics
+```
+
+Prometheus-compatible metrics endpoint.
+
+Exposes standard Go process metrics along with `switchAILocal`-specific telemetry:
+- `switchailocal_requests_total`: Total requests by model, provider, status, and routing type.
+- `switchailocal_request_duration_milliseconds`: Request latency histogram.
+- `switchailocal_llm_tokens_total`: Input and output token consumption.
+- `switchailocal_routing_quality_score`: Routing Quality Score (RQS) tracking.
+- `switchailocal_fallbacks_total`: Failover/fallback tracking by model.
+
+*Note: This endpoint is served on the root level (`/metrics`), not under `/v1/`.*
+
 ---
 
 ## Advanced Features

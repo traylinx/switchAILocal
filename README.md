@@ -31,6 +31,7 @@
 | 🧠 **Superbrain Intelligence** | Autonomous self-healing: monitors executions, diagnoses failures with AI, auto-responds to prompts, restarts with corrective flags, and routes to fallback providers |
 | ⚖️ **Load Balancing**          | Round-robin across multiple accounts per provider                                                                                                                    |
 | 🔄 **Intelligent Failover**    | Smart routing to alternatives based on capabilities and success rates                                                                                                |
+| 📊 **Observability Ready**     | Enterprise-grade JSON structured logging, raw NDJSON event streams, and a native `/metrics` endpoint for Prometheus & Grafana integration                            |
 | 🔒 **Local-First**             | Everything runs on your machine, your data never leaves                                                                                                              |
 
 ---

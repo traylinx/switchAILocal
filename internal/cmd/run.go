@@ -73,11 +73,21 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	// Create pipeline integrator if coordinator is available
 	var pipelineIntegrator *integration.RequestPipelineIntegrator
 	if coordinator != nil {
-		pipelineIntegrator = integration.NewRequestPipelineIntegrator(
-			coordinator.GetSteering().(*steering.SteeringEngine),
-			coordinator.GetMemory().(memory.MemoryManager),
-			coordinator.GetEventBus().(*hooks.EventBus),
-		)
+		var st *steering.SteeringEngine
+		var mem memory.MemoryManager
+		var eb *hooks.EventBus
+
+		if s := coordinator.GetSteering(); s != nil {
+			st = s.(*steering.SteeringEngine)
+		}
+		if m := coordinator.GetMemory(); m != nil {
+			mem = m.(memory.MemoryManager)
+		}
+		if e := coordinator.GetEventBus(); e != nil {
+			eb = e.(*hooks.EventBus)
+		}
+
+		pipelineIntegrator = integration.NewRequestPipelineIntegrator(st, mem, eb)
 	}
 
 	builder := switchailocal.NewBuilder().

@@ -434,3 +434,30 @@ superbrain:
 billboard:
   enabled: false
   base-dir: "~/.switchailocal/billboard"
+
+# =============================================================================
+# 11. OBSERVABILITY (LOGGING, METRICS & EVENTS)
+# =============================================================================
+
+# Controls how switchAILocal outputs logs, metrics, and request events.
+# These settings enable integration with external monitoring stacks
+# (Grafana Loki, ELK, Prometheus, Datadog, etc.)
+observability:
+  # Log output format:
+  #   - "text": Human-readable colored output (default, best for terminal use)
+  #   - "json": Structured JSON output (required for Loki, ELK, Datadog, Kubernetes)
+  log-format: "text"
+
+  # Prometheus metrics endpoint configuration.
+  metrics:
+    enabled: true
+    path: "/metrics" # HTTP path served on the main server port
+
+  # Structured per-request event logging (NDJSON format).
+  # Each proxied request emits a JSON event with model, provider, latency,
+  # token counts, RQS score, fallback chain, and routing decision metadata.
+  request-events:
+    enabled: false
+    output: "stdout"              # "stdout" or "file"
+    file-path: "logs/events.ndjson"
+    include-body: false           # WARNING: enabling this produces very large logs

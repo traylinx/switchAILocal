@@ -104,11 +104,28 @@ func SetupBaseLogger() {
 	})
 }
 
-// ConfigureLogOutput switches the global log destination between rotating files and stdout.
+// ConfigureLogOutput switches the global log destination between rotating files and stdout,
+// and the log format between human-readable text and structured JSON.
 // When logsMaxTotalSizeMB > 0, a background cleaner removes the oldest log files in the logs directory
 // until the total size is within the limit.
-func ConfigureLogOutput(loggingToFile bool, logsMaxTotalSizeMB int) error {
+func ConfigureLogOutput(loggingToFile bool, logsMaxTotalSizeMB int, logFormat string) error {
 	SetupBaseLogger()
+
+	// Apply log format based on config: "json" for structured output, "text" (default) for human-readable.
+	switch strings.ToLower(strings.TrimSpace(logFormat)) {
+	case "json":
+		log.SetFormatter(&log.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+			FieldMap: log.FieldMap{
+				log.FieldKeyTime:  "timestamp",
+				log.FieldKeyLevel: "level",
+				log.FieldKeyMsg:   "message",
+				log.FieldKeyFunc:  "caller",
+			},
+		})
+	default:
+		log.SetFormatter(&LogFormatter{})
+	}
 
 	writerMu.Lock()
 	defer writerMu.Unlock()

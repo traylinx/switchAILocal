@@ -35,6 +35,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/managementasset"
+	"github.com/traylinx/switchAILocal/internal/observability"
 	"github.com/traylinx/switchAILocal/internal/plugin"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/usage"
@@ -184,6 +185,9 @@ type Server struct {
 	requestLogger logging.RequestLogger
 	loggerToggle  func(bool)
 
+	// eventEmitter manages structured observability logging.
+	eventEmitter *observability.EventEmitter
+
 	// configFilePath is the absolute path to the YAML config file for persistence.
 	configFilePath string
 
@@ -292,7 +296,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		log.Warn("INTELLIGENCE_DIAGNOSTIC: ServiceCoordinator NOT provided to NewServer")
 	}
 	// Set gin mode
-	if !cfg.Debug {
+	if cfg == nil || !cfg.Debug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -302,8 +306,29 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		optionState.engineConfigurator(engine)
 	}
 
+	// Initialize observability event emitter
+	var eventEmitter *observability.EventEmitter
+	if cfg != nil && cfg.Observability.RequestEvents.Enabled {
+		ee, err := observability.NewEventEmitter(
+			cfg.Observability.RequestEvents.Enabled,
+			cfg.Observability.RequestEvents.Output,
+			cfg.Observability.RequestEvents.FilePath,
+		)
+		if err != nil {
+			log.Errorf("failed to initialize observability event emitter: %v", err)
+		} else {
+			eventEmitter = ee
+		}
+	}
+
 	// Add middleware
 	engine.Use(logging.GinLogrusLogger())
+	if cfg != nil && cfg.Observability.Metrics.Enabled {
+		engine.Use(observability.MetricsMiddleware(cfg.Observability.Metrics.Enabled))
+	}
+	if eventEmitter != nil {
+		engine.Use(observability.GinMiddleware(eventEmitter))
+	}
 	engine.Use(logging.GinLogrusRecovery())
 	for _, mw := range optionState.extraMiddleware {
 		engine.Use(mw)
@@ -458,6 +483,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		accessManager:       accessManager,
 		requestLogger:       requestLogger,
 		loggerToggle:        toggle,
+		eventEmitter:        eventEmitter,
 		configFilePath:      configFilePath,
 		currentPath:         wd,
 		envManagementSecret: envManagementSecret,
@@ -547,6 +573,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 // setupRoutes configures the API routes for the server.
 // It defines the endpoints and associates them with their respective handlers.
 func (s *Server) setupRoutes() {
+	if s.cfg != nil {
+		observability.RegisterMetricsRoute(s.engine, s.cfg.Observability.Metrics.Enabled, s.cfg.Observability.Metrics.Path)
+	}
+	
 	s.engine.GET("/management", s.serveManagementControlPanel)
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
@@ -1236,8 +1266,8 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		}
 	}
 
-	if oldCfg == nil || oldCfg.LoggingToFile != cfg.LoggingToFile || oldCfg.LogsMaxTotalSizeMB != cfg.LogsMaxTotalSizeMB {
-		if err := logging.ConfigureLogOutput(cfg.LoggingToFile, cfg.LogsMaxTotalSizeMB); err != nil {
+	if oldCfg == nil || oldCfg.LoggingToFile != cfg.LoggingToFile || oldCfg.LogsMaxTotalSizeMB != cfg.LogsMaxTotalSizeMB || oldCfg.Observability.LogFormat != cfg.Observability.LogFormat {
+		if err := logging.ConfigureLogOutput(cfg.LoggingToFile, cfg.LogsMaxTotalSizeMB, cfg.Observability.LogFormat); err != nil {
 			log.Errorf("failed to reconfigure log output: %v", err)
 		} else {
 			if oldCfg == nil {
