@@ -44,6 +44,10 @@ type RoutingDecision struct {
 	// Candidates evaluated (useful for debugging/dashboard)
 	Candidates []ScoredCandidate `json:"candidates,omitempty"`
 
+	// OriginalInputs preserves the raw CandidateInput values at decision time,
+	// enabling the Lab to replay exact conditions for shadow scoring (H1 fix).
+	OriginalInputs []CandidateInput `json:"-"`
+
 	// ResolutionLatency tracks how long the scoring process took
 	ResolutionLatency time.Duration `json:"resolution_latency_ms"`
 }
@@ -55,21 +59,3 @@ type FallbackEntry struct {
 	Tier     string `json:"tier"`
 }
 
-// ProbeResult represents the outcome of an auto-discovery scan on a specific provider backend.
-type ProbeResult struct {
-	Provider         string             `json:"provider"`
-	Available        bool               `json:"available"`
-	AuthType         string             `json:"auth_type"` // e.g., "oauth", "api-key", "local"
-	SubscriptionInfo *SubscriptionTier  `json:"subscription_info,omitempty"`
-	Models           []string           `json:"models"`
-	Latency          time.Duration      `json:"latency_ms"`
-	DiscoveredAt     time.Time          `json:"discovered_at"`
-}
-
-// SubscriptionTier holds parsed data from header rate-limits or CLI checks.
-type SubscriptionTier struct {
-	InferredTier string  // The tier the classifier assigned (e.g., "premium")
-	RequestsPerMin int   // RPM limit
-	TokensPerMin   int   // TPM limit
-	IsLegacy     bool    // e.g., OpenAI legacy tiers vs standard
-}

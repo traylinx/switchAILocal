@@ -28,6 +28,8 @@ import (
 	"github.com/traylinx/switchAILocal/internal/api/middleware"
 	"github.com/traylinx/switchAILocal/internal/api/modules"
 	ampmodule "github.com/traylinx/switchAILocal/internal/api/modules/amp"
+	"github.com/traylinx/switchAILocal/internal/autoroute"
+	"github.com/traylinx/switchAILocal/internal/autoroute/probes"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
@@ -353,10 +355,105 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		eventBusIntegrator = createEventBusIntegratorFromCoordinator(optionState.serviceCoordinator)
 	}
 
+	// Phase 2: Auto-Routing & Discovery Initialization
+	var autoResolver *autoroute.AutoResolver
+	if cfg.AutoRouting.Enabled {
+		log.Info("Initializing Intelligent Auto-Routing System")
+		
+		// 1. Setup Discovery Service
+		discoverySvc := autoroute.NewDiscoveryService(cfg.AutoRouting.Discovery)
+		
+		// 2. Register probers based on configured credentials
+		// CLI Probers
+		discoverySvc.RegisterProber(probes.NewCLIProber("geminicli", "gemini"))
+		discoverySvc.RegisterProber(probes.NewCLIProber("claudecli", "claude"))
+		discoverySvc.RegisterProber(probes.NewCLIProber("codex", "codex"))
+
+		// API Probers
+		for i, key := range cfg.GeminiKey {
+			name := fmt.Sprintf("gemini-api-%d", i)
+			endpoint := "/v1beta/models"
+			if key.ModelsURL != "" {
+			    endpoint = key.ModelsURL
+			}
+			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "Authorization"))
+		}
+		
+		for i, key := range cfg.ClaudeKey {
+			name := fmt.Sprintf("claude-api-%d", i)
+			endpoint := "/v1/models"
+			if key.ModelsURL != "" {
+			    endpoint = key.ModelsURL
+			}
+			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "x-api-key"))
+		}
+
+		if cfg.Ollama.Enabled {
+			endpoint := "http://localhost:11434"
+			if cfg.Ollama.BaseURL != "" {
+				endpoint = cfg.Ollama.BaseURL
+			}
+			discoverySvc.RegisterProber(probes.NewOllamaProber("ollama", endpoint))
+		}
+
+		// 3. Run Boot-Time Discovery
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		var candidates []autoroute.CandidateInput
+		if cfg.AutoRouting.Discovery.ProbeOnStartup {
+			log.Info("Running boot-time provider discovery")
+			results := discoverySvc.DiscoverAll(ctx)
+			
+			// 4. Convert discovery results to CandidateInputs
+			for provider, res := range results {
+				if !res.Available {
+					log.WithField("provider", provider).Warn("Provider unavailable during discovery")
+					continue
+				}
+				
+				for _, model := range res.Models {
+				    candidates = append(candidates, autoroute.CandidateInput{
+					    Provider:  provider,
+					    Model:     model.ID,
+					    Available: true,
+					    Latency:   res.Latency,
+					    SuccessRate: 1.0, 
+					    QuotaHealth: 1.0,
+				    })
+				}
+				
+				log.WithFields(log.Fields{
+					"provider": provider,
+					"models":   len(res.Models),
+					"latency":  res.Latency.Milliseconds(),
+				}).Info("Discovered provider models")
+			}
+		} else {
+			// If probing disabled on boot, just populate basic fallback providers 
+			for _, p := range []string{"geminicli", "claudecli", "codex", "ollama"} {
+			    candidates = append(candidates, autoroute.CandidateInput{
+					Provider: p,
+					Model:    "auto", 
+					Available: true,
+					Latency:   0,
+					SuccessRate: 1.0,
+					QuotaHealth: 1.0,
+			    })
+			}
+		}
+
+		// 5. Initialize the AutoResolver
+		autoResolver = autoroute.NewAutoResolver(cfg.AutoRouting, filepath.Dir(configFilePath))
+		autoResolver.SeedCandidates(candidates)
+		autoResolver.StartMonitor(context.Background())
+		log.WithField("candidates", len(candidates)).Info("Intelligent Auto-Routing Ready")
+	}
+
 	// Create server instance
 	s := &Server{
 		engine:              engine,
-		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator),
+		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator, autoResolver),
 		cfg:                 cfg,
 		accessManager:       accessManager,
 		requestLogger:       requestLogger,
@@ -385,6 +482,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	// Initialize management handler
 	s.mgmt = managementHandlers.NewHandler(cfg, configFilePath, authManager)
+	s.mgmt.SetAutoResolver(autoResolver)
 	if optionState.localPassword != "" {
 		s.mgmt.SetLocalPassword(optionState.localPassword)
 	}
@@ -464,6 +562,7 @@ func (s *Server) setupRoutes() {
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
 		v1.POST("/completions", openaiHandlers.Completions)
+		v1.POST("/embeddings", openaiHandlers.Embeddings)
 		v1.POST("/images/generations", openaiHandlers.ImagesGenerations)
 		v1.POST("/audio/transcriptions", openaiHandlers.AudioTranscriptions)
 		v1.POST("/audio/speech", openaiHandlers.AudioSpeech)
@@ -700,6 +799,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/gemini-api-key", s.mgmt.DeleteGeminiKey)
 
 		mgmt.GET("/logs", s.mgmt.GetLogs)
+
+		// Auto-Routing Lab telemetry
+		mgmt.GET("/autoroute/status", s.mgmt.GetAutoRouteStatus)
+		mgmt.GET("/autoroute/journal", s.mgmt.GetAutoRouteJournal)
 		mgmt.DELETE("/logs", s.mgmt.DeleteLogs)
 		mgmt.GET("/request-error-logs", s.mgmt.GetRequestErrorLogs)
 		mgmt.GET("/request-error-logs/:name", s.mgmt.DownloadRequestErrorLog)

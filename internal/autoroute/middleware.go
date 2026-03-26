@@ -22,6 +22,9 @@ type AutoRoutingResult struct {
 	// Complexity is the estimated prompt complexity (0.0-1.0)
 	Complexity float64
 
+	// Decision is the full routing rationale, retained for Lab telemetry
+	Decision *RoutingDecision
+
 	// WasAutoRouted indicates this request was handled by auto-routing
 	WasAutoRouted bool
 }
@@ -50,14 +53,11 @@ func ResolveAutoRequest(ctx context.Context, modelName string, content string, r
 	_, intentHint := ParseAutoModelHint(modelName)
 
 	// Build the routing request
-	// NOTE: In Phase D, this will be populated by the DiscoveryService.
-	// For now, we use an empty candidate list — the resolver will return
-	// ErrNoAvailableProviders, and the caller falls back to legacy.
+	// AvailableModels are populated by discovery/health monitor dynamically
 	req := &RoutingRequest{
-		Content:    content,
-		IntentHint: intentHint,
-		// AvailableModels will be populated by the registry probe in Phase D
-		AvailableModels: nil,
+		Content:         content,
+		IntentHint:      intentHint,
+		AvailableModels: resolver.GetCandidates(),
 	}
 
 	decision, err := resolver.Resolve(ctx, req)
@@ -82,17 +82,20 @@ func ResolveAutoRequest(ctx context.Context, modelName string, content string, r
 		Providers:     providers,
 		Intent:        decision.Intent,
 		Complexity:    decision.EstimatedComplexity,
+		Decision:      decision,
 		WasAutoRouted: true,
 	}
 }
 
-// ExtractContentFromRawJSON extracts the user message content from a raw JSON
-// request body for complexity estimation. Uses a lightweight approach to avoid
-// full JSON parsing (performance budget: <1ms).
+// ExtractContentFromRawJSON returns a text sample from a raw JSON request body
+// for complexity estimation. This is intentionally coarse — it does NOT parse
+// the "content" field from JSON. Instead it returns the raw string (or its tail
+// for large payloads). EstimateComplexity then uses len/4 as a token proxy.
+//
+// NOTE: This over-estimates token count for JSON-heavy payloads (system prompts,
+// tool definitions, etc.) but is acceptable because EstimateComplexity uses
+// wide buckets (0.1/0.3/0.5/0.7/0.9), making the coarseness tolerable.
 func ExtractContentFromRawJSON(rawJSON []byte) string {
-	// Simple extraction: look for last "content" field value
-	// This is a fast heuristic — we don't need perfect extraction,
-	// just enough text to estimate complexity via len/4.
 	s := string(rawJSON)
 	if len(s) > 8000 {
 		// For very large payloads, sample the tail (more likely to contain the main prompt)

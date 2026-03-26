@@ -7,7 +7,6 @@ package config
 import (
 	"os"
 	"testing"
-	"time"
 )
 
 func TestLoadConfig_SecureDefaults(t *testing.T) {
@@ -356,54 +355,5 @@ superbrain:
 
 	if cfg.Superbrain.Fallback.MinSuccessRate > 1.0 {
 		t.Errorf("Min success rate should be at most 1.0, got: %f", cfg.Superbrain.Fallback.MinSuccessRate)
-	}
-}
-
-func TestSanitizeAutoRouting_Defaults(t *testing.T) {
-	cfg := &Config{}
-	cfg.SanitizeAutoRouting()
-
-	if cfg.AutoRouting.MaxResolution != 5*time.Millisecond {
-		t.Errorf("Expected defaut max resolution to be 5ms, got %v", cfg.AutoRouting.MaxResolution)
-	}
-
-	ar := cfg.AutoRouting
-	sum := ar.Weights.Availability + ar.Weights.Quota + ar.Weights.Latency + ar.Weights.SuccessRate
-	if sum < 0.99 || sum > 1.01 {
-		t.Errorf("Expected default weights to sum to 1.0, got %f", sum)
-	}
-}
-
-func TestSanitizeAutoRouting_LegacyMigration(t *testing.T) {
-	cfg := &SDKConfig{
-		Routing: RoutingConfig{
-			AutoModelPriority: []string{"geminicli:gemini-3.1-pro", "claudecli:claude-sonnet-4", "ollama:qwen:0.5b"},
-		},
-	}
-
-	cfg.SanitizeAutoRouting()
-
-	if cfg.Routing.AutoModelPriority != nil {
-		t.Error("Legacy AutoModelPriority array should have been cleared")
-	}
-
-	if len(cfg.AutoRouting.Preferences) != 3 {
-		t.Fatalf("Expected 3 preferences to be migrated, got %d", len(cfg.AutoRouting.Preferences))
-	}
-
-	// First element should have highest preference
-	if cfg.AutoRouting.Preferences[0].Model != "geminicli:gemini-3.1-pro" {
-		t.Errorf("First element model mismatch")
-	}
-	if cfg.AutoRouting.Preferences[0].Preference != 0.9 {
-		t.Errorf("First element preference should be 0.9, got %f", cfg.AutoRouting.Preferences[0].Preference)
-	}
-
-	// Last element should have lowest preference
-	if cfg.AutoRouting.Preferences[2].Model != "ollama:qwen:0.5b" {
-		t.Errorf("Last element model mismatch")
-	}
-	if cfg.AutoRouting.Preferences[2].Preference != 0.7 {
-		t.Errorf("Last element preference should be 0.7, got %f", cfg.AutoRouting.Preferences[2].Preference)
 	}
 }

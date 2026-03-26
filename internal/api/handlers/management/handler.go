@@ -22,6 +22,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/usage"
+	"github.com/traylinx/switchAILocal/internal/autoroute"
 	sdkAuth "github.com/traylinx/switchAILocal/sdk/auth"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	"golang.org/x/crypto/bcrypt"
@@ -54,6 +55,7 @@ type Handler struct {
 	logDir              string
 	intelligenceService IntelligenceService
 	serviceCoordinator  ServiceCoordinatorInterface
+	autoResolver        *autoroute.AutoResolver
 }
 
 // NewHandler creates a new management handler instance.
@@ -106,6 +108,11 @@ func (h *Handler) SetIntelligenceService(svc IntelligenceService) {
 // SetServiceCoordinator updates the service coordinator reference.
 func (h *Handler) SetServiceCoordinator(coordinator ServiceCoordinatorInterface) {
 	h.serviceCoordinator = coordinator
+}
+
+// SetAutoResolver sets the auto-routing telemetry bridge for the dashboard.
+func (h *Handler) SetAutoResolver(ar *autoroute.AutoResolver) {
+	h.autoResolver = ar
 }
 
 // Middleware enforces access control for management endpoints.

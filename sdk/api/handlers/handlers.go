@@ -216,15 +216,17 @@ type PipelineIntegrator interface {
 //   - authManager: The authentication manager
 //   - luaEngine: The LUA plugin engine
 //   - pipelineIntegrator: Optional pipeline integrator for intelligent systems (can be nil)
+//   - autoResolver: Optional intelligent routing resolver (can be nil)
 //
 // Returns:
 //   - *BaseAPIHandler: A new API handlers instance
-func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine, pipelineIntegrator PipelineIntegrator) *BaseAPIHandler {
+func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine, pipelineIntegrator PipelineIntegrator, autoResolver *autoroute.AutoResolver) *BaseAPIHandler {
 	return &BaseAPIHandler{
 		Cfg:                cfg,
 		AuthManager:        authManager,
 		LuaEngine:          luaEngine,
 		PipelineIntegrator: pipelineIntegrator,
+		AutoResolver:       autoResolver,
 	}
 }
 
@@ -417,10 +419,15 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	// Calculate routing latency
 	routingLatency := time.Since(routingStartTime).Milliseconds()
 	
+	executedProvider := providers[0]
+	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
+		executedProvider = ep
+	}
+	
 	if err != nil {
 		// Record failed routing decision if pipeline integrator is available
 		if h.PipelineIntegrator != nil {
-			h.recordFailedRouting(ctx, modelName, normalizedModel, providers, routingLatency, err)
+			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
 		}
 		
 		status := http.StatusInternalServerError
@@ -435,14 +442,19 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 				addon = hdr.Clone()
 			}
 		}
+		
+		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
+		
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
 	
 	// Record successful routing decision if pipeline integrator is available
 	if h.PipelineIntegrator != nil {
 		responseTime := time.Since(startTime).Milliseconds()
-		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, providers, routingLatency, responseTime)
+		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
 	}
+	
+	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
 	
 	// ROUTING: Apply LUA on_response hook
 	if h.LuaEngine.IsEnabled() {
@@ -584,8 +596,22 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
+	startTime := time.Now()
+	routingStartTime := time.Now()
+	
 	chunks, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
+	
+	routingLatency := time.Since(routingStartTime).Milliseconds()
+	executedProvider := providers[0]
+	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
+		executedProvider = ep
+	}
+
 	if err != nil {
+		if h.PipelineIntegrator != nil {
+			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
+		}
+		
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
@@ -599,10 +625,21 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 				addon = hdr.Clone()
 			}
 		}
+		
+		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
+		
 		errChan <- &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 		close(errChan)
 		return nil, errChan
 	}
+	
+	if h.PipelineIntegrator != nil {
+		responseTime := time.Since(startTime).Milliseconds()
+		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
+	}
+	
+	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
+
 	dataChan := make(chan []byte)
 	errChan := make(chan *interfaces.ErrorMessage, 1)
 	go func() {
@@ -796,6 +833,7 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 			metadata["auto_selected_model"] = result.ResolvedModel
 			metadata["auto_intent"] = result.Intent
 			metadata["auto_complexity"] = result.Complexity
+			metadata["auto_decision"] = result.Decision // Save for Lab Telemetry
 
 			// Set response headers via gin context
 			if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
@@ -1115,4 +1153,28 @@ func determineTier(providers []string) string {
 	default:
 		return "standard"
 	}
+}
+
+// recordAutoRoutingOutcome safely relays the final request execution metrics back to the AutoResolver Lab.
+func (h *BaseAPIHandler) recordAutoRoutingOutcome(ctx context.Context, metadata map[string]any, executedProvider string, latency time.Duration, success bool, statusCode int) {
+	if h.AutoResolver == nil || metadata == nil {
+		return
+	}
+	var decision *autoroute.RoutingDecision
+	if d, ok := metadata["auto_decision"].(*autoroute.RoutingDecision); ok {
+		decision = d
+	}
+	if decision == nil {
+		return // Request was not managed by AutoResolver
+	}
+	reqID := logging.GetRequestID(ctx)
+	if reqID == "" {
+		if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+			reqID = logging.GetGinRequestID(ginCtx)
+		}
+	}
+	if reqID == "" {
+		reqID = uuid.NewString() // Fallback if no trace context
+	}
+	h.AutoResolver.RecordOutcome(reqID, decision, executedProvider, latency, success, statusCode, nil)
 }

@@ -1,8 +1,10 @@
 package autoroute
 
 import (
+	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +21,7 @@ type CandidateInput struct {
 
 // ProviderScorer implements the composite scoring algorithm.
 type ProviderScorer struct {
+	mu           sync.RWMutex
 	weights      ScoringWeights
 	preferences  []ModelPreference
 	conservation ConservationConfig
@@ -35,6 +38,20 @@ func NewProviderScorer(cfg Config) *ProviderScorer {
 	}
 }
 
+// GetWeights returns a snapshot of the current scoring weights (thread-safe).
+func (s *ProviderScorer) GetWeights() ScoringWeights {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.weights
+}
+
+// SetWeights atomically replaces the scoring weights (thread-safe).
+func (s *ProviderScorer) SetWeights(w ScoringWeights) {
+	s.mu.Lock()
+	s.weights = w
+	s.mu.Unlock()
+}
+
 // ScoreAll evaluates and sorts all candidates, returning scored results.
 // The complexity parameter (0.0-1.0) drives the conservation multiplier.
 func (s *ProviderScorer) ScoreAll(candidates []CandidateInput, complexity float64) []ScoredCandidate {
@@ -42,16 +59,22 @@ func (s *ProviderScorer) ScoreAll(candidates []CandidateInput, complexity float6
 		return nil
 	}
 
+	// Snapshot weights under lock for consistent scoring across all candidates
+	s.mu.RLock()
+	weightsSnap := s.weights
+	s.mu.RUnlock()
+
 	scored := make([]ScoredCandidate, 0, len(candidates))
 
 	for _, c := range candidates {
-		sc := s.scoreOne(c, complexity)
+		sc := s.scoreOne(c, complexity, weightsSnap)
 		scored = append(scored, sc)
 	}
 
 	// Sort by FinalScore descending, then apply tie-breaking
+	const epsilon = 1e-9
 	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].FinalScore != scored[j].FinalScore {
+		if math.Abs(scored[i].FinalScore-scored[j].FinalScore) > epsilon {
 			return scored[i].FinalScore > scored[j].FinalScore
 		}
 		// Tie-break 1: lower latency wins
@@ -66,6 +89,8 @@ func (s *ProviderScorer) ScoreAll(candidates []CandidateInput, complexity float6
 }
 
 // scoreOne computes the full composite score for a single candidate.
+// Uses the provided weightsSnap for consistent scoring across all candidates
+// in a single ScoreAll pass.
 //
 // Pipeline:
 //
@@ -73,7 +98,7 @@ func (s *ProviderScorer) ScoreAll(candidates []CandidateInput, complexity float6
 //	TierScore = BaseScore + TierBoost(provider)
 //	PrefScore = TierScore + PreferenceBoost(model)
 //	FinalScore = PrefScore × ConservationMultiplier(tier, complexity)
-func (s *ProviderScorer) scoreOne(c CandidateInput, complexity float64) ScoredCandidate {
+func (s *ProviderScorer) scoreOne(c CandidateInput, complexity float64, w ScoringWeights) ScoredCandidate {
 	// 1. Availability (binary gate: 0.0 or 1.0)
 	avail := 0.0
 	if c.Available {
@@ -93,10 +118,10 @@ func (s *ProviderScorer) scoreOne(c CandidateInput, complexity float64) ScoredCa
 	}
 
 	// 5. Base score
-	base := s.weights.Availability*avail +
-		s.weights.Quota*quota +
-		s.weights.Latency*latencyScore +
-		s.weights.SuccessRate*successRate
+	base := w.Availability*avail +
+		w.Quota*quota +
+		w.Latency*latencyScore +
+		w.SuccessRate*successRate
 
 	// 6. Tier resolution and boost
 	tier := GetEffectiveTier(c.Model, c.Provider, s.config)

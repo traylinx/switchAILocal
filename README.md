@@ -214,6 +214,37 @@ curl http://localhost:18080/v1/chat/completions \
   }'
 ```
 
+
+### Custom Providers & Legacy Client Support
+
+If you use external generic APIs (e.g., DashScope, Groq) via `openai-compatibility` but your HTTP client strictly hardcodes a legacy model string (e.g., `"model": "alibaba:qwen-plus"` with a colon), you can seamlessly intercept this payload by assigning an explicit `alias`:
+
+```yaml
+# config.yaml
+openai-compatibility:
+  - name: "alibaba"
+    prefix: "alibaba"
+    base-url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    models-url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
+    api-key-entries:
+      - api-key: "sk-your-key-here"
+    models:
+      - name: "qwen-plus"                # Actual DashScope upstream model
+        alias: "alibaba:qwen-plus"       # Captures legacy strictly formatted client requests
+```
+
+Now, your locked-in client can directly query switchAILocal without code changes:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your-key" \
+  -d '{
+    "model": "alibaba:qwen-plus",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
 ### List Available Models
 
 ```bash

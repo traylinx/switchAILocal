@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
@@ -50,7 +51,37 @@ func (e *OllamaExecutor) Identifier() string { return "ollama" }
 func (e *OllamaExecutor) PrepareRequest(_ *http.Request, _ *auth.Auth) error { return nil }
 
 func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor.Request, opts executor.Options) (executor.Response, error) {
-	// Parse the incoming OpenAI-format payload
+	// Fast-path for embeddings operations via Ollama's built-in OpenAI compatibility layer
+	if op, ok := req.Metadata["operation"].(string); ok && op == "embeddings" {
+		payload := req.Payload
+		if req.Model != "" {
+			payload, _ = sjson.SetBytes(payload, "model", req.Model)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/v1/embeddings", bytes.NewReader(payload))
+		if err != nil {
+			return executor.Response{}, fmt.Errorf("failed to create Ollama embeddings request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := e.client.Do(httpReq)
+		if err != nil {
+			return executor.Response{}, fmt.Errorf("Ollama embeddings request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return executor.Response{}, fmt.Errorf("Ollama returned status %d: %s", resp.StatusCode, string(body))
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return executor.Response{}, fmt.Errorf("failed to read Ollama embeddings response: %w", err)
+		}
+		return executor.Response{Payload: body}, nil
+	}
+
+	// Parse the incoming OpenAI-format payload for chat completions
 	var openAIReq struct {
 		Model       string          `json:"model"`
 		Messages    json.RawMessage `json:"messages"`

@@ -8,7 +8,7 @@ import (
 
 func TestResolver_DisabledConfig(t *testing.T) {
 	cfg := Config{Enabled: false}
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	_, err := resolver.Resolve(context.Background(), &RoutingRequest{Content: "test"})
 	if err != ErrAutoRoutingDisabled {
@@ -18,7 +18,7 @@ func TestResolver_DisabledConfig(t *testing.T) {
 
 func TestResolver_NoAvailableProviders(t *testing.T) {
 	cfg := newTestConfig()
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
 		Content: "Hello",
@@ -36,7 +36,7 @@ func TestResolver_NoAvailableProviders(t *testing.T) {
 
 func TestResolver_EmptyCandidates(t *testing.T) {
 	cfg := newTestConfig()
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
 		Content:         "Hello",
@@ -51,7 +51,7 @@ func TestResolver_EmptyCandidates(t *testing.T) {
 
 func TestResolver_HappyPath(t *testing.T) {
 	cfg := newTestConfig()
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
 		Content: "Implement a distributed consensus algorithm in Rust",
@@ -88,7 +88,7 @@ func TestResolver_HappyPath(t *testing.T) {
 
 func TestResolver_FallbackChainOrdering(t *testing.T) {
 	cfg := newTestConfig()
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
 		Content: "Simple hello",
@@ -115,7 +115,7 @@ func TestResolver_IntentFilter(t *testing.T) {
 	cfg.IntentMatrix = map[string][]string{
 		"coding": {"ollama:kimi-k2.5:cloud", "claudecli:claude-sonnet-4"},
 	}
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
 		Content:    "Write a Go function",
@@ -162,7 +162,7 @@ func TestParseAutoModelHint(t *testing.T) {
 
 func BenchmarkResolve(b *testing.B) {
 	cfg := newTestConfig()
-	resolver := NewAutoResolver(cfg)
+	resolver := NewAutoResolver(cfg, b.TempDir())
 
 	candidates := make([]CandidateInput, 20)
 	for i := 0; i < 20; i++ {

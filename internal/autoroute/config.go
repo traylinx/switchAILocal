@@ -93,6 +93,7 @@ type ConservationConfig struct {
 
 // DiscoveryConfig controls active and passive intelligence gathering.
 type DiscoveryConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
 	ProbeOnStartup    bool          `yaml:"probe-on-startup" json:"probe_on_startup"`
 	ProbeInterval     time.Duration `yaml:"probe-interval" json:"probe_interval"`
 	ProbeTimeout      time.Duration `yaml:"probe-timeout" json:"probe_timeout"`

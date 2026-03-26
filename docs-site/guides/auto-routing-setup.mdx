@@ -1,0 +1,185 @@
+---
+title: 'Auto-Routing Setup'
+description: 'Step-by-step guide to enabling Intelligent Auto-Routing (Cortex)'
+---
+
+## Overview
+
+The Cortex Intelligent Auto-Routing engine automatically selects the optimal model for each request based on provider health, latency, quota, and success rate. This guide walks you through enabling and configuring it.
+
+## Quick Start
+
+Add this block to your `config.yaml`:
+
+```yaml config.yaml
+auto-routing:
+  enabled: true
+  max-resolution-ms: 5ms
+
+  weights:
+    availability: 0.35
+    quota: 0.25
+    latency: 0.20
+    success-rate: 0.20
+
+  discovery:
+    enabled: true
+    probe-on-startup: true
+    probe-interval: 15m
+    probe-timeout: 5s
+    passive-monitoring: true
+    cache-ttl: 24h
+
+  conservation:
+    enabled: true
+    simple-threshold-tokens: 500
+    premium-conservation-at: 0.20
+
+  lab:
+    enabled: true
+    adaptation-interval: 24h
+    max-weight-drift: 0.10
+```
+
+Restart the server:
+
+```bash
+ail restart
+```
+
+You should see `Intelligent Auto-Routing Ready` in the startup logs.
+
+## Configuration Reference
+
+### Weights
+
+Control how models are scored. Must sum to 1.0.
+
+| Weight | Default | Description |
+|--------|---------|-------------|
+| `availability` | 0.35 | Is the provider online and responding? |
+| `quota` | 0.25 | How much daily quota remains? |
+| `latency` | 0.20 | How fast does the provider respond? |
+| `success-rate` | 0.20 | What percentage of requests succeed? |
+
+### Preferences
+
+Soft-steer the router toward specific models:
+
+```yaml config.yaml
+auto-routing:
+  preferences:
+    - model: "claude:claude-3-5-sonnet-20241022"
+      preference: 0.9
+      reason: "Best reasoning model"
+    - model: "geminicli:gemini-2.5-flash"
+      preference: 0.8
+      reason: "Fast and free"
+```
+
+### Intent Matrix
+
+The `intent-matrix` defines model pools for specific routing intents. When you request `model: "auto:coding"`, the Cortex Router will evaluate all models in the `coding` list and pick the best one in real-time.
+
+```yaml config.yaml
+auto-routing:
+  intent-matrix:
+    coding:          # Coding & technical tasks
+      - "claude:claude-3-5-sonnet-20241022"
+      - "geminicli:gemini-3.1-pro-preview"
+    fast:            # Rapid heuristic tasks
+      - "switchai:switchai-fast"
+    reasoning:       # Deep logic puzzles
+      - "claude:claude-3-5-sonnet-20241022"
+    creative:        # Storytelling & roleplay
+      - "geminicli:gemini-2.5-pro"
+    vision:          # Image processing
+      - "ollama:qwen3-vl:235b-instruct-cloud"
+    audio:           # Audio input processing
+      - "xiaomi:mimo-v2-tts"
+    transcription:   # Speech-to-text
+      - "whisper-1"
+```
+
+> **FAQ: Why do I also have a `pipeline.intelligence.matrix` in my config?**
+> The `pipeline.intelligence.matrix` evaluates to a **single, hardcoded string** and is used purely by the legacy Lua pipeline as strict fallbacks. 
+> The `auto-routing.intent-matrix` takes an **array of strings** and powers the modern Cortex Intelligent Lab, performing real-time health checks, latency scoring, and dynamic load balancing across multiple candidate models!
+
+### Conservation
+
+Token conservation prevents expensive models from being used for trivial tasks:
+
+```yaml config.yaml
+auto-routing:
+  conservation:
+    enabled: true
+    simple-threshold-tokens: 500    # Requests below this token count are "simple"
+    premium-conservation-at: 0.20   # Penalize premium models by 20% for simple tasks
+```
+
+### Autonomous Lab
+
+The Lab automatically optimizes scoring weights through shadow experiments:
+
+```yaml config.yaml
+auto-routing:
+  lab:
+    enabled: true
+    adaptation-interval: 24h       # Duration of each experiment window
+    max-weight-drift: 0.10         # Max allowed weight change per hypothesis
+```
+
+## Verifying It Works
+
+### 1. Check the Dashboard
+
+Navigate to `http://localhost:18080/management` and look for the **Auto-Routing Card**.
+
+### 2. Test with curl
+
+```bash
+# Simple auto-routing
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello!"}]}'
+
+# Intent-based routing
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a sort algorithm"}]}'
+
+# Vector Embeddings
+curl http://localhost:18080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"input": "Convert this string into a vector embedding"}'
+```
+
+### 3. Check Telemetry
+
+```bash
+# Lab status
+curl http://localhost:18080/v0/management/autoroute/status
+
+# Recent routing journal
+curl http://localhost:18080/v0/management/autoroute/journal
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auto-Routing API" icon="route" href="/api/auto-routing">
+    Full API reference for auto-routing
+  </Card>
+  <Card title="Cortex Router" icon="brain" href="/intelligent-systems/cortex-router">
+    Deep dive into the routing architecture
+  </Card>
+  <Card title="Management Dashboard" icon="chart-line" href="/guides/management-dashboard">
+    Visualize routing decisions
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/providers">
+    Configure providers
+  </Card>
+</CardGroup>

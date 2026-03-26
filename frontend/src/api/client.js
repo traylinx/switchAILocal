@@ -101,6 +101,14 @@ class APIClient {
   getStateBoxStatus() {
     return this.request('/state-box/status');
   }
+
+  getAutoRouteStatus() {
+    return this.request('/autoroute/status');
+  }
+
+  getAutoRouteJournal(limit = 20) {
+    return this.request(`/autoroute/journal?limit=${limit}`);
+  }
 }
 
 export const apiClient = new APIClient();

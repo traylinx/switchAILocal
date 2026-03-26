@@ -1,57 +1,102 @@
-# Management API Reference
+# Management & Telemetry API Reference
 
-Comprehensive list of all management and monitoring endpoints for switchAILocal.
+The management API is available on the same port as the main server. All endpoints require the management authentication middleware (configured via `MANAGEMENT_PASSWORD` env var or config).
 
-**Base URL**: `http://localhost:18080/v0/management`
-**Auth**: Requires `X-Management-Key` header.
+> For dashboard UI access, navigate to `http://localhost:18080/management`.
 
-## 📊 Monitoring & Analytics
+## Auto-Routing Endpoints
 
-| Endpoint            | Method | Description                             |
-| ------------------- | ------ | --------------------------------------- |
-| `/analytics`        | GET    | Global performance statistics           |
-| `/memory/stats`     | GET    | Stats for the memory and routing system |
-| `/heartbeat/status` | GET    | Detailed health status of all providers |
-| `/steering/rules`   | GET    | List currently active steering rules    |
-| `/hooks/status`     | GET    | Current hook configurations and status  |
+### GET `/v0/management/autoroute/status`
 
-### Example: Check Analytics
+Returns the current Lab telemetry snapshot.
 
-```bash
-curl http://localhost:18080/v0/management/analytics \
-  -H "X-Management-Key: your-secret-key"
+**Response:**
+```json
+{
+  "enabled": true,
+  "active_weights": {
+    "availability": 0.35,
+    "quota": 0.25,
+    "latency": 0.2,
+    "success_rate": 0.2
+  },
+  "shadow_weights": {
+    "availability": 0.36,
+    "quota": 0.24,
+    "latency": 0.21,
+    "success_rate": 0.19
+  },
+  "active_hypothesis": true,
+  "window_req_count": 42,
+  "avg_prod_rqs": 0.82,
+  "avg_shadow_rqs": 0.85
+}
 ```
 
----
+| Field | Description |
+|-------|-------------|
+| `active_weights` | Current production scoring weights |
+| `shadow_weights` | Current Lab hypothesis weights |
+| `active_hypothesis` | Whether the Lab is actively testing a hypothesis |
+| `window_req_count` | Requests evaluated in the current adaptation window |
+| `avg_prod_rqs` | Average RQS with production weights |
+| `avg_shadow_rqs` | Average RQS with shadow weights |
 
-## ⚙️ Operations & Management
+### GET `/v0/management/autoroute/journal`
 
-| Endpoint           | Method | Description                               |
-| ------------------ | ------ | ----------------------------------------- |
-| `/steering/reload` | POST   | Hot-reload routing and steering rules     |
-| `/hooks/reload`    | POST   | Hot-reload all hook configurations        |
-| `/config`          | GET    | Retrieve the current system configuration |
-| `/config`          | PATCH  | Update specific fields in config.yaml     |
+Returns the most recent routing decisions from the circular ring buffer.
 
-### Example: Reload Steering Rules
-
-```bash
-curl -X POST http://localhost:18080/v0/management/steering/reload \
-  -H "X-Management-Key: your-secret-key"
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "Timestamp": "2026-03-26T14:58:38.905Z",
+      "RequestID": "6502391f",
+      "Intent": "coding",
+      "Complexity": 0.1,
+      "ProdModel": "deepseek-v3.1:671b-cloud",
+      "ProdTier": "free",
+      "ProdLatency": 56406054347,
+      "ProdSuccess": true,
+      "ProdRQS": 0.8,
+      "ShadowModel": "deepseek-v3.1:671b-cloud",
+      "ShadowTier": "free",
+      "ShadowExpectedRQS": 0.8,
+      "WeightAvail": 0.35,
+      "WeightQuota": 0.25,
+      "WeightLatency": 0.2,
+      "WeightSuccess": 0.2
+    }
+  ]
+}
 ```
 
----
+## Provider Health Endpoints
 
-## 🛠️ System Health
+### GET `/v1/providers`
 
-| Endpoint     | Method | Description                         |
-| ------------ | ------ | ----------------------------------- |
-| `/health`    | GET    | Basic server health check (no auth) |
-| `/providers` | GET    | Detailed provider registration info |
+Returns a list of all registered providers and their current health status.
 
-## Management Dashboard
+### GET `/v1/models`
 
-A full web-based dashboard is available at:
-`http://localhost:18080/management`
+Returns a list of all available models across all providers (OpenAI-compatible format).
 
-Use this for visual monitoring, log tailing, and live config editing.
+## Configuration Endpoints
+
+### GET `/v0/management/config`
+
+Returns the current server configuration (sanitized, no API keys).
+
+### POST `/v0/management/config`
+
+Hot-reload configuration changes without restarting the server.
+
+## Dashboard UI
+
+Navigate to `http://localhost:18080/management` for the real-time dashboard. It includes:
+
+- **Provider Health Cards**: Live status of all connected providers
+- **Auto-Routing Card**: Active weights visualization, Lab status, shadow hypothesis
+- **Live Routing Journal**: Table of recent routing decisions with RQS scores
+- **System Metrics**: Request counts, error rates, latency percentiles

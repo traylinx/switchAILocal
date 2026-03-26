@@ -183,6 +183,44 @@ func (h *OpenAIAPIHandler) Completions(c *gin.Context) {
 
 }
 
+// Embeddings handles the /v1/embeddings endpoint.
+// It parses the request to find the target model and sends it to the provider.
+// This endpoint follows the standard OpenAI embeddings API specification.
+func (h *OpenAIAPIHandler) Embeddings(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{
+			StatusCode: http.StatusBadRequest,
+			Error:      fmt.Errorf("invalid request: %v", err),
+		})
+		return
+	}
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["embedding"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{
+				StatusCode: http.StatusBadRequest,
+				Error:      fmt.Errorf("model not specified and no 'embedding' configured in intelligence.matrix"),
+			})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "embeddings", "application/json")
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}
+
 // convertCompletionsRequestToChatCompletions converts OpenAI completions API request to chat completions format.
 // This allows the completions endpoint to use the existing chat completions infrastructure.
 //

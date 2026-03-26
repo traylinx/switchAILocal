@@ -9,24 +9,112 @@ Auto-routing enables switchAILocal to automatically select the best available pr
 
 ## How It Works
 
-### Basic Auto-Routing
+### Cortex Intelligent Routing
 
-Simply use the model name without a provider prefix:
+Use the `auto` or `auto:<intent>` model prefix to activate the Cortex Router. It evaluates all available providers using a composite scoring algorithm and selects the best one.
 
-```python
-from openai import OpenAI
+```bash
+# Basic: Let Cortex pick the best model
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello!"}]}'
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
-
-# Auto-routing: no provider prefix
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",  # Not "geminicli:gemini-2.5-pro"
-    messages=[{"role": "user", "content": "Hello!"}]
-)
+# Intent-based: Route to coding-optimized models
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a Go sorting algorithm"}]}'
 ```
+
+Supported intents: `coding`, `reasoning`, `creative`, `fast`, `secure`, `vision`, `audio`.
+
+### Scoring Formula
+
+Each candidate model is scored using configurable weights:
+
+```
+BaseScore    = W_a × Availability + W_q × Quota + W_l × Latency + W_s × SuccessRate
+TierScore    = BaseScore + TierBoost(provider_tier)
+PrefScore    = TierScore + PreferenceBoost(model)
+FinalScore   = PrefScore × ConservationMultiplier(tier, complexity)
+```
+
+The model with the highest `FinalScore` wins. Configure weights in `config.yaml`:
+
+```yaml config.yaml
+auto-routing:
+  enabled: true
+  weights:
+    availability: 0.35
+    quota: 0.25
+    latency: 0.20
+    success-rate: 0.20
+```
+
+### Token Conservation
+
+When enabled, simple requests (short prompts below `simple-threshold-tokens`) automatically penalize expensive premium-tier models, routing to cheaper alternatives:
+
+```yaml config.yaml
+auto-routing:
+  conservation:
+    enabled: true
+    simple-threshold-tokens: 500
+    premium-conservation-at: 0.20
+```
+
+### Autonomous Lab (Self-Optimizing Weights)
+
+The Lab runs shadow experiments to continuously improve routing quality:
+
+1. **Hypothesis**: Generate slightly perturbed weights
+2. **Shadow Score**: Score every request with both production and shadow weights
+3. **Observe**: Accumulate RQS (Routing Quality Score) over the adaptation interval
+4. **Promote/Discard**: If shadow weights produce ≥5% higher RQS, promote them
+
+```yaml config.yaml
+auto-routing:
+  lab:
+    enabled: true
+    adaptation-interval: 24h
+    max-weight-drift: 0.10
+```
+
+### Intent Matrix
+
+Define which models are eligible for specific intents:
+
+```yaml config.yaml
+auto-routing:
+  intent-matrix:
+    coding:
+      - "claude:claude-3-5-sonnet-20241022"
+      - "geminicli:gemini-2.5-pro"
+    fast:
+      - "switchai:switchai-fast"
+      - "geminicli:gemini-2.5-flash"
+    reasoning:
+      - "claude:claude-3-5-sonnet-20241022"
+```
+
+### Telemetry API
+
+Monitor routing decisions in real-time:
+
+```bash
+# Current Lab status + live weights
+curl http://localhost:18080/v0/management/autoroute/status
+
+# Recent routing decisions journal
+curl http://localhost:18080/v0/management/autoroute/journal
+```
+
+Or view the dashboard at `http://localhost:18080/management`.
+
+### Legacy Provider-Priority Routing
+
+You can also route by simply omitting the provider prefix from your model name:
 
 ### Routing Algorithm
 

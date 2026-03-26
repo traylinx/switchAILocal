@@ -105,13 +105,68 @@ routing:
   # Supported values: "round-robin" (default), "fill-first".
   strategy: "round-robin"
 
-  # Priority list for "auto" model resolution strategy.
-  # When set, the system checks these models in order and picks the first active one.
-  # Supports "provider:model" syntax.
-  # auto-model-priority:
-  #   - "ollama:gpt-oss:120b-cloud"
-  #   - "switchai-chat"
-  #   - "gemini-2.5-flash"
+# =============================================================================
+# 5. INTELLIGENT AUTO-ROUTING (CORTEX)
+# =============================================================================
+
+auto-routing:
+  # Enable the intelligent multi-provider routing engine
+  enabled: true
+  max-resolution-ms: 5ms
+
+  # Weights (must sum to 1.0) defining how models are scored
+  weights:
+    availability: 0.35
+    quota: 0.25
+    latency: 0.20
+    success-rate: 0.20
+
+  # Soft-steering logic to boost specific models
+  preferences:
+    - model: "gemini:gemini-2.5-flash"
+      preference: 0.8
+      reason: "Preferred fast model"
+    - model: "claude:claude-3-5-sonnet-20241022"
+      preference: 0.9
+      reason: "Preferred reasoning model"
+    - model: "switchai:switchai-fast"
+      preference: 0.7
+      reason: "Fallback fast switchai model"
+
+  # Tier and constraint definition overrides per provider
+  providers:
+    # ollama:
+    #   tier: local
+    # claude:
+    #   tier: premium
+
+  # Automatic Discovery mapping
+  discovery:
+    enabled: true
+    probe-on-startup: true
+    probe-interval: 15m
+    probe-timeout: 5s
+    passive-monitoring: true
+    cache-ttl: 24h
+
+  # Token conservation logic (route simple tasks to cheap tiers instead of premium)
+  conservation:
+    enabled: true
+    simple-threshold-tokens: 500
+    premium-conservation-at: 0.20
+
+  # Autonomous Lab (Self-optimizing weights via shadow experiments)
+  lab:
+    enabled: true
+    adaptation-interval: 24h
+    max-weight-drift: 0.10
+
+  # Intent-Based Filtering matrix
+  # Maps common intents (e.g. coding, fast, reasoning) to allowed model pools
+  # intent-matrix:
+  #   coding:
+  #     - "claude:claude-3-5-sonnet-20241022"
+  #     - "gemini:gemini-2.5-pro"
 
 # =============================================================================
 # 5. PROVIDER CONFIGURATIONS
@@ -127,6 +182,8 @@ switchai-api-key:
         alias: "switchai-fast"
       - name: "deepseek-reasoner"
         alias: "switchai-reasoner"
+      - name: "mistral-embed"
+        alias: "switchai-embed"
 
 # -- GOOGLE Gemini API --
 gemini-api-key:
@@ -165,18 +222,50 @@ lmstudio:
   base-url: "http://localhost:1234/v1"
   auto-discover: true
 
-# -- OPENAI COMPATIBILITY (Groq, OpenRouter, Together AI, etc.) --
+# -- OPENAI COMPATIBILITY (Groq, OpenRouter, Alibaba, etc.) --
+# Custom providers automatically receive standard OpenAI formatting.
+# 
+# TIP: If your HTTP client strictly requires legacy prefixes (e.g., "alibaba:qwen-plus"),
+# use the `alias:` field under `models` to map that exact string to the upstream model!
 openai-compatibility:
   - name: "groq"
     prefix: "groq"
     base-url: "https://api.groq.com/openai/v1"
     api-key-entries:
       - api-key: "gsk_..."
-  - name: "openrouter"
-    prefix: "or"
-    base-url: "https://openrouter.ai/api/v1"
+    models:
+      - name: "openai/gpt-oss-20b"
+        alias: "groq:gpt-oss-20b"
+  - name: "alibaba"
+    prefix: "alibaba"
+    base-url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    models-url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
     api-key-entries:
-      - api-key: "sk-or-v1-..."
+      - api-key: "sk-..."
+    models:
+      - name: "qwen-plus"
+        alias: "alibaba:qwen-plus"
+      - name: "MiniMax-M2.5"
+        alias: "alibaba:MiniMax-M2.5"
+      - name: "glm-5"
+        alias: "alibaba:glm-5"
+      - name: "kimi-k2.5"
+        alias: "alibaba:kimi-k2.5"
+  - name: "xiaomi"
+    prefix: "xiaomi"
+    base-url: "https://api.xiaomimimo.com/v1"
+    models-url: "https://api.xiaomimimo.com/v1/models"
+    api-key-entries:
+      - api-key: "sk-..."
+    models:
+      - name: "mimo-v2-pro"
+        alias: "xiaomi:mimo-v2-pro"
+      - name: "mimo-v2-omni"
+        alias: "xiaomi:mimo-v2-omni"
+      - name: "mimo-v2-flash"
+        alias: "xiaomi:mimo-v2-flash"
+      - name: "mimo-v2-tts"
+        alias: "xiaomi:mimo-v2-tts"
 
 # -- VERTEX COMPATIBILITY --
 # For third-party providers using Vertex-style protocols
@@ -206,6 +295,7 @@ intelligence:
     fast: "switchai-fast"
     secure: "ollama:llama3.2"
     vision: "ollama:qwen3-vl:235b-instruct-cloud"
+    embedding: "switchai-embed"
 
   # -- PHASE 2 FEATURES --
 

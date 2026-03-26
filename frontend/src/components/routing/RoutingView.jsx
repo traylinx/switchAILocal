@@ -7,6 +7,7 @@ import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
 import { Trash2, Plus } from 'lucide-react';
+import { AutoRoutingCard } from './AutoRoutingCard';
 
 export function RoutingView() {
   const { data: mappings, mutate, isLoading } = useSWR(
@@ -95,6 +96,8 @@ export function RoutingView() {
         </Button>
       </header>
       
+      <AutoRoutingCard />
+
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead style={{ backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>

@@ -158,10 +158,10 @@ func (s *Service) Initialize(ctx context.Context) error {
 			discoverySvc, err = discovery.NewService("", s.stateBox)
 		} else {
 			// Fallback to legacy behavior
-			expandedCacheDir, expandErr := util.ExpandPath(s.config.Discovery.CacheDir)
+			expandedCacheDir, expandErr := util.ExpandPath("~/.switchailocal/cache/discovery")
 			if expandErr != nil {
 				log.Warnf("Failed to expand discovery cache dir: %v", expandErr)
-				expandedCacheDir = s.config.Discovery.CacheDir
+				expandedCacheDir = "~/.switchailocal/cache/discovery"
 			}
 			discoverySvc, err = discovery.NewService(expandedCacheDir, nil)
 		}
@@ -352,10 +352,10 @@ func (s *Service) Initialize(ctx context.Context) error {
 			dbPath = filepath.Join(s.stateBox.IntelligenceDir(), "feedback.db")
 		} else {
 			// Fallback to legacy behavior
-			expandedCacheDir, err := util.ExpandPath(s.config.Discovery.CacheDir)
+			expandedCacheDir, err := util.ExpandPath("~/.switchailocal/cache/discovery")
 			if err != nil {
 				log.Warnf("Failed to expand discovery cache dir for feedback: %v", err)
-				expandedCacheDir = s.config.Discovery.CacheDir
+				expandedCacheDir = "~/.switchailocal/cache/discovery"
 			}
 			dbPath = filepath.Join(expandedCacheDir, "feedback.db")
 		}

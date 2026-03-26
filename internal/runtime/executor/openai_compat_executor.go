@@ -62,6 +62,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 
 	if op, ok := req.Metadata["operation"].(string); ok && op != "" {
 		switch op {
+		case "embeddings":
+			endpoint = "/embeddings"
+			skipTranslation = true
 		case "images_generations":
 			endpoint = "/images/generations"
 		case "audio_transcriptions":
@@ -78,6 +81,24 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 	var translated []byte
 	if skipTranslation {
 		translated = req.Payload
+		if op, ok := req.Metadata["operation"].(string); ok && op == "embeddings" {
+			// Ensure the model is injected into the payload since translation is skipped
+			upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
+			modelOverride := e.resolveUpstreamModel(req.Model, auth)
+			targetModel := upstreamModel
+			if modelOverride != "" {
+				targetModel = modelOverride
+			}
+			if targetModel == "" {
+				targetModel = req.Model
+			}
+
+			log.Infof("DEBUG EMBEDDINGS OP: req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s", req.Model, upstreamModel, modelOverride, targetModel)
+
+			if targetModel != "" {
+				translated, _ = sjson.SetBytes(translated, "model", targetModel)
+			}
+		}
 	} else {
 		// Translate inbound request to OpenAI format
 		from := opts.SourceFormat
@@ -101,6 +122,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 	}
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
+
+	log.Infof("OPENAI COMPAT EXECUTOR SENDING PAYLOAD: %s", string(translated))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return resp, err
@@ -131,7 +154,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		AuthType:  authType,
 		AuthValue: authValue,
 	})
-	
+
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {

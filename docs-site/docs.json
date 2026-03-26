@@ -71,6 +71,7 @@
             "group": "Guides",
             "pages": [
               "guides/setup-providers",
+              "guides/auto-routing-setup",
               "guides/docker-deployment",
               "guides/management-dashboard",
               "guides/troubleshooting"

@@ -10,7 +10,8 @@ package config
 
 import (
 	"strings"
-	
+	"time"
+
 	"github.com/traylinx/switchAILocal/internal/autoroute"
 )
 
@@ -204,11 +205,14 @@ type FeatureFlag struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
-// DiscoveryConfig configures model discovery behavior.
+// DiscoveryConfig controls active and passive intelligence gathering.
 type DiscoveryConfig struct {
-	Enabled         bool   `yaml:"enabled" json:"enabled"`
-	RefreshInterval int    `yaml:"refresh-interval,omitempty" json:"refresh-interval,omitempty"` // seconds
-	CacheDir        string `yaml:"cache-dir,omitempty" json:"cache-dir,omitempty"`
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	ProbeOnStartup    bool          `yaml:"probe-on-startup" json:"probe_on_startup"`
+	ProbeInterval     time.Duration `yaml:"probe-interval" json:"probe_interval"`
+	ProbeTimeout      time.Duration `yaml:"probe-timeout" json:"probe_timeout"`
+	PassiveMonitoring bool          `yaml:"passive-monitoring" json:"passive_monitoring"`
+	CacheTTL          time.Duration `yaml:"cache-ttl" json:"cache_ttl"`
 }
 
 // AutoAssignConfig configures automatic model assignment.
@@ -322,12 +326,7 @@ func (c *SDKConfig) SanitizeIntelligence() {
 
 	// Phase 2 defaults (all disabled by default when master switch is off)
 	// Discovery defaults
-	if c.Intelligence.Discovery.RefreshInterval == 0 {
-		c.Intelligence.Discovery.RefreshInterval = 3600 // 1 hour
-	}
-	if c.Intelligence.Discovery.CacheDir == "" {
-		c.Intelligence.Discovery.CacheDir = "~/.switchailocal/cache/discovery"
-	}
+	// Removed RefreshInterval and CacheDir references as per instruction.
 
 	// Auto-assign defaults
 	if c.Intelligence.AutoAssign.Overrides == nil {

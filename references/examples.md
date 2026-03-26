@@ -1,95 +1,160 @@
-# Real-World Use Cases
+# Real-World Examples
 
-Practical examples of how to leverage switchAILocal in agentic workflows.
+Working examples you can copy-paste directly. All assume the server is running on `http://localhost:18080`.
 
-## 1. Code Review with Deep Context
-
-Use `geminicli:` to attach a whole directory for a security audit.
+## 1. Basic Chat (FREE via CLI)
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
   -d '{
     "model": "geminicli:",
-    "messages": [{"role": "user", "content": "Audit this codebase for OWASP vulnerabilities"}],
+    "messages": [{"role": "user", "content": "Explain the CAP theorem in 2 sentences."}]
+  }'
+```
+
+## 2. Auto-Routing (Let Cortex Pick)
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "Hello! How are you?"}]
+  }'
+```
+
+## 3. Intent-Based Routing (Coding)
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "auto:coding",
+    "messages": [{"role": "user", "content": "Write a thread-safe LRU cache in Go with generics."}]
+  }'
+```
+
+## 4. Streaming Response
+
+```bash
+curl -N http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [{"role": "user", "content": "Write a poem about distributed systems"}],
+    "stream": true
+  }'
+```
+
+## 5. File Attachments (CLI Providers)
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:",
+    "messages": [{"role": "user", "content": "Review this codebase and suggest improvements"}],
     "extra_body": {
       "cli": {
-        "attachments": [{"type": "folder", "path": "./src"}]
+        "attachments": [
+          {"type": "folder", "path": "./src"},
+          {"type": "file", "path": "./README.md"}
+        ],
+        "flags": {"auto_approve": true}
       }
     }
   }'
 ```
 
----
-
-## 2. Fast Private Summarization
-
-Use local `ollama:` models for sensitive data where privacy is paramount.
+## 6. switchAI Cloud (Per-Token)
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "ollama:llama3.2",
-    "messages": [{"role": "user", "content": "Summarize this confidential agreement: [TEXT]"}]
+    "model": "switchai-fast",
+    "messages": [{"role": "user", "content": "Summarize the latest AI news."}]
   }'
 ```
 
----
-
-## 3. Autonomous Refactoring
-
-Use `auto_approve` with CLI providers to perform multi-step refactoring tasks without manual confirmation.
-
-```bash
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claudecli:",
-    "messages": [{"role": "user", "content": "Split the monolith in main.go into smaller modules"}],
-    "extra_body": {
-      "cli": {
-        "flags": {"auto_approve": true, "yolo": true}
-      }
-    }
-  }'
-```
-
----
-
-## 4. Multi-Provider Validation
-
-Query two different providers in parallel to verify a complex fact or reasoning step.
+## 7. Python SDK
 
 ```python
-import asyncio
-from openai import AsyncOpenAI
+from openai import OpenAI
 
-client = AsyncOpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
 
-async def verify_fact(question):
-    tasks = [
-        client.chat.completions.create(model="geminicli:", messages=[{"role": "user", "content": question}]),
-        client.chat.completions.create(model="ollama:llama3.2", messages=[{"role": "user", "content": question}])
-    ]
-    responses = await asyncio.gather(*tasks)
-    return [r.choices[0].message.content for r in responses]
+# Auto-routing
+response = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response.choices[0].message.content)
 
-# Check if both agree
+# Streaming
+stream = client.chat.completions.create(
+    model="geminicli:",
+    messages=[{"role": "user", "content": "Explain monads"}],
+    stream=True
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-## 5. Session-Based Workflows
+## 8. Node.js SDK
 
-Resume a previous CLI session to continue a complex task.
+```javascript
+import OpenAI from 'openai';
 
-```json
-{
-  "model": "geminicli:",
-  "messages": [{"role": "user", "content": "Now implement the unit tests for that function we just wrote"}],
-  "extra_body": {
-    "cli": {
-      "session_id": "latest"
-    }
-  }
-}
+const client = new OpenAI({
+  baseURL: 'http://localhost:18080/v1',
+  apiKey: 'sk-test-123',
+});
+
+const response = await client.chat.completions.create({
+  model: 'auto:coding',
+  messages: [{ role: 'user', content: 'Write a React hook for debouncing.' }],
+});
+
+console.log(response.choices[0].message.content);
+```
+
+## 9. Check Lab Telemetry
+
+```bash
+# Current weights and Lab status
+curl -s http://localhost:18080/v0/management/autoroute/status | python3 -m json.tool
+
+# Recent routing decisions
+curl -s http://localhost:18080/v0/management/autoroute/journal | python3 -m json.tool
+```
+
+## 10. Multi-Provider with Xiaomi (Thinking + Web Search)
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "xiaomi:mimo-v2-flash",
+    "messages": [{"role": "user", "content": "Write a LinkedIn post about https://2md.traylinx.com/"}],
+    "thinking": {"type": "enabled"},
+    "tools": [
+      {
+        "type": "web_search",
+        "max_keyword": 3,
+        "force_search": true,
+        "limit": 1,
+        "user_location": {}
+      }
+    ],
+    "tool_choice": "auto"
+  }'
 ```

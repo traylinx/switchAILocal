@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // ErrAutoRoutingDisabled is returned when auto-routing is not enabled in config.
@@ -30,15 +34,93 @@ type RoutingRequest struct {
 
 // AutoResolver orchestrates the full routing decision pipeline.
 type AutoResolver struct {
-	config Config
-	scorer *ProviderScorer
+	config       Config
+	scorer       *ProviderScorer
+	candidates   []CandidateInput
+	candidatesMu sync.RWMutex // Protects parallel updates from Discovery/Health phases
+	monitor      *ProviderHealthMonitor
+	lab          *Lab
 }
 
 // NewAutoResolver creates a new resolver with the given configuration.
-func NewAutoResolver(cfg Config) *AutoResolver {
-	return &AutoResolver{
+// workspaceDir is used for persistent storage (journal TSV files).
+func NewAutoResolver(cfg Config, workspaceDir string) *AutoResolver {
+	r := &AutoResolver{
 		config: cfg,
 		scorer: NewProviderScorer(cfg),
+	}
+	r.monitor = NewProviderHealthMonitor(r, 60*time.Second)
+	
+	if cfg.Lab.Enabled {
+		journal, err := NewExperimentJournal(workspaceDir, true)
+		if err != nil {
+			log.WithError(err).Warn("Failed to create experiment journal, Lab telemetry will be in-memory only")
+			journal = &ExperimentJournal{
+				enabled:   true,
+				maxRecent: 100,
+				recent:    make([]JournalEntry, 100),
+			}
+		}
+		r.lab = NewLab(cfg, r.scorer, journal)
+	}
+	
+	return r
+}
+
+// SeedCandidates allows the DiscoveryService to inject real-time provider data
+// and registers them with the health monitor for initial state tracking.
+func (r *AutoResolver) SeedCandidates(candidates []CandidateInput) {
+	r.candidatesMu.Lock()
+	r.candidates = candidates
+	r.candidatesMu.Unlock()
+	
+	if r.monitor != nil {
+		r.monitor.RegisterInitialCandidates(candidates)
+	}
+}
+
+// updateCandidatesDirectly updates the candidate list without re-registering
+// with the health monitor. Used by the monitor's syncToResolverLocked to
+// avoid the circular call deadlock (C1 fix).
+func (r *AutoResolver) updateCandidatesDirectly(candidates []CandidateInput) {
+	r.candidatesMu.Lock()
+	r.candidates = candidates
+	r.candidatesMu.Unlock()
+}
+
+// GetCandidates returns the current live state of providers
+func (r *AutoResolver) GetCandidates() []CandidateInput {
+	r.candidatesMu.RLock()
+	defer r.candidatesMu.RUnlock()
+	return r.candidates
+}
+
+// StartMonitor begins background health checks
+func (r *AutoResolver) StartMonitor(ctx context.Context) {
+	if r.monitor != nil {
+		r.monitor.Start(ctx)
+	}
+}
+
+// RecordOutcome allows the proxy handler to passively report request statistics
+// and triggers the Lab optimization cycle.
+func (r *AutoResolver) RecordOutcome(reqID string, decision *RoutingDecision, provider string, latency time.Duration, success bool, httpCode int, headers http.Header) {
+	if r.monitor != nil {
+		r.monitor.RecordRequestOutcome(provider, latency, success, httpCode, headers)
+	}
+	
+	if r.lab != nil && decision != nil {
+		outcome := RequestOutcome{
+			Timestamp:          time.Now(),
+			Model:              decision.SelectedModel,
+			Provider:           provider,
+			Tier:               GetEffectiveTier(decision.SelectedModel, provider, r.config),
+			Latency:            latency,
+			Success:            success,
+			StatusCode:         httpCode,
+			EstimatedComplexity: decision.EstimatedComplexity,
+		}
+		r.lab.RecordOutcome(reqID, decision.Intent, decision.EstimatedComplexity, decision, outcome)
 	}
 }
 
@@ -66,10 +148,15 @@ func (r *AutoResolver) Resolve(ctx context.Context, req *RoutingRequest) (*Routi
 	// Step 1: Estimate complexity
 	complexity := EstimateComplexity(req.Content)
 
-	// Step 2: Filter by intent (if intent matrix is configured)
+	// Step 2: Classify intent (Phase G)
+	// Uses explicit hint if provided, otherwise runs fast heuristic classification
+	classification := ClassifyIntent(req.Content, req.IntentHint)
+	resolvedIntent := classification.Intent
+
+	// Step 3: Filter by intent (if intent matrix is configured)
 	candidates := req.AvailableModels
-	if req.IntentHint != "" && len(r.config.IntentMatrix) > 0 {
-		candidates = filterByIntent(req.IntentHint, candidates, r.config.IntentMatrix)
+	if resolvedIntent != "" && resolvedIntent != IntentGeneral && len(r.config.IntentMatrix) > 0 {
+		candidates = filterByIntent(resolvedIntent, candidates, r.config.IntentMatrix)
 	}
 
 	// Step 3: Check for timeout before scoring
@@ -114,9 +201,10 @@ func (r *AutoResolver) Resolve(ctx context.Context, req *RoutingRequest) (*Routi
 	decision := &RoutingDecision{
 		SelectedModel:       scored[winner].Model,
 		FallbackChain:       fallbacks,
-		Intent:              req.IntentHint,
+		Intent:              resolvedIntent,
 		EstimatedComplexity: complexity,
 		Candidates:          scored,
+		OriginalInputs:      candidates,
 		ResolutionLatency:   time.Since(start),
 	}
 
@@ -171,4 +259,31 @@ func (d *RoutingDecision) String() string {
 	fb := len(d.FallbackChain)
 	return fmt.Sprintf("model=%s intent=%s complexity=%.2f fallbacks=%d latency=%v",
 		d.SelectedModel, d.Intent, d.EstimatedComplexity, fb, d.ResolutionLatency)
+}
+
+// GetLabStatus returns the current live telemetry from the autonomous experiment engine.
+func (r *AutoResolver) GetLabStatus() *LabStatus {
+	if r.lab == nil {
+		return nil
+	}
+	status := r.lab.GetStatus()
+	return &status
+}
+
+// GetRecentJournal returns the most recent routing decisions logged by the lab.
+func (r *AutoResolver) GetRecentJournal(n int) []JournalEntry {
+	if r.lab == nil || r.lab.journal == nil {
+		return nil
+	}
+	return r.lab.journal.GetRecent(n)
+}
+
+// Shutdown gracefully stops the monitor, lab, and closes the journal file.
+func (r *AutoResolver) Shutdown() {
+	if r.monitor != nil {
+		r.monitor.Stop()
+	}
+	if r.lab != nil {
+		r.lab.Stop()
+	}
 }
