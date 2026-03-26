@@ -650,7 +650,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Hash remote management key if plaintext is detected (nested)
 	// We consider a value to be already hashed if it looks like a bcrypt hash ($2a$, $2b$, or $2y$ prefix).
-	if cfg.RemoteManagement.SecretKey != "" && !looksLikeBcrypt(cfg.RemoteManagement.SecretKey) {
+	// The sentinel value "disabled" is preserved as-is to signal auth-disabled mode.
+	if cfg.RemoteManagement.SecretKey != "" && cfg.RemoteManagement.SecretKey != "disabled" && !looksLikeBcrypt(cfg.RemoteManagement.SecretKey) {
 		hashed, errHash := hashSecret(cfg.RemoteManagement.SecretKey)
 		if errHash != nil {
 			return nil, fmt.Errorf("failed to hash remote management key: %w", errHash)

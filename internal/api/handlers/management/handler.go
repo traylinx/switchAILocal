@@ -175,16 +175,17 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 				h.attemptsMu.Unlock()
 			}
 		}
-		// LOCALHOST BYPASS: If accessing from localhost and remote management is not enabled,
-		// allow access without authentication for better UX
-		if localClient && !allowRemote && (secretHash == "" || secretHash == "disabled") && envSecret == "" {
+		// LOCALHOST BYPASS: If accessing from localhost with auth explicitly disabled,
+		// allow access without authentication for better UX.
+		if localClient && secretHash == "disabled" && envSecret == "" {
 			c.Header("X-Management-Auth", "localhost-bypass")
 			c.Next()
 			return
 		}
-
+		// BYPASS: If no key is set anywhere (config or env), ignore auth completely.
 		if secretHash == "" && envSecret == "" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "remote management key not set"})
+			c.Header("X-Management-Auth", "bypass")
+			c.Next()
 			return
 		}
 
@@ -308,17 +309,28 @@ func (h *Handler) GetSetupStatus(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	isConfigured := h.cfg != nil && h.cfg.RemoteManagement.SecretKey != ""
-	if h.envSecret != "" {
-		isConfigured = true
+	var secretHash string
+	if h.cfg != nil {
+		secretHash = h.cfg.RemoteManagement.SecretKey
 	}
-	// Special case: "disabled" means explicitly configured to have no auth (localhost only)
-	if h.cfg != nil && h.cfg.RemoteManagement.SecretKey == "disabled" {
+	
+	isConfigured := secretHash != "" || h.envSecret != ""
+	authDisabled := false
+
+	// If no key is set anywhere (empty), or explicitly "disabled" on localhost, ignore auth.
+	if secretHash == "" && h.envSecret == "" {
+		isConfigured = true // Skip first-time setup screen
+		authDisabled = true // Skip login form
+	} else if secretHash == "disabled" {
 		isConfigured = true
+		if isLocalhostDirect(c) {
+			authDisabled = true
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"isConfigured": isConfigured,
+		"authDisabled": authDisabled,
 	})
 }
 
