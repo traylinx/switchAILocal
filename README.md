@@ -250,6 +250,63 @@ curl http://localhost:18080/v1/chat/completions \
 ```bash
 curl http://localhost:18080/v1/models \
   -H "Authorization: Bearer sk-test-123"
+
+# Filter by modality (text, image, audio, embedding, vision)
+curl http://localhost:18080/v1/models?modality=image \
+  -H "Authorization: Bearer sk-test-123"
+```
+
+### Multimodal API
+
+switchAILocal supports the full OpenAI multimodal API surface:
+
+#### Embeddings
+```bash
+curl http://localhost:18080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "switchai-embed", "input": "Hello world"}'
+```
+
+#### Image Generation
+```bash
+curl http://localhost:18080/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "dall-e-3", "prompt": "A sunset over mountains", "size": "1024x1024"}'
+```
+
+#### Image Editing
+```bash
+curl http://localhost:18080/v1/images/edits \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "dall-e-3", "prompt": "Add a rainbow", "images": [{"image_url": "https://example.com/photo.png"}]}'
+```
+
+#### Text-to-Speech
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{"model": "tts-1", "input": "Hello!", "voice": "alloy"}' \
+  --output speech.mp3
+```
+
+#### Audio Transcription
+```bash
+curl http://localhost:18080/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-test-123" \
+  -F file="@audio.mp3" \
+  -F model="whisper-1"
+```
+
+#### Audio Translation (to English)
+```bash
+curl http://localhost:18080/v1/audio/translations \
+  -H "Authorization: Bearer sk-test-123" \
+  -F file="@german_audio.mp3" \
+  -F model="whisper-1"
 ```
 
 ---
