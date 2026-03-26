@@ -68,6 +68,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		case "images_generations":
 			endpoint = "/images/generations"
 			skipTranslation = true
+			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
+				contentType = ct
+			}
 		case "images_edits":
 			endpoint = "/images/edits"
 			skipTranslation = true

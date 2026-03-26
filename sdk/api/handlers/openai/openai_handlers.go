@@ -11,6 +11,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -758,13 +759,19 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 
 // ImagesGenerations handles /v1/images/generations
 func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
+	contentType := c.GetHeader("Content-Type")
 	rawJSON, err := c.GetRawData()
 	if err != nil {
 		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
 		return
 	}
 
-	modelName := gjson.GetBytes(rawJSON, "model").String()
+	var modelName string
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		modelName = extractModelFromMultipart(rawJSON, contentType)
+	} else {
+		modelName = gjson.GetBytes(rawJSON, "model").String()
+	}
 	if modelName == "" {
 		if val, ok := h.Cfg.Intelligence.Matrix["image_gen"]; ok && val != "" {
 			modelName = val
@@ -774,8 +781,12 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 		}
 	}
 
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "images_generations", "application/json")
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "images_generations", contentType)
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
@@ -945,21 +956,21 @@ func extractModelFromMultipart(body []byte, contentType string) string {
 	// Use bytes.Index to find form-data name="model" pattern
 	// This is a lightweight approach that avoids full multipart parsing + reconstruction
 	modelMarker := []byte(`form-data; name="model"`)
-	idx := bytesIndex(body, modelMarker)
+	idx := bytes.Index(body, modelMarker)
 	if idx < 0 {
 		return ""
 	}
 
 	// Skip past the marker and the \r\n\r\n separator to reach the value
 	after := body[idx+len(modelMarker):]
-	sepIdx := bytesIndex(after, []byte("\r\n\r\n"))
+	sepIdx := bytes.Index(after, []byte("\r\n\r\n"))
 	if sepIdx < 0 {
 		return ""
 	}
 	valueStart := after[sepIdx+4:]
 
 	// Value ends at the next \r\n boundary
-	endIdx := bytesIndex(valueStart, []byte("\r\n"))
+	endIdx := bytes.Index(valueStart, []byte("\r\n"))
 	if endIdx < 0 {
 		return ""
 	}
@@ -967,22 +978,7 @@ func extractModelFromMultipart(body []byte, contentType string) string {
 	return string(bytesClean(valueStart[:endIdx]))
 }
 
-// bytesIndex returns the index of the first instance of sep in s, or -1.
-func bytesIndex(s, sep []byte) int {
-	for i := 0; i <= len(s)-len(sep); i++ {
-		match := true
-		for j := 0; j < len(sep); j++ {
-			if s[i+j] != sep[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
-}
+
 
 // bytesClean trims whitespace and control characters from a byte slice.
 func bytesClean(b []byte) []byte {
