@@ -8,7 +8,11 @@
 // debug settings, proxy configuration, and API keys.
 package config
 
-import "strings"
+import (
+	"strings"
+	
+	"github.com/traylinx/switchAILocal/internal/autoroute"
+)
 
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {

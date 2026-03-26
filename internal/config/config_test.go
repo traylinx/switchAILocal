@@ -375,7 +375,7 @@ func TestSanitizeAutoRouting_Defaults(t *testing.T) {
 }
 
 func TestSanitizeAutoRouting_LegacyMigration(t *testing.T) {
-	cfg := &Config{
+	cfg := &SDKConfig{
 		Routing: RoutingConfig{
 			AutoModelPriority: []string{"geminicli:gemini-3.1-pro", "claudecli:claude-sonnet-4", "ollama:qwen:0.5b"},
 		},

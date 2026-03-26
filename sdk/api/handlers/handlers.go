@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/plugin"
@@ -184,6 +185,10 @@ type BaseAPIHandler struct {
 	// PipelineIntegrator integrates steering and memory into request processing.
 	// This is optional - if nil, intelligent systems are disabled.
 	PipelineIntegrator PipelineIntegrator
+
+	// AutoResolver provides intelligent auto-routing when model="auto".
+	// This is optional - if nil, legacy auto-model-priority fallback is used.
+	AutoResolver *autoroute.AutoResolver
 }
 
 // PipelineIntegrator defines the interface for request pipeline integration.
@@ -779,8 +784,32 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 		}
 	}
 
-	// 3. If it's still "auto", resolve it via standard logic
-	if normalizedModel == "auto" || normalizedModel == "cortex" {
+	// 3. If it's still "auto", resolve it via intelligent auto-routing or legacy fallback
+	if normalizedModel == "auto" || normalizedModel == "cortex" || autoroute.IsAutoModel(normalizedModel) {
+		// Try intelligent auto-routing first (Phase 2)
+		if result := autoroute.ResolveAutoRequest(ctx, normalizedModel, autoroute.ExtractContentFromRawJSON(body), h.AutoResolver); result != nil {
+			// Auto-routing succeeded — store metadata for response headers
+			if metadata == nil {
+				metadata = make(map[string]any)
+			}
+			metadata["auto_routed"] = true
+			metadata["auto_selected_model"] = result.ResolvedModel
+			metadata["auto_intent"] = result.Intent
+			metadata["auto_complexity"] = result.Complexity
+
+			// Set response headers via gin context
+			if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
+				ginCtx.Header("X-Auto-Routed", "true")
+				ginCtx.Header("X-Selected-Model", result.ResolvedModel)
+				if len(result.Providers) > 0 {
+					ginCtx.Header("X-Selected-Provider", result.Providers[0])
+				}
+			}
+
+			return result.Providers, result.ResolvedModel, metadata, body, nil
+		}
+
+		// Fallback to legacy flat-list resolution
 		normalizedModel = util.ResolveAutoModel(normalizedModel, h.Cfg.Routing.AutoModelPriority)
 	}
 
