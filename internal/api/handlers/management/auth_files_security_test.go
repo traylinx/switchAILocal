@@ -88,3 +88,121 @@ func TestDownloadAuthFile_PathTraversal(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	h := NewHandler(cfg, "", nil)
+
+	r := gin.New()
+	r.POST("/upload", h.UploadAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid File",
+			queryName:      "valid.json",
+			expectedStatus: http.StatusServiceUnavailable, // authManager is nil so it fails after the security check
+		},
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected early
+		},
+		{
+			name:           "Path Traversal with Backslash",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected early
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("POST", "/upload?name="+tc.queryName, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+
+			if tc.name == "Valid File" {
+			    assert.Contains(t, w.Body.String(), "core auth manager unavailable")
+			} else {
+			    // Ensure it fails with invalid name
+			    assert.Contains(t, w.Body.String(), "invalid name")
+			}
+		})
+	}
+}
+
+func TestDeleteAuthFile_PathTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpRoot, err := os.MkdirTemp("", "test-root-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpRoot)
+
+	authDir := filepath.Join(tmpRoot, "auths")
+	err = os.Mkdir(authDir, 0755)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AuthDir: authDir,
+	}
+	h := NewHandler(cfg, "", nil)
+
+	r := gin.New()
+	r.DELETE("/delete", h.DeleteAuthFile)
+
+	tests := []struct {
+		name           string
+		queryName      string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid File",
+			queryName:      "valid.json",
+			expectedStatus: http.StatusServiceUnavailable, // authManager is nil so it fails after the security check
+		},
+		{
+			name:           "Path Traversal Attempt",
+			queryName:      "../secrets/secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected early
+		},
+		{
+			name:           "Path Traversal with Backslash",
+			queryName:      "..\\secrets\\secret.json",
+			expectedStatus: http.StatusBadRequest, // Should be rejected early
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("DELETE", "/delete?name="+tc.queryName, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code)
+
+			if tc.name == "Valid File" {
+			    assert.Contains(t, w.Body.String(), "core auth manager unavailable")
+			} else {
+			    // Ensure it fails with invalid name
+			    assert.Contains(t, w.Body.String(), "invalid name")
+			}
+		})
+	}
+}
