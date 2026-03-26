@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -809,20 +810,98 @@ func (h *OpenAIAPIHandler) AudioSpeech(c *gin.Context) {
 		cliCancel(errMsg.Error)
 		return
 	}
-	// Response is binary audio usually (mp3)
-	c.Data(http.StatusOK, "audio/mpeg", resp)
+	// Determine response Content-Type from request's response_format field
+	respContentType := "audio/mpeg" // default: mp3
+	switch gjson.GetBytes(rawJSON, "response_format").String() {
+	case "opus":
+		respContentType = "audio/opus"
+	case "aac":
+		respContentType = "audio/aac"
+	case "flac":
+		respContentType = "audio/flac"
+	case "wav":
+		respContentType = "audio/wav"
+	case "pcm":
+		respContentType = "audio/pcm"
+	}
+	c.Data(http.StatusOK, respContentType, resp)
+	cliCancel()
+}
+
+// ImagesEdits handles /v1/images/edits
+// Supports both multipart/form-data (binary image upload) and application/json (image URLs).
+func (h *OpenAIAPIHandler) ImagesEdits(c *gin.Context) {
+	contentType := c.GetHeader("Content-Type")
+	rawBody, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
+		return
+	}
+
+	var modelName string
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		modelName = extractModelFromMultipart(rawBody, contentType)
+	} else {
+		modelName = gjson.GetBytes(rawBody, "model").String()
+	}
+
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["image_gen"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'image_gen' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawBody, "", "images_edits", contentType)
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}
+
+// AudioTranslations handles /v1/audio/translations
+// Translates audio into English text. Uses the same multipart format as transcriptions.
+func (h *OpenAIAPIHandler) AudioTranslations(c *gin.Context) {
+	contentType := c.GetHeader("Content-Type")
+
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("read error: %v", err)})
+		return
+	}
+
+	modelName := extractModelFromMultipart(bodyBytes, contentType)
+
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["transcription"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'transcription' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, bodyBytes, "", "audio_translations", contentType)
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
 	cliCancel()
 }
 
 // AudioTranscriptions handles /v1/audio/transcriptions
 func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) {
-	// For multipart, we need to read the whole body to forward it,
-	// but also inspect it to find the 'model' field.
-	// Since we can't easily peek multipart without parsing, and parsing consumes it,
-	// we will read all bytes, then try to extract model from the form if possible,
-	// or fallback to default.
-
-	// Issue: To forward headers including boundary, we need the original Content-Type.
+	// For multipart, we read the whole body to forward it,
+	// and extract the 'model' field from the form data if present.
 	contentType := c.GetHeader("Content-Type")
 
 	// Read full body
@@ -832,11 +911,8 @@ func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) {
 		return
 	}
 
-	// Hacky model extraction: search for form-data name="model"
-	// This is not robust but keeps us from needing full multipart parsing + reconstruction.
-	// Users usually put model first or last.
-	// Use config default if not found.
-	modelName := ""
+	// Extract model from multipart form data by scanning for the model field value
+	modelName := extractModelFromMultipart(bodyBytes, contentType)
 
 	if modelName == "" {
 		if val, ok := h.Cfg.Intelligence.Matrix["transcription"]; ok && val != "" {
@@ -856,4 +932,67 @@ func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) {
 	}
 	c.Data(http.StatusOK, "application/json", resp)
 	cliCancel()
+}
+
+// extractModelFromMultipart scans raw multipart form bytes for a field named "model"
+// and returns its text value. Returns "" if not found or on any parse error.
+func extractModelFromMultipart(body []byte, contentType string) string {
+	// Parse the boundary from Content-Type header
+	if contentType == "" {
+		return ""
+	}
+
+	// Use bytes.Index to find form-data name="model" pattern
+	// This is a lightweight approach that avoids full multipart parsing + reconstruction
+	modelMarker := []byte(`form-data; name="model"`)
+	idx := bytesIndex(body, modelMarker)
+	if idx < 0 {
+		return ""
+	}
+
+	// Skip past the marker and the \r\n\r\n separator to reach the value
+	after := body[idx+len(modelMarker):]
+	sepIdx := bytesIndex(after, []byte("\r\n\r\n"))
+	if sepIdx < 0 {
+		return ""
+	}
+	valueStart := after[sepIdx+4:]
+
+	// Value ends at the next \r\n boundary
+	endIdx := bytesIndex(valueStart, []byte("\r\n"))
+	if endIdx < 0 {
+		return ""
+	}
+
+	return string(bytesClean(valueStart[:endIdx]))
+}
+
+// bytesIndex returns the index of the first instance of sep in s, or -1.
+func bytesIndex(s, sep []byte) int {
+	for i := 0; i <= len(s)-len(sep); i++ {
+		match := true
+		for j := 0; j < len(sep); j++ {
+			if s[i+j] != sep[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// bytesClean trims whitespace and control characters from a byte slice.
+func bytesClean(b []byte) []byte {
+	start := 0
+	end := len(b)
+	for start < end && (b[start] == ' ' || b[start] == '\t' || b[start] == '\r' || b[start] == '\n') {
+		start++
+	}
+	for end > start && (b[end-1] == ' ' || b[end-1] == '\t' || b[end-1] == '\r' || b[end-1] == '\n') {
+		end--
+	}
+	return b[start:end]
 }

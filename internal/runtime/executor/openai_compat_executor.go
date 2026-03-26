@@ -67,6 +67,13 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 			skipTranslation = true
 		case "images_generations":
 			endpoint = "/images/generations"
+			skipTranslation = true
+		case "images_edits":
+			endpoint = "/images/edits"
+			skipTranslation = true
+			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
+				contentType = ct
+			}
 		case "audio_transcriptions":
 			endpoint = "/audio/transcriptions"
 			skipTranslation = true
@@ -75,14 +82,23 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 			}
 		case "audio_speech":
 			endpoint = "/audio/speech"
+			skipTranslation = true
+		case "audio_translations":
+			endpoint = "/audio/translations"
+			skipTranslation = true
+			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
+				contentType = ct
+			}
 		}
 	}
 
 	var translated []byte
 	if skipTranslation {
 		translated = req.Payload
-		if op, ok := req.Metadata["operation"].(string); ok && op == "embeddings" {
-			// Ensure the model is injected into the payload since translation is skipped
+		// For all non-chat skip-translation operations (embeddings, images, audio),
+		// inject the resolved upstream model name into the payload.
+		// This ensures aliased model names are correctly mapped before forwarding.
+		if contentType == "application/json" {
 			upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
 			modelOverride := e.resolveUpstreamModel(req.Model, auth)
 			targetModel := upstreamModel
@@ -93,7 +109,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 				targetModel = req.Model
 			}
 
-			log.Infof("DEBUG EMBEDDINGS OP: req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s", req.Model, upstreamModel, modelOverride, targetModel)
+			log.Infof("DEBUG MULTIMODAL OP: operation=%v, req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s",
+				req.Metadata["operation"], req.Model, upstreamModel, modelOverride, targetModel)
 
 			if targetModel != "" {
 				translated, _ = sjson.SetBytes(translated, "model", targetModel)
