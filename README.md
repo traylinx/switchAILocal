@@ -309,6 +309,149 @@ curl http://localhost:18080/v1/audio/translations \
   -F model="whisper-1"
 ```
 
+### Advanced Features
+
+switchAILocal passes through all standard and provider-specific parameters, so you can use tools, thinking mode, vision, and more — just like talking directly to the upstream provider.
+
+#### Tool Calling (Web Search)
+
+Some providers support built-in tools like web search. These are forwarded as-is:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "xiaomi:mimo-v2-flash",
+    "messages": [
+      {"role": "user", "content": "What are the latest AI news today?"}
+    ],
+    "tools": [
+      {
+        "type": "web_search",
+        "max_keyword": 3,
+        "force_search": true,
+        "limit": 3
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+#### Function Calling (OpenAI Standard)
+
+Standard OpenAI function calling works with any compatible provider:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "What is the weather in Berlin?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather for a location",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string", "description": "City name"},
+              "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+#### Thinking / Reasoning Mode
+
+Enable extended thinking for complex reasoning tasks:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "claudecli:claude-sonnet-4",
+    "messages": [
+      {"role": "user", "content": "Prove that the square root of 2 is irrational"}
+    ],
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 10000
+    }
+  }'
+```
+
+#### Vision (Image Analysis)
+
+Send images for analysis using the standard multimodal content format:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:gemini-2.5-pro",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What do you see in this image?"},
+          {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}}
+        ]
+      }
+    ]
+  }'
+```
+
+#### CLI Attachments (Files & Folders)
+
+Pass files and folders directly to CLI providers via `extra_body.cli`:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "geminicli:gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "Review this code for security issues"}
+    ],
+    "extra_body": {
+      "cli": {
+        "files": ["/path/to/main.go", "/path/to/server.go"],
+        "directories": ["/path/to/internal/"]
+      }
+    }
+  }'
+```
+
+#### Streaming
+
+All chat endpoints support SSE streaming:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -N \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Tell me a story"}],
+    "stream": true
+  }'
+```
+
 ---
 
 ## SDK Integration

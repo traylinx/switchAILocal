@@ -162,6 +162,104 @@ Trigger re-discovery of available models from all providers.
 
 ---
 
+## Advanced Features
+
+All advanced parameters are passed through transparently to the upstream provider. switchAILocal doesn't modify or filter these fields.
+
+### Tool Calling
+
+#### Provider-Specific Tools (Web Search)
+
+```json
+{
+  "model": "xiaomi:mimo-v2-flash",
+  "messages": [{"role": "user", "content": "Latest AI news?"}],
+  "tools": [{"type": "web_search", "max_keyword": 3, "force_search": true, "limit": 3}],
+  "tool_choice": "auto"
+}
+```
+
+#### OpenAI Function Calling
+
+```json
+{
+  "model": "gemini-2.5-pro",
+  "messages": [{"role": "user", "content": "Weather in Berlin?"}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Get weather for a location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {"type": "string"},
+          "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+        },
+        "required": ["location"]
+      }
+    }
+  }],
+  "tool_choice": "auto"
+}
+```
+
+### Thinking / Reasoning Mode
+
+```json
+{
+  "model": "claudecli:claude-sonnet-4",
+  "messages": [{"role": "user", "content": "Prove sqrt(2) is irrational"}],
+  "thinking": {"type": "enabled", "budget_tokens": 10000}
+}
+```
+
+### Vision (Multimodal Content)
+
+```json
+{
+  "model": "geminicli:gemini-2.5-pro",
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "What do you see?"},
+      {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}}
+    ]
+  }]
+}
+```
+
+### CLI Attachments
+
+Pass local files and folders to CLI providers:
+
+```json
+{
+  "model": "geminicli:gemini-2.5-pro",
+  "messages": [{"role": "user", "content": "Review this code"}],
+  "extra_body": {
+    "cli": {
+      "files": ["/path/to/main.go"],
+      "directories": ["/path/to/internal/"]
+    }
+  }
+}
+```
+
+### Streaming
+
+Set `"stream": true` to receive Server-Sent Events:
+
+```json
+{
+  "model": "gemini-2.5-pro",
+  "messages": [{"role": "user", "content": "Tell me a story"}],
+  "stream": true
+}
+```
+
+---
+
 ## Authentication
 
 All endpoints require a valid API key in the `Authorization` header:
