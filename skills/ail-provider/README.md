@@ -49,8 +49,13 @@ cd /path/to/switchAILocal/skills/ail-provider && ./setup
 
 After install, open Claude Code and the skill activates automatically. Or trigger it manually:
 
-```
 Use the ail-provider skill to configure my API provider
+```
+
+***Optional Fallback***: If Claude doesn't auto-detect the skill, you can paste this manual configuration prompt instead:
+
+```text
+I want to use switchAILocal as my API provider. The proxy runs at http://localhost:18080. Please set ANTHROPIC_BASE_URL=http://localhost:18080/api/provider/anthropic and ANTHROPIC_API_KEY=sk-test-123 in my environment, then use /model to select xiaomi:mimo-v2-pro (or any model from http://localhost:18080/v1/models).
 ```
 
 ### The Wizard Flow
