@@ -65,6 +65,7 @@ func TestAmpModule_Register_WithUpstream(t *testing.T) {
 			UpstreamAPIKey: "test-key",
 		},
 	}
+	base.Cfg = &config.SDKConfig{Intelligence: config.IntelligenceConfig{Matrix: cfg.Intelligence.Matrix}}
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -96,6 +97,7 @@ func TestAmpModule_Register_WithoutUpstream(t *testing.T) {
 			UpstreamURL: "", // No upstream
 		},
 	}
+	base.Cfg = &config.SDKConfig{Intelligence: config.IntelligenceConfig{Matrix: cfg.Intelligence.Matrix}}
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -133,6 +135,7 @@ func TestAmpModule_Register_InvalidUpstream(t *testing.T) {
 			UpstreamURL: "://invalid-url",
 		},
 	}
+	base.Cfg = &config.SDKConfig{Intelligence: config.IntelligenceConfig{Matrix: cfg.Intelligence.Matrix}}
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err == nil {
@@ -258,6 +261,7 @@ func TestAmpModule_SecretSource_FromConfig(t *testing.T) {
 			UpstreamAPIKey: "config-key",
 		},
 	}
+	base.Cfg = &config.SDKConfig{Intelligence: config.IntelligenceConfig{Matrix: cfg.Intelligence.Matrix}}
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -299,6 +303,7 @@ func TestAmpModule_ProviderAliasesAlwaysRegistered(t *testing.T) {
 			m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
 			cfg := &config.Config{AmpCode: config.AmpCode{UpstreamURL: scenario.configURL}}
+			base.Cfg = &config.SDKConfig{Intelligence: config.IntelligenceConfig{Matrix: cfg.Intelligence.Matrix}}
 
 			ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 			if err := m.Register(ctx); err != nil && scenario.configURL != "" {
