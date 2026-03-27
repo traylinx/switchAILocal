@@ -212,7 +212,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		fromFmt := opts.SourceFormat
 		toFmt := sdktranslator.FromString("openai")
 		var param any
-		out := sdktranslator.TranslateNonStream(ctx, toFmt, fromFmt, req.Model, bytes.Clone(opts.OriginalRequest), translated, body, &param)
+		out := sdktranslator.TranslateNonStream(ctx, fromFmt, toFmt, req.Model, bytes.Clone(opts.OriginalRequest), translated, body, &param)
 		resp = switchailocalexecutor.Response{Payload: []byte(out)}
 	}
 	return resp, nil
@@ -321,7 +321,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			}
 			// OpenAI-compatible streams are SSE: lines typically prefixed with "data: ".
 			// Pass through translator; it yields one or more chunks for the target schema.
-			chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(line), &param)
+			chunks := sdktranslator.TranslateStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(line), &param)
 			for i := range chunks {
 				out <- switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}
 			}

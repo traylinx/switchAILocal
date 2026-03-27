@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# ail-provider setup — register the switchAILocal provider skill with Claude Code / Codex / Gemini CLI
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_NAME="ail-provider"
+
+# ─── Parse flags ──────────────────────────────────────────────
+HOST="claude"
+LOCAL_INSTALL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host)   [ -z "$2" ] && echo "Missing value for --host (expected claude, codex, gemini, or auto)" >&2 && exit 1; HOST="$2"; shift 2 ;;
+    --host=*) HOST="${1#--host=}"; shift ;;
+    --local)  LOCAL_INSTALL=1; shift ;;
+    -h|--help)
+      echo "Usage: ./setup [--host claude|codex|gemini|auto] [--local]"
+      echo ""
+      echo "Options:"
+      echo "  --host <name>  Target CLI host (default: claude)"
+      echo "  --local        Install to .claude/skills/ in current directory"
+      echo ""
+      echo "Examples:"
+      echo "  ./setup                    # Global install for Claude Code"
+      echo "  ./setup --local            # Project-local install"
+      echo "  ./setup --host auto        # Auto-detect installed CLIs"
+      exit 0
+      ;;
+    *) shift ;;
+  esac
+done
+
+case "$HOST" in
+  claude|codex|gemini|auto) ;;
+  *) echo "Unknown --host value: $HOST (expected claude, codex, gemini, or auto)" >&2; exit 1 ;;
+esac
+
+# ─── Detect installed CLIs for --host auto ─────────────────────
+INSTALL_CLAUDE=0
+INSTALL_CODEX=0
+INSTALL_GEMINI=0
+
+if [ "$HOST" = "auto" ]; then
+  command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
+  command -v codex  >/dev/null 2>&1 && INSTALL_CODEX=1
+  command -v gemini >/dev/null 2>&1 && INSTALL_GEMINI=1
+  # Default to claude if nothing found
+  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_GEMINI" -eq 0 ]; then
+    INSTALL_CLAUDE=1
+  fi
+elif [ "$HOST" = "claude" ]; then
+  INSTALL_CLAUDE=1
+elif [ "$HOST" = "codex" ]; then
+  INSTALL_CODEX=1
+elif [ "$HOST" = "gemini" ]; then
+  INSTALL_GEMINI=1
+fi
+
+# ─── Helper: create symlink for a skills directory ─────────────
+link_skill() {
+  local skills_dir="$1"
+  local target="$skills_dir/$SKILL_NAME"
+
+  mkdir -p "$skills_dir"
+
+  # Create or update symlink
+  if [ -L "$target" ] || [ ! -e "$target" ]; then
+    ln -snf "$SCRIPT_DIR" "$target"
+    echo "  ✅ Linked: $target → $SCRIPT_DIR"
+  else
+    echo "  ⚠️  Skipped: $target exists and is not a symlink"
+  fi
+}
+
+# ─── Install for Claude Code ──────────────────────────────────
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  if [ "$LOCAL_INSTALL" -eq 1 ]; then
+    SKILLS_DIR="$(pwd)/.claude/skills"
+  else
+    SKILLS_DIR="$HOME/.claude/skills"
+  fi
+
+  link_skill "$SKILLS_DIR"
+
+  if [ "$LOCAL_INSTALL" -eq 1 ]; then
+    echo "  📁 Mode: project-local"
+  else
+    echo "  📁 Mode: global"
+  fi
+fi
+
+# ─── Install for Codex ─────────────────────────────────────────
+if [ "$INSTALL_CODEX" -eq 1 ]; then
+  if [ "$LOCAL_INSTALL" -eq 1 ]; then
+    SKILLS_DIR="$(pwd)/.codex/skills"
+  else
+    SKILLS_DIR="$HOME/.codex/skills"
+  fi
+  link_skill "$SKILLS_DIR"
+fi
+
+# ─── Install for Gemini CLI ───────────────────────────────────
+if [ "$INSTALL_GEMINI" -eq 1 ]; then
+  if [ "$LOCAL_INSTALL" -eq 1 ]; then
+    SKILLS_DIR="$(pwd)/.gemini/skills"
+  else
+    SKILLS_DIR="$HOME/.gemini/skills"
+  fi
+  link_skill "$SKILLS_DIR"
+fi
+
+# ─── Health check ─────────────────────────────────────────────
+echo ""
+echo "─── switchAILocal Health Check ───"
+
+# Find config
+AIL_CONFIG="$(dirname "$(dirname "$SCRIPT_DIR")")/config.yaml"
+if [ ! -f "$AIL_CONFIG" ]; then
+  AIL_CONFIG="$HOME/Projects/makakoo/agents/switchAILocal/config.yaml"
+fi
+
+if [ -f "$AIL_CONFIG" ]; then
+  echo "  📄 Config: $AIL_CONFIG"
+  API_KEY=$(grep -A0 '  - "' "$AIL_CONFIG" 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "sk-test-123")
+else
+  echo "  ⚠️  Config not found (will use default key)"
+  API_KEY="sk-test-123"
+fi
+
+# Check server
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:18080/v1/models" -H "Authorization: Bearer $API_KEY" 2>/dev/null || echo "000")
+
+if [ "$HTTP_CODE" = "200" ]; then
+  MODEL_COUNT=$(curl -s "http://localhost:18080/v1/models" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>/dev/null || echo "?")
+  echo "  🟢 Server: RUNNING (${MODEL_COUNT} models available)"
+else
+  echo "  🔴 Server: OFFLINE (start with: ail start)"
+fi
+
+# ─── Done ────────────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ail-provider skill installed!"
+echo ""
+echo "  Next steps:"
+echo "    1. Start switchAILocal: ail start"
+echo "    2. Open Claude Code:   claude"
+echo "    3. The skill will auto-discover models and"
+echo "       present an interactive selection wizard."
+echo ""
+echo "  Or paste this directly into Claude Code:"
+echo "    Use the ail-provider skill to configure my API provider"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
