@@ -197,13 +197,13 @@ type BaseAPIHandler struct {
 type PipelineIntegrator interface {
 	// ApplySteering evaluates steering rules and modifies the request if rules match.
 	ApplySteering(ctx interface{}, messages []map[string]string) (string, []map[string]string, error)
-	
+
 	// RecordRouting records a routing decision to the memory system.
 	RecordRouting(decision interface{}) error
-	
+
 	// UpdateOutcome updates a routing decision with its outcome.
 	UpdateOutcome(decision interface{}) error
-	
+
 	// EmitRoutingEvent emits a routing decision event to the event bus.
 	EmitRoutingEvent(decision interface{}) error
 }
@@ -382,7 +382,7 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
 	startTime := time.Now()
-	
+
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
@@ -410,26 +410,26 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
-	
+
 	// Record routing decision start time
 	routingStartTime := time.Now()
-	
+
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
-	
+
 	// Calculate routing latency
 	routingLatency := time.Since(routingStartTime).Milliseconds()
-	
+
 	executedProvider := providers[0]
 	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
 		executedProvider = ep
 	}
-	
+
 	if err != nil {
 		// Record failed routing decision if pipeline integrator is available
 		if h.PipelineIntegrator != nil {
 			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
 		}
-		
+
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
 			if code := se.StatusCode(); code > 0 {
@@ -442,20 +442,20 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 				addon = hdr.Clone()
 			}
 		}
-		
+
 		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
-		
+
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
-	
+
 	// Record successful routing decision if pipeline integrator is available
 	if h.PipelineIntegrator != nil {
 		responseTime := time.Since(startTime).Milliseconds()
 		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
 	}
-	
+
 	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
-	
+
 	// ROUTING: Apply LUA on_response hook
 	if h.LuaEngine.IsEnabled() {
 		resData := map[string]any{
@@ -598,9 +598,9 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
 	startTime := time.Now()
 	routingStartTime := time.Now()
-	
+
 	chunks, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
-	
+
 	routingLatency := time.Since(routingStartTime).Milliseconds()
 	executedProvider := providers[0]
 	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
@@ -611,7 +611,7 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		if h.PipelineIntegrator != nil {
 			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
 		}
-		
+
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
@@ -625,19 +625,19 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 				addon = hdr.Clone()
 			}
 		}
-		
+
 		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
-		
+
 		errChan <- &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 		close(errChan)
 		return nil, errChan
 	}
-	
+
 	if h.PipelineIntegrator != nil {
 		responseTime := time.Since(startTime).Milliseconds()
 		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
 	}
-	
+
 	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
 
 	dataChan := make(chan []byte)
@@ -1070,7 +1070,7 @@ func (h *BaseAPIHandler) recordSuccessfulRouting(ctx context.Context, requestedM
 			}
 		}
 	}
-	
+
 	// Build routing decision using the builder pattern
 	// Note: We use interface{} to avoid import cycles, the adapter will handle type conversion
 	decision := map[string]interface{}{
@@ -1090,10 +1090,10 @@ func (h *BaseAPIHandler) recordSuccessfulRouting(ctx context.Context, requestedM
 			"response_time_ms": responseTime,
 		},
 	}
-	
+
 	// Record the routing decision (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.RecordRouting(decision)
-	
+
 	// Emit routing event (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
 }
@@ -1109,7 +1109,7 @@ func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel
 			}
 		}
 	}
-	
+
 	// Build routing decision for failure
 	decision := map[string]interface{}{
 		"api_key_hash": apiKeyHash,
@@ -1128,10 +1128,10 @@ func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel
 			"error":   err.Error(),
 		},
 	}
-	
+
 	// Record the routing decision (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.RecordRouting(decision)
-	
+
 	// Emit routing event (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
 }
@@ -1142,7 +1142,7 @@ func determineTier(providers []string) string {
 	if len(providers) == 0 {
 		return "unknown"
 	}
-	
+
 	// Simple tier determination based on provider name
 	provider := providers[0]
 	switch provider {

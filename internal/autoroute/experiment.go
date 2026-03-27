@@ -13,14 +13,14 @@ import (
 // It directly implements the "fixed-budget, single-metric, keep-or-discard"
 // loop inspired by AutoResearch.
 type Lab struct {
-	config       Config
-	scorer       *ProviderScorer
-	journal      *ExperimentJournal
-	rng          *rand.Rand
-	
+	config  Config
+	scorer  *ProviderScorer
+	journal *ExperimentJournal
+	rng     *rand.Rand
+
 	// The current hypothesis weights being evaluated in the shadow
-	mu              sync.RWMutex
-	shadowWeights   ScoringWeights
+	mu               sync.RWMutex
+	shadowWeights    ScoringWeights
 	activeHypothesis bool
 
 	// Metric accumulation for the current observation window
@@ -28,7 +28,7 @@ type Lab struct {
 	windowShadowRQS float64
 	windowReqCount  int
 
-	stopCh chan struct{}
+	stopCh   chan struct{}
 	stopOnce sync.Once
 }
 
@@ -41,10 +41,10 @@ func NewLab(cfg Config, scorer *ProviderScorer, journal *ExperimentJournal) *Lab
 		stopCh:  make(chan struct{}),
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	
+
 	// Initialize shadow weights to exactly match production initially
 	lab.shadowWeights = cfg.Weights
-	
+
 	return lab
 }
 
@@ -144,18 +144,18 @@ func (l *Lab) RecordOutcome(reqID string, intent string, complexity float64, pro
 	}
 
 	shadowScored := shadowScorer.ScoreAll(candidates, complexity)
-	
+
 	// Log the journal entry
 	entry := JournalEntry{
-		Timestamp:   time.Now(),
-		RequestID:   reqID,
-		Intent:      intent,
-		Complexity:  complexity,
-		ProdModel:   prodOutcome.Model,
-		ProdTier:    prodOutcome.Tier,
-		ProdLatency: prodOutcome.Latency,
-		ProdSuccess: prodOutcome.Success,
-		ProdRQS:     prodRQS,
+		Timestamp:     time.Now(),
+		RequestID:     reqID,
+		Intent:        intent,
+		Complexity:    complexity,
+		ProdModel:     prodOutcome.Model,
+		ProdTier:      prodOutcome.Tier,
+		ProdLatency:   prodOutcome.Latency,
+		ProdSuccess:   prodOutcome.Success,
+		ProdRQS:       prodRQS,
 		WeightAvail:   l.scorer.weights.Availability,
 		WeightQuota:   l.scorer.weights.Quota,
 		WeightLatency: l.scorer.weights.Latency,
@@ -165,7 +165,7 @@ func (l *Lab) RecordOutcome(reqID string, intent string, complexity float64, pro
 	if len(shadowScored) > 0 && shadowScored[0].Available {
 		entry.ShadowModel = shadowScored[0].Model
 		entry.ShadowTier = shadowScored[0].EffectiveTier
-		
+
 		// If shadow chose the exact same model, assume the exact same RQS
 		if entry.ShadowModel == entry.ProdModel {
 			entry.ShadowExpectedRQS = prodRQS
@@ -219,20 +219,20 @@ func (l *Lab) evaluateAndAdapt() {
 	avgShadowRQS := l.windowShadowRQS / float64(l.windowReqCount)
 
 	log.WithFields(log.Fields{
-		"reqs":        l.windowReqCount,
-		"prodRQS":     avgProdRQS,
-		"shadowRQS":   avgShadowRQS,
+		"reqs":      l.windowReqCount,
+		"prodRQS":   avgProdRQS,
+		"shadowRQS": avgShadowRQS,
 	}).Info("Auto-routing lab evaluated experiment window")
 
 	// Binary Keep/Discard decision (AutoResearch style)
-	if avgShadowRQS > avgProdRQS * 1.05 { // Keep if 5% better
-		log.WithField("improvement", avgShadowRQS - avgProdRQS).
+	if avgShadowRQS > avgProdRQS*1.05 { // Keep if 5% better
+		log.WithField("improvement", avgShadowRQS-avgProdRQS).
 			Info("Lab promoted shadow weights to production")
-		
+
 		// Promote via atomic swap (C2 fix: safe concurrent read/write)
 		l.scorer.SetWeights(l.shadowWeights)
 	} else {
-		log.WithField("diff", avgShadowRQS - avgProdRQS).
+		log.WithField("diff", avgShadowRQS-avgProdRQS).
 			Debug("Lab discarded shadow weights (no significant improvement)")
 	}
 
@@ -240,7 +240,7 @@ func (l *Lab) evaluateAndAdapt() {
 	l.windowProdRQS = 0
 	l.windowShadowRQS = 0
 	l.windowReqCount = 0
-	
+
 	l.generateHypothesisLocked()
 }
 
@@ -261,10 +261,10 @@ func (l *Lab) generateHypothesisLocked() {
 
 	// Add random noise [-drift/2, +drift/2] to each weight
 	w := ScoringWeights{
-		Availability: curr.Availability + (l.rng.Float64() - 0.5) * drift,
-		Quota:        curr.Quota + (l.rng.Float64() - 0.5) * drift,
-		Latency:      curr.Latency + (l.rng.Float64() - 0.5) * drift,
-		SuccessRate:  curr.SuccessRate + (l.rng.Float64() - 0.5) * drift,
+		Availability: curr.Availability + (l.rng.Float64()-0.5)*drift,
+		Quota:        curr.Quota + (l.rng.Float64()-0.5)*drift,
+		Latency:      curr.Latency + (l.rng.Float64()-0.5)*drift,
+		SuccessRate:  curr.SuccessRate + (l.rng.Float64()-0.5)*drift,
 	}
 
 	// Clamp limits 0.05 min

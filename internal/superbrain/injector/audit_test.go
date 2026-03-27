@@ -36,11 +36,11 @@ func TestAuditLogging(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		logContent     string
-		requestID      string
-		provider       string
-		model          string
+		name            string
+		logContent      string
+		requestID       string
+		provider        string
+		model           string
 		expectedOutcome string
 	}{
 		{

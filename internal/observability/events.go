@@ -184,9 +184,9 @@ func GinMiddleware(emitter *EventEmitter) gin.HandlerFunc {
 		if provider == "" {
 			provider = "unknown"
 		}
-		
+
 		autoRouted := c.Writer.Header().Get("X-Auto-Routed") == "true"
-		
+
 		var rqs float64
 		if rqsStr := c.Writer.Header().Get("X-RQS"); rqsStr != "" {
 			if parsed, err := strconv.ParseFloat(rqsStr, 64); err == nil {

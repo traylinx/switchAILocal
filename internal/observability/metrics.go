@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	log "github.com/sirupsen/logrus"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -136,7 +136,7 @@ func RegisterMetricsRoute(router *gin.Engine, enabled bool, path string) {
 	if !enabled || path == "" {
 		return
 	}
-	
+
 	// Add prometheus handler to global router
 	router.GET(path, gin.WrapH(promhttp.Handler()))
 	log.Infof("Registered Prometheus metrics endpoint at %s", path)
