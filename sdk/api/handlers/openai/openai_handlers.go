@@ -76,7 +76,12 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 
 	// Build modality lookup from intelligence.matrix config
 	// Maps model ID → set of modality strings
-	modalityMap := buildModalityMap(h.Cfg.Intelligence.Matrix)
+	var modalityMap map[string][]string
+	if h.Cfg != nil {
+		modalityMap = buildModalityMap(h.Cfg.Intelligence.Matrix)
+	} else {
+		modalityMap = buildModalityMap(nil)
+	}
 
 	// Optional: filter by ?modality= query param (text, image, audio, embedding, vision)
 	modalityFilter := strings.ToLower(c.Query("modality"))
