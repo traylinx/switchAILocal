@@ -516,6 +516,13 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 
 // Upload auth file: multipart or raw JSON with ?name=
 func (h *Handler) UploadAuthFile(c *gin.Context) {
+	// Sentinel: Early input validation for name query parameter (before authManager check)
+	// Only validate query parameter if it exists (multipart might not have it)
+	if name := c.Query("name"); name != "" && strings.ContainsAny(name, "/\\") {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -550,7 +557,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -582,6 +589,12 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 
 // Delete auth files: single by name or all
 func (h *Handler) DeleteAuthFile(c *gin.Context) {
+	// Sentinel: Early input validation for name query parameter
+	if name := c.Query("name"); name != "" && strings.ContainsAny(name, "/\\") {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -621,7 +634,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
