@@ -57,6 +57,8 @@ type ConvertOpenAIResponseToAnthropicParams struct {
 	NextContentBlockIndex int
 	// Track if we're inside a <think> tag in streaming content
 	InsideThinkTag bool
+	// Buffer for handling split <think> or </think> tags across streaming chunks
+	ThinkTagBuffer string
 }
 
 // ToolCallAccumulator holds the state for accumulating tool call data
@@ -299,6 +301,16 @@ func convertOpenAIStreamingChunkToAnthropic(rawJSON []byte, param *ConvertOpenAI
 // convertOpenAIDoneToAnthropic handles the [DONE] marker and sends final events
 func convertOpenAIDoneToAnthropic(param *ConvertOpenAIResponseToAnthropicParams) []string {
 	var results []string
+
+	// Flush any remaining buffered characters
+	if param.ThinkTagBuffer != "" {
+		if param.InsideThinkTag {
+			emitThinkingDelta(param, &results, param.ThinkTagBuffer)
+		} else {
+			emitTextDelta(param, &results, param.ThinkTagBuffer)
+		}
+		param.ThinkTagBuffer = ""
+	}
 
 	// Ensure all content blocks are stopped before final events
 	if param.ThinkingContentBlockStarted {
@@ -558,46 +570,80 @@ func emitTextDelta(param *ConvertOpenAIResponseToAnthropicParams, results *[]str
 }
 
 // processStreamContentWithThinkTags handles streaming content that contains <think> tags.
-// It uses a state machine to split content between thinking and text blocks.
+// It uses a state machine to split content between thinking and text blocks, buffering
+// partial tags so they aren't missed if split across network chunks.
 func processStreamContentWithThinkTags(param *ConvertOpenAIResponseToAnthropicParams, results *[]string, contentStr string) {
+	param.ThinkTagBuffer += contentStr
 	const openTag = "<think>"
 	const closeTag = "</think>"
 
-	for len(contentStr) > 0 {
+	for len(param.ThinkTagBuffer) > 0 {
 		if !param.InsideThinkTag {
-			idx := strings.Index(contentStr, openTag)
-			if idx == -1 {
-				// No think tag — emit as text
-				if contentStr != "" {
-					emitTextDelta(param, results, contentStr)
+			idx := strings.Index(param.ThinkTagBuffer, openTag)
+			if idx != -1 {
+				if idx > 0 {
+					emitTextDelta(param, results, param.ThinkTagBuffer[:idx])
 				}
-				break
+				param.ThinkTagBuffer = param.ThinkTagBuffer[idx+len(openTag):]
+				param.InsideThinkTag = true
+				stopTextContentBlock(param, results)
+				continue
 			}
-			// Emit content before <think>
-			if idx > 0 {
-				emitTextDelta(param, results, contentStr[:idx])
+
+			// Check for partial openTag match at the end of buffer
+			partialLen := 0
+			maxMatch := len(openTag) - 1
+			if len(param.ThinkTagBuffer) < maxMatch {
+				maxMatch = len(param.ThinkTagBuffer)
 			}
-			contentStr = contentStr[idx+len(openTag):]
-			param.InsideThinkTag = true
-			stopTextContentBlock(param, results)
+			for i := maxMatch; i > 0; i-- {
+				if strings.HasSuffix(param.ThinkTagBuffer, openTag[:i]) {
+					partialLen = i
+					break
+				}
+			}
+
+			// Emit everything up to the partial match
+			emitLen := len(param.ThinkTagBuffer) - partialLen
+			if emitLen > 0 {
+				emitTextDelta(param, results, param.ThinkTagBuffer[:emitLen])
+				param.ThinkTagBuffer = param.ThinkTagBuffer[emitLen:]
+			}
+			break
 		}
 
 		if param.InsideThinkTag {
-			endIdx := strings.Index(contentStr, closeTag)
-			if endIdx == -1 {
-				// No closing tag in this chunk — all is thinking
-				if contentStr != "" {
-					emitThinkingDelta(param, results, contentStr)
+			idx := strings.Index(param.ThinkTagBuffer, closeTag)
+			if idx != -1 {
+				if idx > 0 {
+					emitThinkingDelta(param, results, param.ThinkTagBuffer[:idx])
 				}
-				break
+				param.ThinkTagBuffer = param.ThinkTagBuffer[idx+len(closeTag):]
+				param.InsideThinkTag = false
+				stopThinkingContentBlock(param, results)
+				continue
 			}
-			// Emit content before </think>
-			if endIdx > 0 {
-				emitThinkingDelta(param, results, contentStr[:endIdx])
+
+			// Check for partial closeTag match at the end of buffer
+			partialLen := 0
+			maxMatch := len(closeTag) - 1
+			if len(param.ThinkTagBuffer) < maxMatch {
+				maxMatch = len(param.ThinkTagBuffer)
 			}
-			contentStr = contentStr[endIdx+len(closeTag):]
-			param.InsideThinkTag = false
-			stopThinkingContentBlock(param, results)
+			for i := maxMatch; i > 0; i-- {
+				if strings.HasSuffix(param.ThinkTagBuffer, closeTag[:i]) {
+					partialLen = i
+					break
+				}
+			}
+
+			// Emit everything up to the partial match
+			emitLen := len(param.ThinkTagBuffer) - partialLen
+			if emitLen > 0 {
+				emitThinkingDelta(param, results, param.ThinkTagBuffer[:emitLen])
+				param.ThinkTagBuffer = param.ThinkTagBuffer[emitLen:]
+			}
+			break
 		}
 	}
 }
