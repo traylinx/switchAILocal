@@ -1,0 +1,67 @@
+---
+title: "CLI Integrations"
+description: "How to connect external AI CLI tools (like OpenCode, Claude Code) to switchAILocal."
+icon: "terminal"
+---
+
+The `switchAILocal` proxy is fully compatible with any application that supports the OpenAI API. This guide explains how to configure popular AI coding assistants to route their requests through your local switchAILocal proxy.
+
+## OpenCode
+
+[OpenCode](https://opencode.ai/) natively supports custom AI providers via its JSON configuration file using the `@ai-sdk/openai-compatible` plugin.
+
+### Configuration Steps
+
+1. Create or edit the global OpenCode configuration file located at `~/.config/opencode/opencode.json`.
+2. Add a custom `provider` block. Point the `baseURL` to your running switchAILocal instance (default: `http://localhost:18080/v1`).
+3. Define the specific switchAILocal models you want to use in the `models` object. Ensure the model keys exactly match the `provider:model` alias syntax expected by switchAILocal.
+
+### Example Configuration
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "switchailocal_provider": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "AIL",
+      "options": {
+        "baseURL": "http://localhost:18080/v1",
+        "apiKey": "sk-test-123"
+      },
+      "models": {
+        "minimax:MiniMax-M2.7": {
+          "name": "MiniMax-M2.7 (via AIL)",
+          "limit": {
+            "context": 1000000,
+            "output": 65536
+          }
+        },
+        "deepseek:deepseek-coder": {
+          "name": "DeepSeek Coder (via AIL)",
+          "limit": {
+            "context": 64000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+<Note>
+**Reasoning Models Support**: For models that return raw `<think>` tags embedded within their content (like MiniMax M2.7, DeepSeek R1), switchAILocal automatically normalizes the response into the OpenAI-standard `reasoning_content` field. This ensures clean, native chain-of-thought rendering inside OpenCode without visual artifact leakage.
+</Note>
+
+## Claude Code
+
+_Documentation on connecting Anthropic's Claude Code CLI will be added soon._
+
+## General Configuration
+
+For any generic OpenAI-compatible CLI tool, use these standard connection parameters:
+
+- **API Base URL:** `http://localhost:18080/v1`
+- **API Key:** A valid key from your `auths/` directory config.
+- **Model Name:** Use the full `provider:model` format (e.g. `openai:gpt-4o` or `openrouter:anthropic/claude-3-5-sonnet`).

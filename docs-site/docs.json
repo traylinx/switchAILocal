@@ -74,7 +74,8 @@
               "guides/auto-routing-setup",
               "guides/docker-deployment",
               "guides/management-dashboard",
-              "guides/troubleshooting"
+              "guides/troubleshooting",
+              "guides/cli-integrations"
             ]
           }
         ]
