@@ -110,7 +110,8 @@ type Manager struct {
 	mu        sync.RWMutex
 	auths     map[string]*Auth
 	// providerOffsets tracks per-model provider rotation state for multi-provider routing.
-	providerOffsets map[string]int
+	// Uses sync.Map + atomic.Int64 for lock-free access on the hot request path.
+	providerOffsets sync.Map // map[string]*atomic.Int64
 
 	// Retry controls request retry behavior.
 	requestRetry     atomic.Int32
@@ -132,12 +133,11 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		hook = NoopHook{}
 	}
 	return &Manager{
-		store:           store,
-		executors:       make(map[string]ProviderExecutor),
-		selector:        selector,
-		hook:            hook,
-		auths:           make(map[string]*Auth),
-		providerOffsets: make(map[string]int),
+		store:     store,
+		executors: make(map[string]ProviderExecutor),
+		selector:  selector,
+		hook:      hook,
+		auths:     make(map[string]*Auth),
 	}
 }
 
@@ -240,7 +240,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 
 	m.mu.Lock()
 	m.auths[auth.ID] = auth.Clone()
-	fmt.Printf("[DEBUG] Register: added auth %s (provider=%s, source=%v)\n", auth.ID, auth.Provider, auth.Metadata["source"])
+	log.Debugf("Register: added auth %s (provider=%s, source=%v)", auth.ID, auth.Provider, auth.Metadata["source"])
 	m.mu.Unlock()
 
 	_ = m.persist(ctx, auth)
@@ -278,7 +278,7 @@ func (m *Manager) Load(ctx context.Context) error {
 		return err
 	}
 	var systemAuths []*Auth
-	fmt.Printf("[DEBUG] Load: entries before=%d\n", len(m.auths))
+	log.Debugf("Load: entries before=%d", len(m.auths))
 	if len(m.auths) > 0 {
 		for _, a := range m.auths {
 			if a == nil {
@@ -286,13 +286,13 @@ func (m *Manager) Load(ctx context.Context) error {
 			}
 			if src, ok := a.Metadata["source"].(string); ok && src == "local_cli_discovery" {
 				systemAuths = append(systemAuths, a.Clone())
-				fmt.Printf("[DEBUG] Load: preserving system auth %s\n", a.ID)
+				log.Debugf("Load: preserving system auth %s", a.ID)
 			} else {
-				fmt.Printf("[DEBUG] Load: skipping non-system auth %s (meta=%v)\n", a.ID, a.Metadata)
+				log.Debugf("Load: skipping non-system auth %s (meta=%v)", a.ID, a.Metadata)
 			}
 		}
 	}
-	fmt.Printf("[DEBUG] Load: found %d system auths to preserve\n", len(systemAuths))
+	log.Debugf("Load: found %d system auths to preserve", len(systemAuths))
 
 	m.auths = make(map[string]*Auth, len(items)+len(systemAuths))
 	for _, auth := range items {
@@ -306,13 +306,13 @@ func (m *Manager) Load(ctx context.Context) error {
 	// Restore system auths
 	for _, auth := range systemAuths {
 		if existing, exists := m.auths[auth.ID]; exists && existing != nil {
-			fmt.Printf("[DEBUG] Load: collision for %s, skipping restore\n", auth.ID)
+			log.Debugf("Load: collision for %s, skipping restore", auth.ID)
 			continue
 		}
 		m.auths[auth.ID] = auth
-		fmt.Printf("[DEBUG] Load: restored system auth %s\n", auth.ID)
+		log.Debugf("Load: restored system auth %s", auth.ID)
 	}
-	fmt.Printf("[DEBUG] Load: entries after=%d\n", len(m.auths))
+	log.Debugf("Load: entries after=%d", len(m.auths))
 	return nil
 }
 
@@ -320,9 +320,9 @@ func (m *Manager) Load(ctx context.Context) error {
 func (m *Manager) DebugDump() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	fmt.Printf("[DEBUG] AuthManager Dump: %d entries\n", len(m.auths))
+	log.Debugf("AuthManager Dump: %d entries", len(m.auths))
 	for id, a := range m.auths {
-		fmt.Printf(" - ID: %s, Provider: %s, Status: %s, Source: %v\n", id, a.Provider, a.Status, a.Metadata["source"])
+		log.Debugf(" - ID: %s, Provider: %s, Status: %s, Source: %v", id, a.Provider, a.Status, a.Metadata["source"])
 	}
 }
 
@@ -730,12 +730,12 @@ func (m *Manager) rotateProviders(model string, providers []string) []string {
 	if len(providers) == 0 {
 		return nil
 	}
-	m.mu.RLock()
-	offset := m.providerOffsets[model]
-	m.mu.RUnlock()
-	if len(providers) > 0 {
-		offset %= len(providers)
+	// Lock-free read: use sync.Map + atomic.Int64 to avoid mutex contention.
+	var offset int
+	if val, ok := m.providerOffsets.Load(model); ok {
+		offset = int(val.(*atomic.Int64).Load())
 	}
+	offset %= len(providers)
 	if offset < 0 {
 		offset = 0
 	}
@@ -750,15 +750,19 @@ func (m *Manager) rotateProviders(model string, providers []string) []string {
 
 func (m *Manager) advanceProviderCursor(model string, providers []string) {
 	if len(providers) == 0 {
-		m.mu.Lock()
-		delete(m.providerOffsets, model)
-		m.mu.Unlock()
+		m.providerOffsets.Delete(model)
 		return
 	}
-	m.mu.Lock()
-	current := m.providerOffsets[model]
-	m.providerOffsets[model] = (current + 1) % len(providers)
-	m.mu.Unlock()
+	// Lock-free increment: use atomic CAS to avoid exclusive lock on every request.
+	val, _ := m.providerOffsets.LoadOrStore(model, &atomic.Int64{})
+	counter := val.(*atomic.Int64)
+	for {
+		old := counter.Load()
+		newVal := (old + 1) % int64(len(providers))
+		if counter.CompareAndSwap(old, newVal) {
+			break
+		}
+	}
 }
 
 func (m *Manager) retrySettings() (int, time.Duration) {
@@ -1276,13 +1280,16 @@ func (m *Manager) GetByID(id string) (*Auth, bool) {
 }
 
 func (m *Manager) pickNext(ctx context.Context, provider, model string, opts switchailocalexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {
+	// Snapshot executor and candidates under RLock, then release BEFORE calling
+	// selector.Pick(). This drastically reduces lock hold time — previously the
+	// RLock was held during Pick() which blocked concurrent MarkResult() calls.
 	m.mu.RLock()
 	executor, okExecutor := m.executors[provider]
 	if !okExecutor {
 		m.mu.RUnlock()
 		return nil, nil, &Error{Code: "executor_not_found", Message: fmt.Sprintf("executor not registered for provider %q. Please check if the provider is supported.", provider)}
 	}
-	candidates := make([]*Auth, 0, len(m.auths))
+	candidates := make([]*Auth, 0, 8) // Pre-size for typical candidate count
 	modelKey := strings.TrimSpace(model)
 	registryRef := registry.GetGlobalRegistry()
 	for _, candidate := range m.auths {
@@ -1303,10 +1310,11 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts swi
 				continue
 			}
 		}
-		candidates = append(candidates, candidate)
+		candidates = append(candidates, candidate.Clone())
 	}
+	m.mu.RUnlock() // <-- Release RLock BEFORE selector.Pick() to reduce contention
+
 	if len(candidates) == 0 {
-		m.mu.RUnlock()
 		return nil, nil, &Error{
 			Code:    "auth_not_found",
 			Message: fmt.Sprintf("no active credentials found for provider '%s'. To resolve this, please run: 'switchAILocal %s' or configure it in config.yaml.", provider, util.GetLoginHint(provider)),
@@ -1314,15 +1322,12 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts swi
 	}
 	selected, errPick := m.selector.Pick(ctx, provider, model, opts, candidates)
 	if errPick != nil {
-		m.mu.RUnlock()
 		return nil, nil, errPick
 	}
 	if selected == nil {
-		m.mu.RUnlock()
 		return nil, nil, &Error{Code: "auth_not_found", Message: fmt.Sprintf("selector returned no auth for provider %q. To resolve this, run: switchAILocal %s", provider, util.GetLoginHint(provider))}
 	}
 	authCopy := selected.Clone()
-	m.mu.RUnlock()
 	if !selected.indexAssigned {
 		m.mu.Lock()
 		if current := m.auths[authCopy.ID]; current != nil && !current.indexAssigned {
