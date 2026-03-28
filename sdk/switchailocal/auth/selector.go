@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -20,9 +21,9 @@ import (
 )
 
 // RoundRobinSelector provides a simple provider scoped round-robin selection strategy.
+// Uses sync.Map + atomic.Int64 for lock-free cursor advancement under high concurrency.
 type RoundRobinSelector struct {
-	mu      sync.Mutex
-	cursors map[string]int
+	cursors sync.Map // map[string]*atomic.Int64
 }
 
 // FillFirstSelector selects the first available credential (deterministic ordering).
@@ -157,6 +158,7 @@ func getAvailableAuths(auths []*Auth, provider, model string, now time.Time) ([]
 }
 
 // Pick selects the next available auth for the provider in a round-robin manner.
+// Uses lock-free atomics for cursor advancement — zero contention under concurrent load.
 func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, opts switchailocalexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = ctx
 	_ = opts
@@ -166,19 +168,12 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 		return nil, err
 	}
 	key := provider + ":" + model
-	s.mu.Lock()
-	if s.cursors == nil {
-		s.cursors = make(map[string]int)
-	}
-	index := s.cursors[key]
-
-	if index >= 2_147_483_640 {
+	val, _ := s.cursors.LoadOrStore(key, &atomic.Int64{})
+	counter := val.(*atomic.Int64)
+	index := int(counter.Add(1) - 1)
+	if index < 0 {
 		index = 0
 	}
-
-	s.cursors[key] = index + 1
-	s.mu.Unlock()
-	// log.Debugf("available: %d, index: %d, key: %d", len(available), index, index%len(available))
 	return available[index%len(available)], nil
 }
 

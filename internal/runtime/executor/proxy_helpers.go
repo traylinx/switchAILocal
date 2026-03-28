@@ -25,11 +25,16 @@ import (
 //
 // Previously, every request created a new http.Client with DisableKeepAlives: true,
 // forcing a fresh TCP+TLS handshake per request (~100-300ms overhead each time).
+//
+// Limits are set for high-concurrency proxy workloads (50+ parallel sessions):
+//   - MaxConnsPerHost=100: prevents TCP-level queuing to a single API provider
+//   - MaxIdleConnsPerHost=50: keeps warm connections ready for burst traffic
+//   - MaxIdleConns=200: global ceiling across all providers
 var defaultPooledTransport = &http.Transport{
-	MaxIdleConns:        100,
-	MaxIdleConnsPerHost: 10,
-	MaxConnsPerHost:     25,
-	IdleConnTimeout:     90 * time.Second,
+	MaxIdleConns:        200,
+	MaxIdleConnsPerHost: 50,
+	MaxConnsPerHost:     100,
+	IdleConnTimeout:     120 * time.Second,
 	TLSHandshakeTimeout: 10 * time.Second,
 	ForceAttemptHTTP2:   true,
 	DialContext: (&net.Dialer{

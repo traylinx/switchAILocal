@@ -122,6 +122,17 @@ type Manager struct {
 
 	// Auto refresh state
 	refreshCancel context.CancelFunc
+
+	// persistCh is a buffered channel for async persistence requests.
+	// MarkResult sends auth snapshots here instead of blocking the write lock on disk I/O.
+	persistCh   chan persistRequest
+	persistStop chan struct{}
+}
+
+// persistRequest captures a cloned auth snapshot to be persisted asynchronously.
+type persistRequest struct {
+	ctx  context.Context
+	auth *Auth
 }
 
 // NewManager constructs a manager with optional custom selector and hook.
@@ -132,12 +143,64 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 	if hook == nil {
 		hook = NoopHook{}
 	}
-	return &Manager{
-		store:     store,
-		executors: make(map[string]ProviderExecutor),
-		selector:  selector,
-		hook:      hook,
-		auths:     make(map[string]*Auth),
+	m := &Manager{
+		store:       store,
+		executors:   make(map[string]ProviderExecutor),
+		selector:    selector,
+		hook:        hook,
+		auths:       make(map[string]*Auth),
+		persistCh:   make(chan persistRequest, 128),
+		persistStop: make(chan struct{}),
+	}
+	go m.backgroundPersister()
+	return m
+}
+
+// backgroundPersister drains persistCh and writes auth snapshots to the backing store.
+// This decouples MarkResult lock duration from disk/network I/O latency.
+func (m *Manager) backgroundPersister() {
+	for {
+		select {
+		case req, ok := <-m.persistCh:
+			if !ok {
+				return
+			}
+			if err := m.persist(req.ctx, req.auth); err != nil {
+				log.Debugf("async persist failed for auth %s: %v", req.auth.ID, err)
+			}
+		case <-m.persistStop:
+			// Drain remaining items
+			for {
+				select {
+				case req := <-m.persistCh:
+					_ = m.persist(req.ctx, req.auth)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// persistAsync sends a cloned auth snapshot to the background persister.
+// Non-blocking: if the channel is full, the persist is silently skipped
+// (state will be captured by the next successful persist).
+func (m *Manager) persistAsync(ctx context.Context, auth *Auth) {
+	if m.store == nil || auth == nil {
+		return
+	}
+	if auth.Attributes != nil {
+		if v := strings.ToLower(strings.TrimSpace(auth.Attributes["runtime_only"])); v == "true" {
+			return
+		}
+	}
+	if auth.Metadata == nil {
+		return
+	}
+	select {
+	case m.persistCh <- persistRequest{ctx: ctx, auth: auth.Clone()}:
+	default:
+		// Channel full — state will be persisted on next successful send
 	}
 }
 
@@ -883,6 +946,7 @@ func (m *Manager) executeStreamProvidersOnce(ctx context.Context, providers []st
 }
 
 // MarkResult records an execution result and notifies hooks.
+// Persistence is deferred to a background goroutine to avoid blocking the write lock on disk I/O.
 func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
 		return
@@ -893,7 +957,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	suspendReason := ""
 	clearModelQuota := false
 	setModelQuota := false
+	wasAlreadyActive := false
 
+	// In-memory state update under exclusive lock — NO disk I/O here.
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
@@ -901,6 +967,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		if result.Success {
 			if result.Model != "" {
 				state := ensureModelState(auth, result.Model)
+				// Track whether model was already healthy to skip redundant registry calls
+				wasAlreadyActive = state.Status == StatusActive && !state.Unavailable && !state.Quota.Exceeded
 				resetModelState(state, now)
 				updateAggregatedAvailability(auth, now)
 				if !hasModelError(auth, now) {
@@ -986,17 +1054,19 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		}
 
-		_ = m.persist(ctx, auth)
+		// Async: persist snapshot to disk without blocking the lock
+		m.persistAsync(ctx, auth)
 	}
 	m.mu.Unlock()
 
-	if clearModelQuota && result.Model != "" {
+	// Registry updates — skip no-op calls for already-active models
+	if clearModelQuota && result.Model != "" && !wasAlreadyActive {
 		registry.GetGlobalRegistry().ClearModelQuotaExceeded(result.AuthID, result.Model)
 	}
 	if setModelQuota && result.Model != "" {
 		registry.GetGlobalRegistry().SetModelQuotaExceeded(result.AuthID, result.Model)
 	}
-	if shouldResumeModel {
+	if shouldResumeModel && !wasAlreadyActive {
 		registry.GetGlobalRegistry().ResumeClientModel(result.AuthID, result.Model)
 	} else if shouldSuspendModel {
 		registry.GetGlobalRegistry().SuspendClientModel(result.AuthID, result.Model, suspendReason)
@@ -1283,6 +1353,9 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts swi
 	// Snapshot executor and candidates under RLock, then release BEFORE calling
 	// selector.Pick(). This drastically reduces lock hold time — previously the
 	// RLock was held during Pick() which blocked concurrent MarkResult() calls.
+	//
+	// PERF: Candidates are passed as pointers (no Clone) during filtering.
+	// Only the selected auth is cloned after Pick returns — reducing O(N) clones to O(1).
 	m.mu.RLock()
 	executor, okExecutor := m.executors[provider]
 	if !okExecutor {
@@ -1310,7 +1383,9 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts swi
 				continue
 			}
 		}
-		candidates = append(candidates, candidate.Clone())
+		// PERF: Pass pointer directly — selector only reads fields, no mutation.
+		// Clone is deferred to after Pick selects the winner.
+		candidates = append(candidates, candidate)
 	}
 	m.mu.RUnlock() // <-- Release RLock BEFORE selector.Pick() to reduce contention
 
@@ -1327,6 +1402,7 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts swi
 	if selected == nil {
 		return nil, nil, &Error{Code: "auth_not_found", Message: fmt.Sprintf("selector returned no auth for provider %q. To resolve this, run: switchAILocal %s", provider, util.GetLoginHint(provider))}
 	}
+	// Only clone the winning auth — O(1) instead of O(N candidates)
 	authCopy := selected.Clone()
 	if !selected.indexAssigned {
 		m.mu.Lock()
