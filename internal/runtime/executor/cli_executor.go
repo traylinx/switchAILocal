@@ -516,7 +516,7 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	jsonBody, _ := json.Marshal(reqBody)
 	url := strings.TrimSuffix(remoteHost, "/") + "/run"
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}

@@ -55,16 +55,15 @@ func TestAmpModule_Register_WithUpstream(t *testing.T) {
 	defer upstream.Close()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
-
-	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
-
 	cfg := &config.Config{
 		AmpCode: config.AmpCode{
 			UpstreamURL:    upstream.URL,
 			UpstreamAPIKey: "test-key",
 		},
 	}
+	base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
+
+	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -87,15 +86,14 @@ func TestAmpModule_Register_WithoutUpstream(t *testing.T) {
 	r := gin.New()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
-
-	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
-
 	cfg := &config.Config{
 		AmpCode: config.AmpCode{
 			UpstreamURL: "", // No upstream
 		},
 	}
+	base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
+
+	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -124,15 +122,14 @@ func TestAmpModule_Register_InvalidUpstream(t *testing.T) {
 	r := gin.New()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
-
-	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
-
 	cfg := &config.Config{
 		AmpCode: config.AmpCode{
 			UpstreamURL: "://invalid-url",
 		},
 	}
+	base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
+
+	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err == nil {
@@ -247,10 +244,6 @@ func TestAmpModule_SecretSource_FromConfig(t *testing.T) {
 	defer upstream.Close()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
-
-	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
-
 	// Config with explicit API key
 	cfg := &config.Config{
 		AmpCode: config.AmpCode{
@@ -258,6 +251,9 @@ func TestAmpModule_SecretSource_FromConfig(t *testing.T) {
 			UpstreamAPIKey: "config-key",
 		},
 	}
+	base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
+
+	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
 	ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 	if err := m.Register(ctx); err != nil {
@@ -294,11 +290,10 @@ func TestAmpModule_ProviderAliasesAlwaysRegistered(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			r := gin.New()
 			accessManager := sdkaccess.NewManager()
-			base := &handlers.BaseAPIHandler{}
+			cfg := &config.Config{AmpCode: config.AmpCode{UpstreamURL: scenario.configURL}}
+			base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
 
 			m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
-
-			cfg := &config.Config{AmpCode: config.AmpCode{UpstreamURL: scenario.configURL}}
 
 			ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: func(c *gin.Context) { c.Next() }}
 			if err := m.Register(ctx); err != nil && scenario.configURL != "" {

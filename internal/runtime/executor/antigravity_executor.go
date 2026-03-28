@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,11 +56,6 @@ const (
 	defaultAntigravityAgent = "antigravity/1.104.0 darwin/arm64"
 	antigravityAuthType     = "antigravity"
 	refreshSkew             = 3000 * time.Second
-)
-
-var (
-	randSource      = rand.New(rand.NewSource(time.Now().UnixNano()))
-	randSourceMutex sync.Mutex
 )
 
 // AntigravityExecutor proxies requests to the antigravity upstream.
@@ -1242,9 +1236,7 @@ func generateRequestID() string {
 }
 
 func generateSessionID() string {
-	randSourceMutex.Lock()
-	n := randSource.Int63n(9_000_000_000_000_000_000)
-	randSourceMutex.Unlock()
+	n := rand.Int63n(9_000_000_000_000_000_000)
 	return "-" + strconv.FormatInt(n, 10)
 }
 
@@ -1268,10 +1260,8 @@ func generateStableSessionID(payload []byte) string {
 func generateProjectID() string {
 	adjectives := []string{"useful", "bright", "swift", "calm", "bold"}
 	nouns := []string{"fuze", "wave", "spark", "flow", "core"}
-	randSourceMutex.Lock()
-	adj := adjectives[randSource.Intn(len(adjectives))]
-	noun := nouns[randSource.Intn(len(nouns))]
-	randSourceMutex.Unlock()
+	adj := adjectives[rand.Intn(len(adjectives))]
+	noun := nouns[rand.Intn(len(nouns))]
 	randomPart := strings.ToLower(uuid.NewString())[:5]
 	return adj + "-" + noun + "-" + randomPart
 }

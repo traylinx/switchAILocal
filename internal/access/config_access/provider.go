@@ -54,9 +54,7 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 	if p == nil {
 		return nil, sdkaccess.ErrNotHandled
 	}
-	if len(p.keys) == 0 {
-		return nil, sdkaccess.ErrNotHandled
-	}
+	
 	authHeader := r.Header.Get("Authorization")
 	authHeaderGoogle := r.Header.Get("X-Goog-Api-Key")
 	authHeaderAnthropic := r.Header.Get("X-Api-Key")
@@ -65,9 +63,6 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 	if r.URL != nil {
 		queryKey = r.URL.Query().Get("key")
 		queryAuthToken = r.URL.Query().Get("auth_token")
-	}
-	if authHeader == "" && authHeaderGoogle == "" && authHeaderAnthropic == "" && queryKey == "" && queryAuthToken == "" {
-		return nil, sdkaccess.ErrNoCredentials
 	}
 
 	apiKey := extractBearerToken(authHeader)
@@ -83,19 +78,50 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 		{queryAuthToken, "query-auth-token"},
 	}
 
+	var firstCandidate string
+	var firstSource string
+
 	for _, candidate := range candidates {
 		if candidate.value == "" {
 			continue
 		}
-		if _, ok := p.keys[candidate.value]; ok {
+		// Track the first valid non-empty candidate for optional auth
+		if firstCandidate == "" {
+			firstCandidate = candidate.value
+			firstSource = candidate.source
+		}
+		// Strict check when keys are configured
+		if len(p.keys) > 0 {
+			if _, ok := p.keys[candidate.value]; ok {
+				return &sdkaccess.Result{
+					Provider:  p.Identifier(),
+					Principal: candidate.value,
+					Metadata: map[string]string{"source": candidate.source},
+				}, nil
+			}
+		}
+	}
+
+	// Optional authentication mode
+	if len(p.keys) == 0 {
+		if firstCandidate != "" {
 			return &sdkaccess.Result{
 				Provider:  p.Identifier(),
-				Principal: candidate.value,
-				Metadata: map[string]string{
-					"source": candidate.source,
-				},
+				Principal: firstCandidate,
+				Metadata: map[string]string{"source": firstSource},
 			}, nil
 		}
+		return &sdkaccess.Result{
+			Provider:  p.Identifier(),
+			Principal: "anonymous",
+			Metadata: map[string]string{"source": "none"},
+		}, nil
+	}
+
+	// Strict authentication mode failures
+	hasNoAuth := authHeader == "" && authHeaderGoogle == "" && authHeaderAnthropic == "" && queryKey == "" && queryAuthToken == ""
+	if hasNoAuth {
+		return nil, sdkaccess.ErrNoCredentials
 	}
 
 	return nil, sdkaccess.ErrInvalidCredential
