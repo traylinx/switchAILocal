@@ -55,7 +55,13 @@ func TestAmpModule_Register_WithUpstream(t *testing.T) {
 	defer upstream.Close()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
+	base := &handlers.BaseAPIHandler{
+		Cfg: &config.SDKConfig{
+			Intelligence: config.IntelligenceConfig{
+				Matrix: map[string]string{},
+			},
+		},
+	}
 
 	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
@@ -87,7 +93,13 @@ func TestAmpModule_Register_WithoutUpstream(t *testing.T) {
 	r := gin.New()
 
 	accessManager := sdkaccess.NewManager()
-	base := &handlers.BaseAPIHandler{}
+	base := &handlers.BaseAPIHandler{
+		Cfg: &config.SDKConfig{
+			Intelligence: config.IntelligenceConfig{
+				Matrix: map[string]string{},
+			},
+		},
+	}
 
 	m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
@@ -294,7 +306,13 @@ func TestAmpModule_ProviderAliasesAlwaysRegistered(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			r := gin.New()
 			accessManager := sdkaccess.NewManager()
-			base := &handlers.BaseAPIHandler{}
+			base := &handlers.BaseAPIHandler{
+				Cfg: &config.SDKConfig{
+					Intelligence: config.IntelligenceConfig{
+						Matrix: map[string]string{},
+					},
+				},
+			}
 
 			m := NewLegacy(accessManager, func(c *gin.Context) { c.Next() })
 
