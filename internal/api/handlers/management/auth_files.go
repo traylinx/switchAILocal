@@ -550,7 +550,8 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	// Sentinel: Fix path traversal vulnerability by checking for both / and \
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -621,10 +622,12 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	// Sentinel: Fix path traversal vulnerability by checking for both / and \
+	if name == "" || strings.ContainsAny(name, "/\\") {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
+	// Sentinel: Use filepath.Base as defense-in-depth
 	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
 	if !filepath.IsAbs(full) {
 		if abs, errAbs := filepath.Abs(full); errAbs == nil {
