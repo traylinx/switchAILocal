@@ -1,28 +1,34 @@
 ---
 title: "CLI Integrations"
-description: "How to connect external AI CLI tools (like OpenCode, Claude Code) to switchAILocal."
+description: "How to connect external AI CLI tools (OpenCode, Claude Code, Codex) to switchAILocal."
 icon: "terminal"
 ---
 
-The `switchAILocal` proxy is fully compatible with any application that supports the OpenAI API. This guide explains how to configure popular AI coding assistants to route their requests through your local switchAILocal proxy.
+The `switchAILocal` proxy is fully compatible with any application that supports the OpenAI or Anthropic API standards. This guide explains how to configure popular AI coding assistants to route their requests through your local switchAILocal instance.
+
+## Prerequisites
+
+- switchAILocal running locally (default: `http://localhost:18080`)
+- At least one provider configured with credentials (e.g., MiniMax, OpenRouter, etc.)
+- Know the model IDs available via `curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"`
+
+---
 
 ## OpenCode
 
-[OpenCode](https://opencode.ai/) natively supports custom AI providers via its JSON configuration file using the `@ai-sdk/openai-compatible` plugin.
+[OpenCode](https://opencode.ai/) supports custom AI providers via the `@ai-sdk/openai-compatible` npm package.
 
-### Configuration Steps
+**Endpoint:** `http://localhost:18080/v1` (OpenAI Chat Completions)
 
-1. Create or edit the global OpenCode configuration file located at `~/.config/opencode/opencode.json`.
-2. Add a custom `provider` block. Point the `baseURL` to your running switchAILocal instance (default: `http://localhost:18080/v1`).
-3. Define the specific switchAILocal models you want to use in the `models` object. Ensure the model keys exactly match the `provider:model` alias syntax expected by switchAILocal.
+### Configuration
 
-### Example Configuration
+Edit `~/.config/opencode/opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "switchailocal_provider": {
+    "switchailocal": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "AIL",
       "options": {
@@ -36,13 +42,6 @@ The `switchAILocal` proxy is fully compatible with any application that supports
             "context": 1000000,
             "output": 65536
           }
-        },
-        "deepseek:deepseek-coder": {
-          "name": "DeepSeek Coder (via AIL)",
-          "limit": {
-            "context": 64000,
-            "output": 8192
-          }
         }
       }
     }
@@ -50,18 +49,160 @@ The `switchAILocal` proxy is fully compatible with any application that supports
 }
 ```
 
+### Key Details
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| `npm` | `@ai-sdk/openai-compatible` | Required — OpenAI-compatible SDK adapter |
+| `baseURL` | `http://localhost:18080/v1` | switchAILocal OpenAI endpoint |
+| `apiKey` | Your configured API key | Must match a key in your `api-keys` config |
+| Model key | `provider:ModelName` | Must match the exact model ID from `/v1/models` |
+
 <Note>
-**Reasoning Models Support**: For models that return raw `<think>` tags embedded within their content (like MiniMax M2.7, DeepSeek R1), switchAILocal automatically normalizes the response into the OpenAI-standard `reasoning_content` field. This ensures clean, native chain-of-thought rendering inside OpenCode without visual artifact leakage.
+**Reasoning Models**: switchAILocal automatically normalizes `<think>` tags (used by MiniMax, DeepSeek R1, etc.) into the OpenAI-standard `reasoning_content` field. This gives you native chain-of-thought rendering in OpenCode.
 </Note>
+
+---
 
 ## Claude Code
 
-_Documentation on connecting Anthropic's Claude Code CLI will be added soon._
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) connects to the Anthropic Messages API. switchAILocal exposes a fully compatible Anthropic endpoint at `/v1/messages`.
+
+**Endpoint:** `http://localhost:18080` (Anthropic Messages API)
+
+### Configuration
+
+Edit `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:18080",
+    "ANTHROPIC_AUTH_TOKEN": "sk-test-123",
+    "ANTHROPIC_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_SMALL_FAST_MODEL": "minimax:MiniMax-M2.7",
+    "API_TIMEOUT_MS": "300000"
+  }
+}
+```
+
+### Key Details
+
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `ANTHROPIC_BASE_URL` | `http://localhost:18080` | **No `/v1` suffix** — Claude Code appends `/v1/messages` automatically |
+| `ANTHROPIC_AUTH_TOKEN` | Your configured API key | Sent as `Bearer` token. Use `ANTHROPIC_API_KEY` for `x-api-key` header instead |
+| `ANTHROPIC_MODEL` | `provider:ModelName` | The model Claude Code will use for all requests |
+| `ANTHROPIC_SMALL_FAST_MODEL` | `provider:ModelName` | Model used for background/fast tasks (tab completion, etc.) |
+
+<Warning>
+**Important**: `ANTHROPIC_BASE_URL` should be `http://localhost:18080` without `/v1`. Claude Code automatically appends `/v1/messages` to the base URL. If you include `/v1`, requests will go to `/v1/v1/messages` and fail.
+</Warning>
+
+### Optional Settings
+
+You can override all model slots to route everything through switchAILocal:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:18080",
+    "ANTHROPIC_AUTH_TOKEN": "sk-test-123",
+    "ANTHROPIC_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_SMALL_FAST_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "minimax:MiniMax-M2.7",
+    "API_TIMEOUT_MS": "300000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  }
+}
+```
+
+### Verification
+
+Test the Claude-compatible endpoint directly:
+
+```bash
+curl http://localhost:18080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-test-123" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "minimax:MiniMax-M2.7",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+---
+
+## Codex CLI
+
+[Codex CLI](https://github.com/openai/codex) (by OpenAI) supports custom providers via `~/.codex/config.toml` using the `model_providers` system.
+
+**Endpoint:** `http://localhost:18080/v1` (OpenAI Responses API)
+
+### Configuration
+
+Edit `~/.codex/config.toml`:
+
+```toml
+# Set switchAILocal as the default provider
+model = "minimax:MiniMax-M2.7"
+model_provider = "switchailocal"
+
+[model_providers.switchailocal]
+name = "switchAILocal"
+base_url = "http://localhost:18080/v1"
+env_key = "SWITCHAILOCAL_API_KEY"
+```
+
+Then export your API key:
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+export SWITCHAILOCAL_API_KEY="sk-test-123"
+```
+
+### Key Details
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| `model_provider` | `switchailocal` | Points to your `[model_providers.*]` section |
+| `base_url` | `http://localhost:18080/v1` | **Include `/v1`** — Codex appends `/responses` |
+| `env_key` | `SWITCHAILOCAL_API_KEY` | Name of the env var holding your API key |
+| `model` | `provider:ModelName` | Must match the model ID from switchAILocal |
+
+<Note>
+Codex CLI uses the OpenAI **Responses API** (`/v1/responses`), which switchAILocal fully supports alongside the traditional Chat Completions API.
+</Note>
+
+---
 
 ## General Configuration
 
-For any generic OpenAI-compatible CLI tool, use these standard connection parameters:
+For any generic OpenAI-compatible CLI tool, use these connection parameters:
 
-- **API Base URL:** `http://localhost:18080/v1`
-- **API Key:** A valid key from your `auths/` directory config.
-- **Model Name:** Use the full `provider:model` format (e.g. `openai:gpt-4o` or `openrouter:anthropic/claude-3-5-sonnet`).
+### OpenAI-Compatible Clients
+```
+API Base URL:  http://localhost:18080/v1
+API Key:       sk-test-123  (or your configured key)
+Model:         provider:ModelName  (e.g., minimax:MiniMax-M2.7)
+```
+
+### Anthropic-Compatible Clients
+```
+API Base URL:  http://localhost:18080
+API Key:       sk-test-123  (via x-api-key header)
+Model:         provider:ModelName
+Version:       2023-06-01  (anthropic-version header)
+```
+
+### Finding Available Models
+
+```bash
+# List all available models
+curl http://localhost:18080/v1/models \
+  -H "Authorization: Bearer sk-test-123" | python3 -m json.tool
+```
