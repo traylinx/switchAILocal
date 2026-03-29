@@ -3,6 +3,8 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
+RUN apk add --no-cache gcc musl-dev linux-headers
+
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -12,7 +14,7 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o ./switchAILocal ./cmd/server/
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o ./switchAILocal ./cmd/server/
 
 # Runtime stage
 
