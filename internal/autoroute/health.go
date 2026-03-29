@@ -7,6 +7,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/observability"
 )
 
 // ProviderHealthState tracks the live latency, availability, and quota health
@@ -205,6 +206,9 @@ func (m *ProviderHealthMonitor) syncToResolverLocked() {
 			newState.Latency = st.Latency
 			newState.SuccessRate = st.SuccessRate
 			newState.QuotaHealth = st.QuotaRemaining
+			
+			// Publish prometheus health metric
+			observability.ProviderHealthScore.WithLabelValues(c.Provider, st.Status).Set(st.SuccessRate)
 		}
 		updated = append(updated, newState)
 	}

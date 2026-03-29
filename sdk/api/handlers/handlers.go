@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
@@ -29,6 +30,7 @@ import (
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
+	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 )
 
 // ErrorResponse represents a standard error response format for the API.
@@ -189,6 +191,9 @@ type BaseAPIHandler struct {
 	// AutoResolver provides intelligent auto-routing when model="auto".
 	// This is optional - if nil, legacy auto-model-priority fallback is used.
 	AutoResolver *autoroute.AutoResolver
+
+	// CircuitBreaker manages provider-level overload protection.
+	CircuitBreaker *circuit.Registry
 }
 
 // PipelineIntegrator defines the interface for request pipeline integration.
@@ -220,13 +225,14 @@ type PipelineIntegrator interface {
 //
 // Returns:
 //   - *BaseAPIHandler: A new API handlers instance
-func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine, pipelineIntegrator PipelineIntegrator, autoResolver *autoroute.AutoResolver) *BaseAPIHandler {
+func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, luaEngine *plugin.LuaEngine, pipelineIntegrator PipelineIntegrator, autoResolver *autoroute.AutoResolver, circuitBreaker *circuit.Registry) *BaseAPIHandler {
 	return &BaseAPIHandler{
 		Cfg:                cfg,
 		AuthManager:        authManager,
 		LuaEngine:          luaEngine,
 		PipelineIntegrator: pipelineIntegrator,
 		AutoResolver:       autoResolver,
+		CircuitBreaker:     circuitBreaker,
 	}
 }
 
@@ -388,6 +394,12 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		return nil, errMsg
 	}
 
+	// 1. Enforce Circuit Breaker
+	providers, circuitErr := h.enforceCircuitBreaker(providers)
+	if circuitErr != nil {
+		return nil, circuitErr
+	}
+
 	// Store metadata in Gin context for response header setting
 	if ginCtx, ok := ctx.Value(ginContextKey).(*gin.Context); ok && ginCtx != nil {
 		if metadata != nil {
@@ -471,13 +483,46 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	return cloneBytes(resp.Payload), nil
 }
 
+// enforceCircuitBreaker validates the requested providers against their circuit breakers.
+func (h *BaseAPIHandler) enforceCircuitBreaker(providers []string) ([]string, *interfaces.ErrorMessage) {
+	if h.CircuitBreaker == nil || len(providers) == 0 {
+		return providers, nil
+	}
+	
+	var active []string
+	for _, p := range providers {
+		if err := h.CircuitBreaker.Get(p).AllowRequest(); err == nil {
+			active = append(active, p)
+		} else {
+			log.WithFields(log.Fields{"provider": p}).Warn("Circuit breaker triggered, skipping provider")
+		}
+	}
+	
+	if len(active) == 0 {
+		return nil, &interfaces.ErrorMessage{
+			StatusCode: http.StatusServiceUnavailable,
+			Error:      fmt.Errorf("all downstream providers (%v) are currently overloaded or open", providers),
+		}
+	}
+	return active, nil
+}
+
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
+	startTime := time.Now()
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
 	}
+
+	// 1. Enforce Circuit Breaker
+	providers, circuitErr := h.enforceCircuitBreaker(providers)
+	if circuitErr != nil {
+		h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), false, circuitErr.StatusCode)
+		return nil, circuitErr
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -507,17 +552,27 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 				addon = hdr.Clone()
 			}
 		}
+		h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), false, status)
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), true, 200)
 	return cloneBytes(resp.Payload), nil
 }
 
 // ExecuteMultimodalWithAuthManager executes a multimodal request (audio/image) via the core auth manager.
 // It injects operation and content-type metadata for the executor.
 func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, operation string, contentType string) ([]byte, *interfaces.ErrorMessage) {
+	startTime := time.Now()
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
+	}
+
+	// 1. Enforce Circuit Breaker
+	providers, circuitErr := h.enforceCircuitBreaker(providers)
+	if circuitErr != nil {
+		h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), false, circuitErr.StatusCode)
+		return nil, circuitErr
 	}
 
 	// Inject operation metadata
@@ -558,20 +613,37 @@ func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, h
 				addon = hdr.Clone()
 			}
 		}
+		h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), false, status)
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), true, 200)
 	return cloneBytes(resp.Payload), nil
 }
 
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
+	startTime := time.Now()
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
+		dataChan := make(chan []byte)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
+		close(dataChan)
 		close(errChan)
-		return nil, errChan
+		return dataChan, errChan
+	}
+
+	// 1. Enforce Circuit Breaker
+	providers, circuitErr := h.enforceCircuitBreaker(providers)
+	if circuitErr != nil {
+		dataChan := make(chan []byte)
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- circuitErr
+		close(dataChan)
+		close(errChan)
+		h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), false, circuitErr.StatusCode)
+		return dataChan, errChan
 	}
 
 	// Store metadata in Gin context for response header setting
@@ -596,7 +668,6 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
-	startTime := time.Now()
 	routingStartTime := time.Now()
 	
 	chunks, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
@@ -1215,4 +1286,19 @@ func (h *BaseAPIHandler) recordAutoRoutingOutcome(ctx context.Context, metadata 
 		reqID = uuid.NewString() // Fallback if no trace context
 	}
 	h.AutoResolver.RecordOutcome(reqID, decision, executedProvider, latency, success, statusCode, nil)
+	
+	// Apply Circuit Breaker Success/Failure feedback
+	if h.CircuitBreaker != nil {
+		cb := h.CircuitBreaker.Get(executedProvider)
+		if success {
+			cb.RecordSuccess()
+		} else {
+			// Only true connection failures or rate limits trip the breaker.
+			// Client errors (400, 401, 403) are legitimate downstream responses.
+			if statusCode >= 500 || statusCode == http.StatusTooManyRequests {
+				log.WithFields(log.Fields{"provider": executedProvider, "status": statusCode}).Warn("Recording circuit breaker failure event")
+				cb.RecordFailure()
+			}
+		}
+	}
 }

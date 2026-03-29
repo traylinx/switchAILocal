@@ -38,6 +38,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/managementasset"
 	"github.com/traylinx/switchAILocal/internal/observability"
+	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 	"github.com/traylinx/switchAILocal/internal/performance/loadshed"
 	"github.com/traylinx/switchAILocal/internal/performance/ratelimit"
 	"github.com/traylinx/switchAILocal/internal/plugin"
@@ -486,10 +487,13 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		log.WithField("candidates", len(candidates)).Info("Intelligent Auto-Routing Ready")
 	}
 
+	// 6. Initialize Circuit Breaker Strategy
+	circuitBreaker := circuit.NewRegistry(&cfg.Performance.CircuitBreaker)
+
 	// Create server instance
 	s := &Server{
 		engine:              engine,
-		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator, autoResolver),
+		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator, autoResolver, circuitBreaker),
 		cfg:                 cfg,
 		accessManager:       accessManager,
 		requestLogger:       requestLogger,
