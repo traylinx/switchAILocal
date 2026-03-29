@@ -132,6 +132,10 @@ type Config struct {
 	// Observability configures logging format, metrics export, and request event streaming.
 	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
 
+	// Performance configures production performance tuning: rate limiting, circuit breakers,
+	// load shedding, and profiling.
+	Performance PerformanceConfig `yaml:"performance" json:"performance"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
@@ -759,6 +763,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Auto-Routing configuration
 	cfg.SanitizeAutoRouting()
+
+	// Sanitize Performance configuration
+	cfg.Performance.SanitizePerformance()
 
 	// Normalize OAuth provider model exclusion map.
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)

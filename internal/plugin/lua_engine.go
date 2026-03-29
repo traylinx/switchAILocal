@@ -7,10 +7,13 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -575,6 +578,281 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 		msg := L.CheckString(1)
 		log.Infof("[LUA] %s", msg)
 		return 0
+	}))
+
+	// switchai.mcp_call(cmdName, argsTable, envTable, toolName, toolArgsTable) -> (output_text, error)
+	L.SetField(mod, "mcp_call", L.NewFunction(func(L *lua.LState) int {
+		if L.GetTop() < 5 {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("missing arguments: req (cmd, args, env, toolName, toolArgs)"))
+			return 2
+		}
+		
+		cmdName := L.CheckString(1)
+		
+		argsTbl := L.CheckTable(2)
+		var args []string
+		argsTbl.ForEach(func(_, v lua.LValue) {
+			args = append(args, v.String())
+		})
+		
+		envTbl := L.CheckTable(3)
+		var env = make(map[string]string)
+		envTbl.ForEach(func(k, v lua.LValue) {
+			env[k.String()] = v.String()
+		})
+		
+		toolName := L.CheckString(4)
+		
+		toolArgsTbl := L.CheckTable(5)
+		toolArgs := e.luaTableToGoMap(toolArgsTbl)
+		
+		ctx := L.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		
+		output, err := executeMCPToolCall(ctx, cmdName, args, env, toolName, toolArgs)
+		if err != nil {
+			L.Push(lua.LString(output)) 
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		
+		L.Push(lua.LString(output))
+		L.Push(lua.LNil) // No error
+		return 2
+	}))
+
+	// switchai.minimax_native_vlm_extract(body_str, api_key, api_host, prompt) -> (new_body_str, err)
+	L.SetField(mod, "minimax_native_vlm_extract", L.NewFunction(func(L *lua.LState) int {
+		if L.GetTop() < 4 {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("missing arguments"))
+			return 2
+		}
+
+		bodyStr := L.CheckString(1)
+		apiKey := L.CheckString(2)
+		apiHost := L.CheckString(3)
+		prompt := L.CheckString(4)
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(bodyStr), &payload); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("invalid json: " + err.Error()))
+			return 2
+		}
+
+		hasMods := false
+		msgsVal, ok := payload["messages"].([]any)
+		if !ok {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("no messages array"))
+			return 2
+		}
+
+		for i, msgVal := range msgsVal {
+			msg, ok := msgVal.(map[string]any)
+			if !ok {
+				continue
+			}
+			if role, _ := msg["role"].(string); role != "user" {
+				continue
+			}
+
+			contents, ok := msg["content"].([]any)
+			if !ok {
+				continue
+			}
+
+			for j, contentVal := range contents {
+				content, ok := contentVal.(map[string]any)
+				if !ok {
+					continue
+				}
+
+				if t, _ := content["type"].(string); t == "image_url" {
+					if imgUrlData, ok := content["image_url"].(map[string]any); ok {
+						if urlStr, ok := imgUrlData["url"].(string); ok {
+							// Call Minimax VLM natively
+							vlmReqBody, _ := json.Marshal(map[string]any{
+								"prompt": prompt,
+								"image_url": urlStr,
+							})
+
+							req, err := http.NewRequest("POST", apiHost+"/v1/coding_plan/vlm", bytes.NewReader(vlmReqBody))
+							if err == nil {
+								req.Header.Set("Content-Type", "application/json")
+								req.Header.Set("Authorization", "Bearer "+apiKey)
+								
+								client := &http.Client{Timeout: 60 * time.Second}
+								resp, err := client.Do(req)
+								
+								newContent := map[string]any{"type": "text"}
+								if err != nil {
+									newContent["text"] = "[Image extraction failed network error: " + err.Error() + "]"
+								} else {
+									defer resp.Body.Close()
+									bodyBytes, _ := io.ReadAll(resp.Body)
+									var vlmResp map[string]any
+									_ = json.Unmarshal(bodyBytes, &vlmResp)
+									if textContent, ok := vlmResp["content"].(string); ok && textContent != "" {
+										newContent["text"] = "[Visual Context OCR]:\n" + textContent
+									} else {
+										newContent["text"] = "[Image extraction failed, API error: " + string(bodyBytes) + "]"
+									}
+								}
+								contents[j] = newContent
+								hasMods = true
+							}
+						}
+					}
+				}
+			}
+			msg["content"] = contents
+			msgsVal[i] = msg
+		}
+
+		if !hasMods {
+			L.Push(lua.LNil)
+			L.Push(lua.LNil)
+			return 2
+		}
+
+		newBodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("failed to marshal: " + err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LString(string(newBodyBytes)))
+		L.Push(lua.LNil)
+		return 2
+	}))
+
+	// switchai.openai_vision_to_text(body_str, cmdName, argsTable, envTable, toolName, prompt) -> (new_body_str, err)
+	L.SetField(mod, "openai_vision_to_text", L.NewFunction(func(L *lua.LState) int {
+		if L.GetTop() < 6 {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("missing arguments"))
+			return 2
+		}
+		
+		bodyStr := L.CheckString(1)
+		cmdName := L.CheckString(2)
+		
+		argsTbl := L.CheckTable(3)
+		var args []string
+		argsTbl.ForEach(func(_, v lua.LValue) { args = append(args, v.String()) })
+		
+		envTbl := L.CheckTable(4)
+		var env = make(map[string]string)
+		envTbl.ForEach(func(k, v lua.LValue) { env[k.String()] = v.String() })
+		
+		toolName := L.CheckString(5)
+		prompt := L.CheckString(6)
+
+		ctx := L.Context()
+		if ctx == nil { ctx = context.Background() }
+
+		// Parse body natively in Go
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(bodyStr), &payload); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("invalid json: " + err.Error()))
+			return 2
+		}
+
+		hasMods := false
+		msgsVal, ok := payload["messages"].([]any)
+		if !ok {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("no messages array"))
+			return 2
+		}
+
+		for i, msgVal := range msgsVal {
+			msg, ok := msgVal.(map[string]any)
+			if !ok { continue }
+			if role, _ := msg["role"].(string); role != "user" { continue }
+
+			contents, ok := msg["content"].([]any)
+			if !ok { continue }
+
+			for j, contentVal := range contents {
+				content, ok := contentVal.(map[string]any)
+				if !ok { continue }
+
+				if t, _ := content["type"].(string); t == "image_url" {
+					if imgUrlData, ok := content["image_url"].(map[string]any); ok {
+						if urlStr, ok := imgUrlData["url"].(string); ok {
+							// Execute MCP tool natively in Go
+							toolArgs := map[string]any{"prompt": prompt, "image_source": urlStr}
+							out, err := executeMCPToolCall(ctx, cmdName, args, env, toolName, toolArgs)
+							
+							newContent := map[string]any{"type": "text"}
+							if err != nil {
+								newContent["text"] = "[Image extraction failed internally: " + err.Error() + "]"
+							} else {
+								newContent["text"] = "[Visual Context OCR]:\n" + out
+							}
+							contents[j] = newContent
+							hasMods = true
+						}
+					}
+				}
+			}
+			msg["content"] = contents
+			msgsVal[i] = msg
+		}
+
+		if !hasMods {
+			L.Push(lua.LNil) // No modifications
+			L.Push(lua.LNil)
+			return 2
+		}
+
+		newBodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("failed to marshal: " + err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LString(string(newBodyBytes)))
+		L.Push(lua.LNil)
+		return 2
+	}))
+
+	// switchai.json_decode(str) -> table
+	L.SetField(mod, "json_decode", L.NewFunction(func(L *lua.LState) int {
+		str := L.CheckString(1)
+		var m any
+		if err := json.Unmarshal([]byte(str), &m); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(e.goValueToLua(L, m))
+		L.Push(lua.LNil)
+		return 2
+	}))
+
+	// switchai.json_encode(table) -> str
+	L.SetField(mod, "json_encode", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		m := e.luaTableToGoMap(tbl)
+		b, err := json.Marshal(m)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LString(string(b)))
+		L.Push(lua.LNil)
+		return 2
 	}))
 
 	// switchai.exec(cmd, args...) -> (output, err)

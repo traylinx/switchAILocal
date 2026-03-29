@@ -667,6 +667,7 @@ intelligence:
 | Guide                                                     | Description                                                |
 | --------------------------------------------------------- | ---------------------------------------------------------- |
 | [Installation](docs/user/installation.md)                 | Getting started guide                                      |
+| [Performance Guide](docs/user/performance_guide.md)       | Rate limiting, load shedding, and profiling                |
 | [Configuration](docs/user/configuration.md)               | All configuration options                                  |
 | [Providers](docs/user/providers.md)                       | Setting up AI providers                                    |
 | [API Reference](docs/user/api-reference.md)               | REST API documentation                                     |

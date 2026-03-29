@@ -177,6 +177,16 @@ Exposes standard Go process metrics along with `switchAILocal`-specific telemetr
 
 *Note: This endpoint is served on the root level (`/metrics`), not under `/v1/`.*
 
+### Management Dashboard
+
+```
+GET /v0/management/observability/dashboard
+```
+
+Returns real-time proxy health and Go runtime statistics (heap, GC, goroutines). Requires your `management-secret-key`.
+
+📖 **See the [Performance & Production Guide](performance_guide.md)** for details on tuning rate limits, load shedding, and observability.
+
 ---
 
 ## Advanced Features

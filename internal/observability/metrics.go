@@ -31,7 +31,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "switchailocal_request_duration_milliseconds",
 			Help:    "Duration of HTTP requests in milliseconds",
-			Buckets: []float64{100, 250, 500, 1000, 2500, 5000, 10000, 20000, 45000, 90000},
+			Buckets: []float64{0.1, 0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 20000, 45000, 90000},
 		},
 		[]string{"model", "provider", "auto_routed"},
 	)
@@ -62,6 +62,40 @@ var (
 			Help: "Total number of provider failovers/fallbacks executed",
 		},
 		[]string{"requested_model"},
+	)
+
+	// InFlightRequests tracks the number of requests currently being processed.
+	InFlightRequests = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "switchailocal_requests_in_flight",
+			Help: "Number of HTTP requests currently being processed",
+		},
+	)
+
+	// ProviderHealthScore tracks real-time provider health scores.
+	ProviderHealthScore = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "switchailocal_provider_health_score",
+			Help: "Provider health score (0-1) based on success rate, latency, and quota",
+		},
+		[]string{"provider", "status"},
+	)
+
+	// RateLimitedTotal tracks the total number of rate-limited requests.
+	RateLimitedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "switchailocal_rate_limited_total",
+			Help: "Total number of requests rejected by rate limiter",
+		},
+		[]string{"scope"}, // "global" or "per_key"
+	)
+
+	// LoadSheddedTotal tracks the total number of load-shed requests.
+	LoadSheddedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "switchailocal_load_shed_total",
+			Help: "Total number of requests rejected by load shedding",
+		},
 	)
 )
 

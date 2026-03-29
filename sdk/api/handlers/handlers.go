@@ -768,6 +768,19 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 				"metadata": metadata,
 				"body":     string(body), // Pass body as string
 			}
+
+			// Inject API key dynamically for plugins (Zero-Config MCP)
+			if h.AuthManager != nil {
+				for _, a := range h.AuthManager.List() {
+					if strings.EqualFold(a.Provider, providerPrefix) && a.Attributes != nil {
+						if key, ok := a.Attributes["api_key"]; ok && key != "" {
+							reqData["api_key"] = key
+							break
+						}
+					}
+				}
+			}
+
 			modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
 			if hookErr == nil && modified != nil {
 				if m, ok := modified["model"].(string); ok && m != "" {
@@ -799,6 +812,27 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 			"model":    normalizedModel,
 			"metadata": metadata,
 			"body":     string(body),
+		}
+
+		// Inject API key dynamically for plugins (Zero-Config MCP) by inferring provider from model
+		if h.AuthManager != nil {
+			var inferredProvider string
+			if parts := strings.SplitN(normalizedModel, ":", 2); len(parts) > 1 {
+				inferredProvider = parts[0]
+			} else if strings.HasPrefix(strings.ToLower(normalizedModel), "minimax") {
+				inferredProvider = "minimax"
+			}
+
+			if inferredProvider != "" {
+				for _, a := range h.AuthManager.List() {
+					if strings.EqualFold(a.Provider, inferredProvider) && a.Attributes != nil {
+						if key, ok := a.Attributes["api_key"]; ok && key != "" {
+							reqData["api_key"] = key
+							break
+						}
+					}
+				}
+			}
 		}
 		modified, hookErr := h.LuaEngine.RunHook(context.Background(), plugin.HookOnRequest, reqData)
 		if hookErr == nil && modified != nil {
@@ -884,7 +918,11 @@ func cloneBytes(src []byte) []byte {
 }
 
 func normalizeModelMetadata(modelName string) (string, map[string]any) {
-	return util.NormalizeThinkingModel(modelName)
+	norm, meta := util.NormalizeThinkingModel(modelName)
+	// OpenCode and Continue DEV force models to have `-vision` in their names to unlock the UI GUI for image upload.
+	// We strip it here so the actual provider backend gets the correct model name invisibly.
+	norm = strings.TrimSuffix(norm, "-vision")
+	return norm, meta
 }
 
 func cloneMetadata(src map[string]any) map[string]any {

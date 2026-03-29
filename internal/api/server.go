@@ -36,6 +36,8 @@ import (
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/managementasset"
 	"github.com/traylinx/switchAILocal/internal/observability"
+	"github.com/traylinx/switchAILocal/internal/performance/loadshed"
+	"github.com/traylinx/switchAILocal/internal/performance/ratelimit"
 	"github.com/traylinx/switchAILocal/internal/plugin"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/usage"
@@ -330,6 +332,13 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		engine.Use(observability.GinMiddleware(eventEmitter))
 	}
 	engine.Use(logging.GinLogrusRecovery())
+
+	// Performance middleware: load shedding + rate limiting (positioned early for fast rejection)
+	if cfg != nil {
+		engine.Use(loadshed.Middleware(cfg.Performance.LoadShedding))
+		engine.Use(ratelimit.Middleware(cfg.Performance.RateLimiter))
+	}
+
 	for _, mw := range optionState.extraMiddleware {
 		engine.Use(mw)
 	}
@@ -798,6 +807,9 @@ func (s *Server) registerManagementRoutes() {
 		}
 
 		mgmt.GET("/debug", s.mgmt.GetDebug)
+
+		// Observability dashboard endpoint
+		mgmt.GET("/observability/dashboard", s.mgmt.HandleDashboard)
 		mgmt.PUT("/debug", s.mgmt.PutDebug)
 		mgmt.PATCH("/debug", s.mgmt.PutDebug)
 
@@ -1157,6 +1169,11 @@ func (s *Server) SetDiscoverer(d ModelDiscoverer) {
 func (s *Server) Start() error {
 	if s == nil || s.server == nil {
 		return fmt.Errorf("failed to start HTTP server: server not initialized")
+	}
+
+	// Start pprof server if profiling is enabled
+	if s.cfg != nil && s.cfg.Performance.ProfilingEnabled {
+		observability.StartPprofServer(s.cfg.Performance.PprofPort)
 	}
 
 	useTLS := s.cfg != nil && s.cfg.TLS.Enable

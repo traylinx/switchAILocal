@@ -16,202 +16,59 @@ allowed-tools:
 
 # switchAILocal Provider Setup
 
-This skill configures Claude Code to use **switchAILocal** (`ail`) as its API provider.
-Once configured, all your Claude Code requests route through `http://localhost:18080`,
-which can forward to any of your configured AI providers (Gemini CLI, Ollama, Groq,
-Xiaomi, Alibaba, switchAI Cloud, and more).
+Configure **switchAILocal** (`ail`) as the primary API provider for AI agents like Claude Code. This allows the user to route requests securely to multiple providers using the local `http://localhost:18080/v1` gateway.
 
-## Preamble (run first)
+## Decision Tree
 
+Pick the right script based on what the user is asking. **Execute these scripts directly in your bash tool.**
+
+| User wants to... | Script Command | Example query |
+|---|---|---|
+| Check if the proxy is running | `python3 <skill-path>/scripts/status.py` | "Is switchAILocal running?" |
+| See all available models | `python3 <skill-path>/scripts/list-models.py` | "What models can I use?" |
+| Configure Claude Code to use a model | `python3 <skill-path>/scripts/set-provider.py <model-id>` | "Set my provider to geminicli:" |
+
+*Note: Replace `<skill-path>` with the absolute path to this skill directory.*
+
+---
+
+## 🚀 Workflow: Interactive Setup
+
+If the user says "Setup my AI provider" or "Configure my models", follow this exact workflow:
+
+### 1. Check Status
+Run the health check to ensure the proxy is alive:
 ```bash
-# ── 1. Locate switchAILocal ──────────────────────────────────────────
-AIL_DIR=""
-for _D in \
-  "$HOME/Projects/makakoo/agents/switchAILocal" \
-  "$HOME/.switchailocal/repo" \
-  "$(git rev-parse --show-toplevel 2>/dev/null)"; do
-  [ -f "$_D/config.yaml" ] && AIL_DIR="$_D" && break
-done
-
-if [ -z "$AIL_DIR" ]; then
-  echo "AIL_NOT_FOUND"
-else
-  echo "AIL_DIR: $AIL_DIR"
-fi
-
-# ── 2. Check if switchAILocal server is running ──────────────────────
-_API_KEY=$(grep -A0 '  - "' "$AIL_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "sk-test-123")
-_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost:18080/v1/models -H "Authorization: Bearer $_API_KEY" 2>/dev/null || echo "000")
-
-if [ "$_HEALTH" = "200" ]; then
-  echo "AIL_STATUS: RUNNING"
-  echo "AIL_API_KEY: $_API_KEY"
-else
-  echo "AIL_STATUS: OFFLINE ($_HEALTH)"
-fi
-
-# ── 3. Fetch and group available models ──────────────────────────────
-if [ "$_HEALTH" = "200" ]; then
-  curl -s http://localhost:18080/v1/models -H "Authorization: Bearer $_API_KEY" 2>/dev/null | \
-    python3 -c "
-import json, sys
-from collections import defaultdict
-try:
-    data = json.load(sys.stdin)
-    models = data.get('data', [])
-    groups = defaultdict(list)
-    for m in models:
-        mid = m.get('id', '')
-        owner = m.get('owned_by', 'unknown').upper()
-        # Detect provider from prefix
-        if ':' in mid:
-            prefix = mid.split(':')[0]
-            groups[prefix.upper()].append(mid)
-        else:
-            groups[owner].append(mid)
-    print(f'TOTAL_MODELS: {len(models)}')
-    for provider in sorted(groups.keys()):
-        model_list = sorted(groups[provider])
-        print(f'  {provider} ({len(model_list)}): {\" | \".join(model_list[:8])}')
-        if len(model_list) > 8:
-            print(f'    ... and {len(model_list) - 8} more')
-except Exception as e:
-    print(f'PARSE_ERROR: {e}')
-" 2>/dev/null || echo "MODEL_FETCH_FAILED"
-fi
-
-# ── 4. Check current Claude Code config ──────────────────────────────
-_CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-if [ -f "$_CLAUDE_SETTINGS" ]; then
-  _CURRENT_MODEL=$(python3 -c "
-import json
-with open('$_CLAUDE_SETTINGS') as f:
-    s = json.load(f)
-    p = s.get('providerSettings', {})
-    for pk, pv in p.items():
-        if isinstance(pv, dict):
-            m = pv.get('model', '')
-            if m: print(f'CURRENT: {m}')
-" 2>/dev/null || echo "UNKNOWN")
-  echo "$_CURRENT_MODEL"
-else
-  echo "CURRENT: default (no settings.json)"
-fi
+python3 <skill-path>/scripts/status.py
 ```
 
-## After Preamble — Interactive Setup
+If it returns `OFFLINE`, instruct the user to start the server: "switchAILocal is offline. Please open a new terminal and run `ail start`, then let me know when it's running."
 
-Based on the preamble output, follow these steps:
-
-### If `AIL_NOT_FOUND`
-Tell the user: "switchAILocal config not found. Please provide the path to your switchAILocal directory."
-Use AskUserQuestion to get the path, then re-read `config.yaml` from that location.
-
-### If `AIL_STATUS: OFFLINE`
-Tell the user: "switchAILocal server is not running on port 18080. Start it with:"
+### 2. Discover Models
+Fetch the available models grouped by provider:
 ```bash
-cd <AIL_DIR> && ail start
-```
-Then wait for the user to confirm it's running before proceeding.
-
-### If `AIL_STATUS: RUNNING`
-
-1. **Present the Model Wizard.** Format the model groups from the preamble output into
-   a clean table, organized by provider. Highlight recommended models:
-   - For **coding**: `geminicli:gemini-2.5-pro`, `ollama:kimi-k2.5:cloud`
-   - For **fast tasks**: `switchai:switchai-fast`, `ollama:gpt-oss:20b-cloud`
-   - For **reasoning**: `switchai:switchai-reasoner`, `xiaomi:mimo-v2-pro`
-
-2. **Ask the user** via AskUserQuestion:
-   > Which model do you want to use? Enter the full model ID from the list above
-   > (e.g., `xiaomi:mimo-v2-pro` or `geminicli:gemini-2.5-pro`).
-
-3. **Configure environment.** After the user selects a model, run:
-
-```bash
-# Write env vars to shell profile
-SHELL_RC="$HOME/.zshrc"
-[ -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ] && SHELL_RC="$HOME/.bashrc"
-
-# Remove any existing ail entries
-grep -v "ANTHROPIC_BASE_URL.*switchAILocal\|ANTHROPIC_BASE_URL.*18080\|ANTHROPIC_API_KEY.*sk-test\|# switchAILocal" "$SHELL_RC" > "$SHELL_RC.ail-bak" 2>/dev/null
-mv "$SHELL_RC.ail-bak" "$SHELL_RC"
-
-# Append fresh config
-cat >> "$SHELL_RC" << 'AILEOF'
-
-# switchAILocal provider config (managed by ail-provider skill)
-export ANTHROPIC_BASE_URL="http://localhost:18080/api/provider/anthropic"
-export ANTHROPIC_API_KEY="AIL_API_KEY_PLACEHOLDER"
-AILEOF
-
-# Replace placeholder with actual key
-sed -i '' "s/AIL_API_KEY_PLACEHOLDER/$_API_KEY/" "$SHELL_RC" 2>/dev/null || \
-  sed -i "s/AIL_API_KEY_PLACEHOLDER/$_API_KEY/" "$SHELL_RC"
-
-echo "✅ Shell profile updated: $SHELL_RC"
+python3 <skill-path>/scripts/list-models.py
 ```
 
-4. **Update Claude Code settings.** Write the selected model to `~/.claude/settings.json`:
+**Present the results to the user as a clean Markdown list.** Call out the recommended models (marked with ⭐ or 🧠).
 
+### 3. Ask for Selection
+Use the `AskUserQuestion` tool to prompt the user:
+> Which model ID would you like to use? (For example: `geminicli:gemini-2.5-pro`, `switchai:switchai-fast`, or `auto`)
+
+### 4. Apply Configuration
+Once the user provides a model ID, apply it immediately:
 ```bash
-python3 << 'PYEOF'
-import json, os, sys
-
-settings_path = os.path.expanduser("~/.claude/settings.json")
-model = "SELECTED_MODEL"  # Claude: replace with the user's chosen model
-
-if os.path.exists(settings_path):
-    with open(settings_path) as f:
-        settings = json.load(f)
-else:
-    settings = {}
-
-# Update model in provider settings
-if "providerSettings" not in settings:
-    settings["providerSettings"] = {}
-
-# Set the model for the Anthropic provider
-anthropic = settings["providerSettings"].get("anthropic", {})
-anthropic["model"] = model
-settings["providerSettings"]["anthropic"] = anthropic
-
-with open(settings_path, "w") as f:
-    json.dump(settings, f, indent=2)
-
-print(f"✅ Claude Code model set to: {model}")
-PYEOF
+python3 <skill-path>/scripts/set-provider.py "MODEL_ID_GIVEN_BY_USER"
 ```
 
-5. **Verify the connection.** Run a test request:
+If the verification ping succeeds, confirm to the user that their environment is now fully configured to use switchAILocal.
 
-```bash
-curl -s http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $_API_KEY" \
-  -d '{"model":"SELECTED_MODEL","messages":[{"role":"user","content":"Say hello in one word"}]}' | \
-  python3 -c "
-import json, sys
-try:
-    r = json.load(sys.stdin)
-    content = r['choices'][0]['message']['content']
-    print(f'✅ VERIFIED — Response: {content[:80]}')
-except Exception as e:
-    print(f'❌ VERIFY FAILED: {e}')
-"
-```
+---
 
-If verification succeeds, tell the user:
-> ✅ **switchAILocal is configured!** All your Claude Code requests now route through
-> `http://localhost:18080` using model `SELECTED_MODEL`.
->
-> You can change models anytime by running this skill again or by editing
-> `~/.claude/settings.json`.
+## ⚠️ Critical Rules for AI Agents
 
-## Changing Models Later
-
-To switch models without re-running the full wizard:
-
-1. List available models: `curl -s http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123" | python3 -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data']]"`
-2. Edit `~/.claude/settings.json` and change the `model` field
-3. Restart Claude Code
+1. **NEVER guess the model ID.** Always run `list-models.py` first to see what the user actually has installed, or ask them for the exact ID.
+2. **Always include the prefix.** `geminicli:gemini-2.5-pro` is correct. `gemini-2.5-pro` will fail if the user is expecting CLI-based access.
+3. **Shell Environment:** `set-provider.py` alters `~/.zshrc`. Remind the user they might need to restart their terminal if they intend to spawn new tabs, though Claude Code will pick up the `settings.json` changes immediately.
+4. **Use `auto` for Smart Routing:** If the user isn't sure which model to use, recommend the `auto` model ID to enable Cortex Auto-Routing.
