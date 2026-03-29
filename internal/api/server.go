@@ -10,7 +10,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1407,6 +1409,9 @@ func (s *Server) SetWebsocketAuthChangeHandler(fn func(bool, bool)) {
 func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if manager == nil {
+			hasher := sha256.New()
+			hasher.Write([]byte("anonymous_local_user"))
+			c.Set("api_key_hash", "sha256:"+hex.EncodeToString(hasher.Sum(nil)))
 			c.Next()
 			return
 		}
@@ -1419,6 +1424,10 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
+				
+				hasher := sha256.New()
+				hasher.Write([]byte(result.Principal))
+				c.Set("api_key_hash", "sha256:"+hex.EncodeToString(hasher.Sum(nil)))
 			}
 			c.Next()
 			return
