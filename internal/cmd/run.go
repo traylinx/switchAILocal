@@ -133,9 +133,10 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 
 	// Pass coordinator to API server via ServerOption
 	if coordinator != nil {
+		adapter := integration.NewHandlerAdapter(pipelineIntegrator)
 		builder = builder.WithServerOptions(
 			api.WithServiceCoordinator(coordinator),
-			api.WithPipelineIntegrator(pipelineIntegrator),
+			api.WithPipelineIntegrator(adapter),
 		)
 	}
 
