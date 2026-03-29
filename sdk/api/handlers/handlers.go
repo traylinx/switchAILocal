@@ -1178,18 +1178,18 @@ func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel
 // This is a simple heuristic that can be enhanced later.
 func determineTier(providers []string) string {
 	if len(providers) == 0 {
-		return "unknown"
+		return "semantic"
 	}
 	
 	// Simple tier determination based on provider name
-	provider := providers[0]
+	provider := strings.ToLower(providers[0])
 	switch provider {
 	case "openai", "anthropic", "google":
-		return "premium"
+		return "cognitive"
 	case "ollama", "lmstudio":
-		return "local"
+		return "reflex"
 	default:
-		return "standard"
+		return "semantic"
 	}
 }
 
