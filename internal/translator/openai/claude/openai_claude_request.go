@@ -212,17 +212,52 @@ func ConvertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	}
 
 	// Process tools - convert Anthropic tools to OpenAI functions
+	// Handles both Anthropic-format tools (name, description, input_schema at top-level)
+	// and OpenAI-format tools (type:"function", function.name, function.parameters) that
+	// clients sometimes send to the /v1/messages endpoint.
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
 		var toolsJSON = "[]"
 
 		tools.ForEach(func(_, tool gjson.Result) bool {
-			openAIToolJSON := `{"type":"function","function":{"name":"","description":""}}`
-			openAIToolJSON, _ = sjson.Set(openAIToolJSON, "function.name", tool.Get("name").String())
-			openAIToolJSON, _ = sjson.Set(openAIToolJSON, "function.description", tool.Get("description").String())
+			toolType := tool.Get("type").String()
 
-			// Convert Anthropic input_schema to OpenAI function parameters
-			if inputSchema := tool.Get("input_schema"); inputSchema.Exists() {
-				openAIToolJSON, _ = sjson.Set(openAIToolJSON, "function.parameters", inputSchema.Value())
+			// Skip non-function tool types that downstream providers don't support
+			// (e.g. web_search, web_search_20250305, computer_use, text_editor, etc.)
+			if toolType != "" && toolType != "function" {
+				return true
+			}
+
+			var name, description string
+			var parametersRaw string
+
+			if toolType == "function" {
+				// OpenAI-format tool: {type:"function", function:{name, description, parameters}}
+				fn := tool.Get("function")
+				name = fn.Get("name").String()
+				description = fn.Get("description").String()
+				if params := fn.Get("parameters"); params.Exists() {
+					parametersRaw = params.Raw
+				}
+			} else {
+				// Anthropic-format tool: {name, description, input_schema}
+				name = tool.Get("name").String()
+				description = tool.Get("description").String()
+				if inputSchema := tool.Get("input_schema"); inputSchema.Exists() {
+					parametersRaw = inputSchema.Raw
+				}
+			}
+
+			// Skip tools with empty names — they'll be rejected by providers
+			if name == "" {
+				return true
+			}
+
+			openAIToolJSON := `{"type":"function","function":{"name":"","description":""}}`
+			openAIToolJSON, _ = sjson.Set(openAIToolJSON, "function.name", name)
+			openAIToolJSON, _ = sjson.Set(openAIToolJSON, "function.description", description)
+
+			if parametersRaw != "" {
+				openAIToolJSON, _ = sjson.SetRaw(openAIToolJSON, "function.parameters", parametersRaw)
 			}
 
 			toolsJSON, _ = sjson.Set(toolsJSON, "-1", gjson.Parse(openAIToolJSON).Value())
