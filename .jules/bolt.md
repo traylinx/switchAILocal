@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2024-05-18 - [fmt.Sprintf Overhead in Streaming Handlers]
+**Learning:** Using `fmt.Sprintf` to build Server-Sent Events (SSE) data chunks in high-throughput streaming handlers incurs significant reflection and allocation overhead per chunk.
+**Action:** Always prefer direct string concatenation (`+`) or `strings.Builder` over `fmt.Sprintf` for constructing simple text-based data frames like `data: ` in streaming hot paths.
