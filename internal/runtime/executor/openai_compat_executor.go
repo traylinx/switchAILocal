@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/constant"
@@ -319,6 +321,15 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			if len(line) == 0 {
 				continue
 			}
+			// Detect SSE-level error events from providers that return HTTP 200
+			// but embed errors inside the SSE stream (e.g. MiniMax error code 1000).
+			if sseErr := detectSSEErrorEvent(line); sseErr != nil {
+				log.Warnf("openai compat executor: SSE error detected: %v", sseErr)
+				recordAPIResponseError(ctx, e.cfg, sseErr)
+				reporter.publishFailure(ctx)
+				out <- switchailocalexecutor.StreamChunk{Err: sseErr}
+				return
+			}
 			// OpenAI-compatible streams are SSE: lines typically prefixed with "data: ".
 			// Pass through translator; it yields one or more chunks for the target schema.
 			chunks := sdktranslator.TranslateStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(line), &param)
@@ -518,3 +529,64 @@ func (e statusErr) Error() string {
 }
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+
+// detectSSEErrorEvent checks if an SSE data line contains an error event.
+// Some providers (e.g. MiniMax) return HTTP 200 but embed errors inside the SSE stream like:
+//   data: {"type":"error","error":{"type":"server_error","message":"unknown error, 798 (1000)","http_code":"500"}}
+// This function detects such events and returns a statusErr so the upstream retry logic can handle them.
+// Returns nil if the line is not an error event.
+func detectSSEErrorEvent(line []byte) error {
+	// Strip SSE "data: " prefix
+	data := line
+	if bytes.HasPrefix(data, []byte("data: ")) {
+		data = data[6:]
+	} else if bytes.HasPrefix(data, []byte("data:")) {
+		data = data[5:]
+	} else {
+		return nil
+	}
+
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return nil
+	}
+
+	// Pattern 1: {"type":"error","error":{"message":"...", "http_code":"500"}}
+	// Used by MiniMax and similar providers.
+	typeField := gjson.GetBytes(data, "type")
+	if typeField.String() == "error" {
+		msg := gjson.GetBytes(data, "error.message").String()
+		if msg == "" {
+			msg = "upstream SSE error event"
+		}
+		code := http.StatusInternalServerError
+		if httpCode := gjson.GetBytes(data, "error.http_code"); httpCode.Exists() {
+			if parsed, err := strconv.Atoi(httpCode.String()); err == nil && parsed > 0 {
+				code = parsed
+			}
+		}
+		return statusErr{code: code, msg: msg}
+	}
+
+	// Pattern 2: {"error":{"message":"...", "type":"server_error", "code":"..."}}
+	// Standard OpenAI error format sometimes sent inside SSE streams.
+	errField := gjson.GetBytes(data, "error")
+	if errField.Exists() && errField.IsObject() {
+		// Only treat it as an error if there are NO choices (avoid false positives on normal responses)
+		if !gjson.GetBytes(data, "choices").Exists() {
+			msg := gjson.GetBytes(data, "error.message").String()
+			if msg == "" {
+				msg = "upstream SSE error"
+			}
+			code := http.StatusInternalServerError
+			if status := gjson.GetBytes(data, "error.status"); status.Exists() {
+				if parsed := int(status.Int()); parsed > 0 {
+					code = parsed
+				}
+			}
+			return statusErr{code: code, msg: msg}
+		}
+	}
+
+	return nil
+}
