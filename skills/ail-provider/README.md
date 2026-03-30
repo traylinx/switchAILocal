@@ -98,6 +98,7 @@ switchAILocal supports these providers (all discoverable by the wizard):
 | Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile` |
 | Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
 | Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
+| MiniMax | `minimax:` | `MiniMax-M2.7`, `image-01` |
 | switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast` |
 | OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
 

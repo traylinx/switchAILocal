@@ -75,6 +75,9 @@ Generate images from text prompts. Supports `application/json` and `multipart/fo
 | `size` | string | No | Image size (e.g., `1024x1024`) |
 | `n` | integer | No | Number of images |
 
+> [!NOTE]
+> **Provider Quirks**: For the `minimax` provider, switchAILocal automatically rewrites the upstream path from `/v1/images/generations` to their native `/v1/image_generation` to maintain OpenAI compatibility.
+
 ### Image Editing
 
 ```

@@ -68,7 +68,11 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 			endpoint = "/embeddings"
 			skipTranslation = true
 		case "images_generations":
-			endpoint = "/images/generations"
+			if strings.Contains(strings.ToLower(e.Identifier()), "minimax") || (auth != nil && strings.Contains(strings.ToLower(auth.Provider), "minimax")) {
+				endpoint = "/image_generation"
+			} else {
+				endpoint = "/images/generations"
+			}
 			skipTranslation = true
 			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
 				contentType = ct
