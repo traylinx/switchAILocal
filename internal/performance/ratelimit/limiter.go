@@ -109,9 +109,9 @@ func Middleware(cfg config.RateLimiterConfig) gin.HandlerFunc {
 
 	limiter := New(cfg)
 	log.WithFields(log.Fields{
-		"global_rps":    cfg.GlobalRequestsPerSecond,
-		"global_burst":  cfg.GlobalBurst,
-		"per_key_rps":   cfg.PerKeyRequestsPerSecond,
+		"global_rps":  cfg.GlobalRequestsPerSecond,
+		"global_burst": cfg.GlobalBurst,
+		"per_key_rps": cfg.PerKeyRequestsPerSecond,
 		"per_key_burst": cfg.PerKeyBurst,
 	}).Info("Rate limiter enabled")
 

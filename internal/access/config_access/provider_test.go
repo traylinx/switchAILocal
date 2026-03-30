@@ -3,8 +3,8 @@ package configaccess
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"testing"
+	"net/url"
 
 	sdkaccess "github.com/traylinx/switchAILocal/sdk/access"
 	sdkconfig "github.com/traylinx/switchAILocal/sdk/config"

@@ -51,6 +51,7 @@ type HealingMetadata struct {
 	DiagnosisHistory []*Diagnosis `json:"diagnosis_history,omitempty"`
 }
 
+
 // ToOpenAIExtension formats the healing metadata for inclusion in OpenAI-compatible responses.
 // This allows clients to see what autonomous actions were taken without breaking API compatibility.
 func (h *HealingMetadata) ToOpenAIExtension() map[string]interface{} {

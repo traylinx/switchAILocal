@@ -14,40 +14,40 @@ import (
 // ExperimentJournal maintains a TSV audit trail of all routing
 // decisions and shadow experiments, directly inspired by AutoResearch.
 type ExperimentJournal struct {
-	filePath string
-	file     *os.File
-	writer   *csv.Writer
-	mu       sync.Mutex
-	enabled  bool
+	filePath   string
+	file       *os.File
+	writer     *csv.Writer
+	mu         sync.Mutex
+	enabled    bool
 
 	// In-memory ring buffer for recent UI telemetry
-	recent    []JournalEntry
-	recentIdx int
-	recentLen int
-	maxRecent int
+	recent     []JournalEntry
+	recentIdx  int
+	recentLen  int
+	maxRecent  int
 }
 
 // JournalEntry represents a single row in the TSV log.
 type JournalEntry struct {
-	Timestamp  time.Time
-	RequestID  string
-	Intent     string
-	Complexity float64
+	Timestamp      time.Time
+	RequestID      string
+	Intent         string
+	Complexity     float64
 	// Production Decision
-	ProdModel   string
-	ProdTier    string
-	ProdLatency time.Duration
-	ProdSuccess bool
-	ProdRQS     float64
+	ProdModel      string
+	ProdTier       string
+	ProdLatency    time.Duration
+	ProdSuccess    bool
+	ProdRQS        float64
 	// Shadow Decision (if diff from Prod)
-	ShadowModel       string
-	ShadowTier        string
+	ShadowModel    string
+	ShadowTier     string
 	ShadowExpectedRQS float64 // Predicted RQS based on heuristic/history
 	// Active Weights
-	WeightAvail   float64
-	WeightQuota   float64
-	WeightLatency float64
-	WeightSuccess float64
+	WeightAvail    float64
+	WeightQuota    float64
+	WeightLatency  float64
+	WeightSuccess  float64
 }
 
 // NewExperimentJournal initializes an append-only TSV logger.

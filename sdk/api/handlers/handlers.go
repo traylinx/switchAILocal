@@ -23,7 +23,6 @@ import (
 	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
-	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 	"github.com/traylinx/switchAILocal/internal/plugin"
 	"github.com/traylinx/switchAILocal/internal/runtime/executor"
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -31,6 +30,7 @@ import (
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
+	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 )
 
 // ErrorResponse represents a standard error response format for the API.

@@ -25,7 +25,7 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 			executor: &LocalCLIExecutor{
 				Provider:                "geminicli",
 				PositionalArgsSeparator: "--",
-				Args:                    []string{}, // No default args
+					Args:                    []string{}, // No default args
 			},
 			prompt:     "-dangerous-flag",
 			cliOpts:    nil,

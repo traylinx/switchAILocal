@@ -677,7 +677,7 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 						if urlStr, ok := imgUrlData["url"].(string); ok {
 							// Call Minimax VLM natively
 							vlmReqBody, _ := json.Marshal(map[string]any{
-								"prompt":    prompt,
+								"prompt": prompt,
 								"image_url": urlStr,
 							})
 
@@ -755,9 +755,7 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 		prompt := L.CheckString(6)
 
 		ctx := L.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
+		if ctx == nil { ctx = context.Background() }
 
 		// Parse body natively in Go
 		var payload map[string]any
@@ -777,23 +775,15 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 
 		for i, msgVal := range msgsVal {
 			msg, ok := msgVal.(map[string]any)
-			if !ok {
-				continue
-			}
-			if role, _ := msg["role"].(string); role != "user" {
-				continue
-			}
+			if !ok { continue }
+			if role, _ := msg["role"].(string); role != "user" { continue }
 
 			contents, ok := msg["content"].([]any)
-			if !ok {
-				continue
-			}
+			if !ok { continue }
 
 			for j, contentVal := range contents {
 				content, ok := contentVal.(map[string]any)
-				if !ok {
-					continue
-				}
+				if !ok { continue }
 
 				if t, _ := content["type"].(string); t == "image_url" {
 					if imgUrlData, ok := content["image_url"].(map[string]any); ok {

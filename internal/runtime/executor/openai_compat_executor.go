@@ -536,9 +536,7 @@ func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 
 // detectSSEErrorEvent checks if an SSE data line contains an error event.
 // Some providers (e.g. MiniMax) return HTTP 200 but embed errors inside the SSE stream like:
-//
-//	data: {"type":"error","error":{"type":"server_error","message":"unknown error, 798 (1000)","http_code":"500"}}
-//
+//   data: {"type":"error","error":{"type":"server_error","message":"unknown error, 798 (1000)","http_code":"500"}}
 // This function detects such events and returns a statusErr so the upstream retry logic can handle them.
 // Returns nil if the line is not an error event.
 func detectSSEErrorEvent(line []byte) error {

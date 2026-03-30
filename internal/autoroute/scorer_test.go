@@ -17,9 +17,9 @@ func newTestConfig() Config {
 			SuccessRate:  0.20,
 		},
 		Providers: map[string]ProviderTierConfig{
-			"claudecli": {Tier: TierPremium},
-			"geminicli": {Tier: TierStandard},
-			"ollama": {Tier: TierFree, ModelTiers: map[string]string{
+			"claudecli":  {Tier: TierPremium},
+			"geminicli":  {Tier: TierStandard},
+			"ollama":     {Tier: TierFree, ModelTiers: map[string]string{
 				"kimi-k2.5:cloud":    TierStandard,
 				"gpt-oss:120b-cloud": TierStandard,
 			}},
@@ -269,8 +269,8 @@ func TestScorerColdStart(t *testing.T) {
 func TestScorerTieBreaking(t *testing.T) {
 	// Two candidates with identical scores → lower latency wins
 	cfg := Config{
-		Enabled:      true,
-		Weights:      ScoringWeights{Availability: 0.25, Quota: 0.25, Latency: 0.25, SuccessRate: 0.25},
+		Enabled: true,
+		Weights: ScoringWeights{Availability: 0.25, Quota: 0.25, Latency: 0.25, SuccessRate: 0.25},
 		Conservation: ConservationConfig{Enabled: false},
 	}
 	scorer := NewProviderScorer(cfg)
@@ -291,8 +291,8 @@ func TestScorerTieBreaking(t *testing.T) {
 func TestScorerTieBreaking_Alphabetical(t *testing.T) {
 	// Completely identical scores + latency → alphabetical wins
 	cfg := Config{
-		Enabled:      true,
-		Weights:      ScoringWeights{Availability: 0.25, Quota: 0.25, Latency: 0.25, SuccessRate: 0.25},
+		Enabled: true,
+		Weights: ScoringWeights{Availability: 0.25, Quota: 0.25, Latency: 0.25, SuccessRate: 0.25},
 		Conservation: ConservationConfig{Enabled: false},
 	}
 	scorer := NewProviderScorer(cfg)
@@ -340,11 +340,11 @@ func TestLatencyToScore(t *testing.T) {
 		d    time.Duration
 		want float64
 	}{
-		{0, 0.5},                        // Unknown → neutral
-		{1 * time.Millisecond, 1.0},     // Almost instant
-		{2500 * time.Millisecond, 0.5},  // Half max
-		{5000 * time.Millisecond, 0.0},  // At max
-		{10000 * time.Millisecond, 0.0}, // Beyond max
+		{0, 0.5},                         // Unknown → neutral
+		{1 * time.Millisecond, 1.0},      // Almost instant
+		{2500 * time.Millisecond, 0.5},   // Half max
+		{5000 * time.Millisecond, 0.0},   // At max
+		{10000 * time.Millisecond, 0.0},  // Beyond max
 	}
 	for _, tt := range tests {
 		got := latencyToScore(tt.d)

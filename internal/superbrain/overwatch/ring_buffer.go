@@ -11,12 +11,12 @@ import (
 // It maintains a fixed-size buffer that overwrites the oldest entries when full,
 // ensuring memory-bounded log retention for diagnostic purposes.
 type RingBuffer struct {
-	mu     sync.RWMutex
-	buffer []string
-	size   int  // Maximum capacity of the buffer
-	head   int  // Index where next write will occur
-	count  int  // Current number of elements in buffer
-	isFull bool // Whether the buffer has wrapped around
+	mu       sync.RWMutex
+	buffer   []string
+	size     int  // Maximum capacity of the buffer
+	head     int  // Index where next write will occur
+	count    int  // Current number of elements in buffer
+	isFull   bool // Whether the buffer has wrapped around
 }
 
 // NewRingBuffer creates a new RingBuffer with the specified capacity.

@@ -96,7 +96,7 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 				return &sdkaccess.Result{
 					Provider:  p.Identifier(),
 					Principal: candidate.value,
-					Metadata:  map[string]string{"source": candidate.source},
+					Metadata: map[string]string{"source": candidate.source},
 				}, nil
 			}
 		}
@@ -108,13 +108,13 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 			return &sdkaccess.Result{
 				Provider:  p.Identifier(),
 				Principal: firstCandidate,
-				Metadata:  map[string]string{"source": firstSource},
+				Metadata: map[string]string{"source": firstSource},
 			}, nil
 		}
 		return &sdkaccess.Result{
 			Provider:  p.Identifier(),
 			Principal: "anonymous",
-			Metadata:  map[string]string{"source": "none"},
+			Metadata: map[string]string{"source": "none"},
 		}, nil
 	}
 

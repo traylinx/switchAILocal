@@ -282,17 +282,17 @@ func TestAnalyticsEngine_CostEstimation(t *testing.T) {
 		model        string
 		expectedCost float64
 	}{
-		{"ollama:codellama", 0.0},    // Local provider
-		{"lmstudio:model", 0.0},      // Local provider
-		{"claudecli:claude", 0.002},  // 2x base cost
-		{"geminicli:gemini", 0.0015}, // 1.5x base cost
-		{"openai:gpt-4", 0.0018},     // 1.8x base cost
-		{"unknown:model", 0.001},     // Base cost
+		{"ollama:codellama", 0.0},        // Local provider
+		{"lmstudio:model", 0.0},          // Local provider
+		{"claudecli:claude", 0.002},      // 2x base cost
+		{"geminicli:gemini", 0.0015},     // 1.5x base cost
+		{"openai:gpt-4", 0.0018},         // 1.8x base cost
+		{"unknown:model", 0.001},         // Base cost
 	}
 
 	for _, tc := range testCases {
 		result := engine.estimateRequestCost(tc.model, decision)
-		if abs(result-tc.expectedCost) > 0.0001 {
+		if abs(result - tc.expectedCost) > 0.0001 {
 			t.Errorf("estimateRequestCost(%s): expected %.4f, got %.4f", tc.model, tc.expectedCost, result)
 		}
 	}

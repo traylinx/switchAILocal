@@ -7,15 +7,15 @@ import (
 
 // Config represents the master configuration for the Auto-Routing subsystem.
 type Config struct {
-	Enabled       bool                          `yaml:"enabled" json:"enabled"`
-	MaxResolution time.Duration                 `yaml:"max-resolution-ms" json:"max_resolution_ms"`
+	Enabled       bool                        `yaml:"enabled" json:"enabled"`
+	MaxResolution time.Duration               `yaml:"max-resolution-ms" json:"max_resolution_ms"`
 	Providers     map[string]ProviderTierConfig `yaml:"providers" json:"providers"`
-	Preferences   []ModelPreference             `yaml:"preferences" json:"preferences"`
-	Conservation  ConservationConfig            `yaml:"conservation" json:"conservation"`
-	Discovery     DiscoveryConfig               `yaml:"discovery" json:"discovery"`
-	Weights       ScoringWeights                `yaml:"weights" json:"weights"`
-	IntentMatrix  map[string][]string           `yaml:"intent-matrix" json:"intent_matrix"`
-	Lab           LabConfig                     `yaml:"lab" json:"lab"`
+	Preferences   []ModelPreference           `yaml:"preferences" json:"preferences"`
+	Conservation  ConservationConfig          `yaml:"conservation" json:"conservation"`
+	Discovery     DiscoveryConfig             `yaml:"discovery" json:"discovery"`
+	Weights       ScoringWeights              `yaml:"weights" json:"weights"`
+	IntentMatrix  map[string][]string         `yaml:"intent-matrix" json:"intent_matrix"`
+	Lab           LabConfig                   `yaml:"lab" json:"lab"`
 }
 
 // DefaultConfig returns the default safe configuration for Auto-Routing (opt-in).
@@ -86,8 +86,8 @@ type ModelPreference struct {
 
 // ConservationConfig dictates how aggressively the router should hoard premium tokens.
 type ConservationConfig struct {
-	Enabled               bool    `yaml:"enabled" json:"enabled"`
-	SimpleThreshold       int     `yaml:"simple-threshold-tokens" json:"simple_threshold_tokens"`
+	Enabled               bool `yaml:"enabled" json:"enabled"`
+	SimpleThreshold       int  `yaml:"simple-threshold-tokens" json:"simple_threshold_tokens"`
 	PremiumConservationAt float64 `yaml:"premium-conservation-at" json:"premium_conservation_at"` // percentage (0.0 to 1.0)
 }
 

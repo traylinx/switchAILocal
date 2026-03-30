@@ -14,19 +14,19 @@ import (
 
 // DashboardResponse is the JSON structure returned by the observability dashboard endpoint.
 type DashboardResponse struct {
-	Timestamp string      `json:"timestamp"`
-	System    SystemStats `json:"system"`
-	Server    ServerStats `json:"server"`
+	Timestamp string               `json:"timestamp"`
+	System    SystemStats          `json:"system"`
+	Server    ServerStats          `json:"server"`
 }
 
 // SystemStats reports Go runtime metrics.
 type SystemStats struct {
-	Goroutines  int     `json:"goroutines"`
-	HeapAllocMB float64 `json:"heap_alloc_mb"`
-	HeapSysMB   float64 `json:"heap_sys_mb"`
-	NumGC       uint32  `json:"num_gc"`
-	GoVersion   string  `json:"go_version"`
-	NumCPU      int     `json:"num_cpu"`
+	Goroutines   int    `json:"goroutines"`
+	HeapAllocMB  float64 `json:"heap_alloc_mb"`
+	HeapSysMB    float64 `json:"heap_sys_mb"`
+	NumGC        uint32 `json:"num_gc"`
+	GoVersion    string `json:"go_version"`
+	NumCPU       int    `json:"num_cpu"`
 }
 
 // ServerStats reports proxy server metadata.

@@ -29,13 +29,13 @@ type AnalyticsEngine struct {
 
 // AnalyticsSummary provides a comprehensive view of system analytics.
 type AnalyticsSummary struct {
-	GeneratedAt       time.Time                    `json:"generated_at"`
-	TimeRange         TimeRange                    `json:"time_range"`
-	ProviderStats     map[string]*ProviderStats    `json:"provider_stats"`
-	ModelPerformance  map[string]*ModelPerformance `json:"model_performance"`
-	TierEffectiveness *TierEffectiveness           `json:"tier_effectiveness"`
-	CostAnalysis      *CostAnalysis                `json:"cost_analysis"`
-	TrendAnalysis     *TrendAnalysis               `json:"trend_analysis"`
+	GeneratedAt      time.Time                    `json:"generated_at"`
+	TimeRange        TimeRange                    `json:"time_range"`
+	ProviderStats    map[string]*ProviderStats    `json:"provider_stats"`
+	ModelPerformance map[string]*ModelPerformance `json:"model_performance"`
+	TierEffectiveness *TierEffectiveness          `json:"tier_effectiveness"`
+	CostAnalysis     *CostAnalysis               `json:"cost_analysis"`
+	TrendAnalysis    *TrendAnalysis              `json:"trend_analysis"`
 }
 
 // TimeRange represents a time period for analytics.
@@ -79,11 +79,11 @@ type DailyCost struct {
 
 // TrendAnalysis provides trend information over time.
 type TrendAnalysis struct {
-	RequestVolumeTrend []DailyVolume     `json:"request_volume_trend"`
-	SuccessRateTrend   []DailyMetric     `json:"success_rate_trend"`
-	LatencyTrend       []DailyMetric     `json:"latency_trend"`
+	RequestVolumeTrend []DailyVolume    `json:"request_volume_trend"`
+	SuccessRateTrend   []DailyMetric    `json:"success_rate_trend"`
+	LatencyTrend       []DailyMetric    `json:"latency_trend"`
 	PopularModels      []ModelPopularity `json:"popular_models"`
-	PeakHours          []HourlyStats     `json:"peak_hours"`
+	PeakHours          []HourlyStats    `json:"peak_hours"`
 }
 
 // DailyVolume represents request volume for a specific day.
@@ -108,8 +108,8 @@ type ModelPopularity struct {
 
 // HourlyStats represents statistics for a specific hour of day.
 type HourlyStats struct {
-	Hour       int     `json:"hour"`
-	Requests   int     `json:"requests"`
+	Hour     int     `json:"hour"`
+	Requests int     `json:"requests"`
 	AvgLatency float64 `json:"avg_latency"`
 }
 

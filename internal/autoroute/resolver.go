@@ -111,13 +111,13 @@ func (r *AutoResolver) RecordOutcome(reqID string, decision *RoutingDecision, pr
 
 	if r.lab != nil && decision != nil {
 		outcome := RequestOutcome{
-			Timestamp:           time.Now(),
-			Model:               decision.SelectedModel,
-			Provider:            provider,
-			Tier:                GetEffectiveTier(decision.SelectedModel, provider, r.config),
-			Latency:             latency,
-			Success:             success,
-			StatusCode:          httpCode,
+			Timestamp:          time.Now(),
+			Model:              decision.SelectedModel,
+			Provider:           provider,
+			Tier:               GetEffectiveTier(decision.SelectedModel, provider, r.config),
+			Latency:            latency,
+			Success:            success,
+			StatusCode:         httpCode,
 			EstimatedComplexity: decision.EstimatedComplexity,
 		}
 		r.lab.RecordOutcome(reqID, decision.Intent, decision.EstimatedComplexity, decision, outcome)

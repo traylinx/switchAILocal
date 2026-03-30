@@ -487,14 +487,14 @@ func TestDecideRestartOrEscalate(t *testing.T) {
 	rm := NewRestartManager()
 
 	tests := []struct {
-		name           string
-		diagnosis      *types.Diagnosis
-		provider       string
-		restartCount   int
-		maxRestarts    int
-		expectRestart  bool
-		expectEscalate bool
-		reasonContains string
+		name              string
+		diagnosis         *types.Diagnosis
+		provider          string
+		restartCount      int
+		maxRestarts       int
+		expectRestart     bool
+		expectEscalate    bool
+		reasonContains    string
 	}{
 		{
 			name: "First restart attempt - should restart",

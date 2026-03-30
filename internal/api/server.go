@@ -411,7 +411,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			name := fmt.Sprintf("gemini-api-%d", i)
 			endpoint := "/v1beta/models"
 			if key.ModelsURL != "" {
-				endpoint = key.ModelsURL
+			    endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "Authorization"))
 		}
@@ -420,7 +420,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			name := fmt.Sprintf("claude-api-%d", i)
 			endpoint := "/v1/models"
 			if key.ModelsURL != "" {
-				endpoint = key.ModelsURL
+			    endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "x-api-key"))
 		}
@@ -450,14 +450,14 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 				}
 
 				for _, model := range res.Models {
-					candidates = append(candidates, autoroute.CandidateInput{
-						Provider:    provider,
-						Model:       model.ID,
-						Available:   true,
-						Latency:     res.Latency,
-						SuccessRate: 1.0,
-						QuotaHealth: 1.0,
-					})
+				    candidates = append(candidates, autoroute.CandidateInput{
+					    Provider:  provider,
+					    Model:     model.ID,
+					    Available: true,
+					    Latency:   res.Latency,
+					    SuccessRate: 1.0,
+					    QuotaHealth: 1.0,
+				    })
 				}
 
 				log.WithFields(log.Fields{
@@ -469,14 +469,14 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		} else {
 			// If probing disabled on boot, just populate basic fallback providers
 			for _, p := range []string{"geminicli", "claudecli", "codex", "ollama"} {
-				candidates = append(candidates, autoroute.CandidateInput{
-					Provider:    p,
-					Model:       "auto",
-					Available:   true,
-					Latency:     0,
+			    candidates = append(candidates, autoroute.CandidateInput{
+					Provider: p,
+					Model:    "auto",
+					Available: true,
+					Latency:   0,
 					SuccessRate: 1.0,
 					QuotaHealth: 1.0,
-				})
+			    })
 			}
 		}
 

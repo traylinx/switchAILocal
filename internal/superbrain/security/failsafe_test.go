@@ -332,10 +332,10 @@ func TestCreateSafeFailureResponse(t *testing.T) {
 
 func TestCreateSafeFailureResponse_WithVariousForbiddenOperations(t *testing.T) {
 	testCases := []struct {
-		name             string
-		forbiddenOps     []string
-		diagnosis        *types.Diagnosis
-		expectedInReason string
+		name              string
+		forbiddenOps      []string
+		diagnosis         *types.Diagnosis
+		expectedInReason  string
 	}{
 		{
 			name:         "file_delete operation",
