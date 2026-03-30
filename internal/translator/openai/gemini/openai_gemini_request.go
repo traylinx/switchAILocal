@@ -12,7 +12,6 @@ package gemini
 import (
 	"bytes"
 	"crypto/rand"
-	"fmt"
 	"math/big"
 	"strings"
 
@@ -127,7 +126,7 @@ func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 						mimeType = "application/octet-stream"
 					}
 					data := inlineData.Get("data").String()
-					imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+					imageURL := "data:" + mimeType + ";base64," + data
 
 					contentPart := `{"type":"image_url","image_url":{"url":""}}`
 					contentPart, _ = sjson.Set(contentPart, "image_url.url", imageURL)
@@ -184,7 +183,7 @@ func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 							mimeType = "application/octet-stream"
 						}
 						data := inlineData.Get("data").String()
-						imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+						imageURL := "data:" + mimeType + ";base64," + data
 
 						contentPart := `{"type":"image_url","image_url":{"url":""}}`
 						contentPart, _ = sjson.Set(contentPart, "image_url.url", imageURL)
