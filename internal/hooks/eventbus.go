@@ -113,11 +113,11 @@ func (b *EventBus) PublishAsync(ctx *EventContext) {
 	b.mu.RLock()
 	isShutdown := b.shutdown
 	b.mu.RUnlock()
-	
+
 	if isShutdown {
 		return
 	}
-	
+
 	select {
 	case <-b.ctx.Done():
 		// Bus is shutting down, ignore event
@@ -152,7 +152,7 @@ func (b *EventBus) Shutdown() {
 		b.mu.Lock()
 		b.shutdown = true
 		b.mu.Unlock()
-		
+
 		b.cancel()
 		close(b.eventQueue)
 	})

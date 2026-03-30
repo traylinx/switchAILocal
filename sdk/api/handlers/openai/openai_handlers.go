@@ -1049,8 +1049,6 @@ func extractModelFromMultipart(body []byte, contentType string) string {
 	return string(bytesClean(valueStart[:endIdx]))
 }
 
-
-
 // bytesClean trims whitespace and control characters from a byte slice.
 func bytesClean(b []byte) []byte {
 	start := 0

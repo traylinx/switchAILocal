@@ -34,8 +34,8 @@ func Middleware(cfg config.LoadSheddingConfig) gin.HandlerFunc {
 	retryAfter := fmt.Sprintf("%d", cfg.RetryAfterSeconds)
 
 	log.WithFields(log.Fields{
-		"max_in_flight":     cfg.MaxInFlight,
-		"retry_after_secs":  cfg.RetryAfterSeconds,
+		"max_in_flight":    cfg.MaxInFlight,
+		"retry_after_secs": cfg.RetryAfterSeconds,
 	}).Info("Load shedding enabled")
 
 	return func(c *gin.Context) {

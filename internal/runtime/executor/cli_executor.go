@@ -58,7 +58,6 @@ func ensureCLISandbox() string {
 	return cliSandboxPath
 }
 
-
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
 type CLIExecutionError struct {

@@ -66,7 +66,7 @@ func (p *OllamaProber) Probe(ctx context.Context) autoroute.ProbeResult {
 
 	if resp.StatusCode == 200 {
 		result.Available = true
-		
+
 		// Parse local models
 		var responseData struct {
 			Models []struct {

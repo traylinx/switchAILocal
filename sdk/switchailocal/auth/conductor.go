@@ -562,7 +562,7 @@ func (m *Manager) executeWithProvider(ctx context.Context, provider string, req 
 			continue
 		}
 		m.MarkResult(execCtx, result)
-		
+
 		if opts.Metadata != nil {
 			opts.Metadata["executed_provider"] = provider
 		}
@@ -630,7 +630,7 @@ func (m *Manager) executeCountWithProvider(ctx context.Context, provider string,
 			continue
 		}
 		m.MarkResult(execCtx, result)
-		
+
 		if resp.Metadata == nil {
 			resp.Metadata = make(map[string]any)
 		}
@@ -712,11 +712,11 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 				m.MarkResult(streamCtx, Result{AuthID: streamAuth.ID, Provider: streamProvider, Model: routeModel, Success: true})
 			}
 		}(execCtx, auth.Clone(), provider, chunks)
-		
+
 		if opts.Metadata != nil {
 			opts.Metadata["executed_provider"] = provider
 		}
-		
+
 		return out, nil
 	}
 }
