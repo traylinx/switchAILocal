@@ -72,6 +72,7 @@ func printHeartbeatUsage() {
 }
 
 // handleHeartbeatCommand processes heartbeat subcommands
+//nolint:unused
 func handleHeartbeatCommand(args []string) {
 	opts, err := ParseHeartbeatCommand(args)
 	if err != nil {
@@ -146,6 +147,7 @@ func handleHeartbeatCommand(args []string) {
 	}
 }
 
+//nolint:unused
 func registerCheckers(monitor heartbeat.HeartbeatMonitor, cfg *config.Config) {
 	// Register Ollama checker if enabled
 	if cfg != nil && cfg.Ollama.Enabled {
@@ -220,6 +222,7 @@ func registerCheckers(monitor heartbeat.HeartbeatMonitor, cfg *config.Config) {
 	}
 }
 
+//nolint:unused
 func doHeartbeatStatus(monitor heartbeat.HeartbeatMonitor) {
 	fmt.Println("Checking provider status...")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -250,6 +253,7 @@ func doHeartbeatStatus(monitor heartbeat.HeartbeatMonitor) {
 	w.Flush()
 }
 
+//nolint:unused
 func doHeartbeatCheck(monitor heartbeat.HeartbeatMonitor, provider string) {
 	fmt.Printf("Checking %s...\n", provider)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -276,6 +280,7 @@ func doHeartbeatCheck(monitor heartbeat.HeartbeatMonitor, provider string) {
 	}
 }
 
+//nolint:unused
 func doHeartbeatQuota(monitor heartbeat.HeartbeatMonitor) {
 	fmt.Println("Checking quotas...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -317,6 +322,7 @@ func doHeartbeatQuota(monitor heartbeat.HeartbeatMonitor) {
 	}
 }
 
+//nolint:unused
 func doHeartbeatDiscover(monitor heartbeat.HeartbeatMonitor, mem memory.MemoryManager) {
 	if mem == nil {
 		fmt.Fprintf(os.Stderr, "❌ Error: Memory system not initialized\n")

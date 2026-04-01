@@ -29,6 +29,7 @@ type LearningOptions struct {
 	UserHash string
 }
 
+//nolint:unused
 func handleLearningCommand(args []string) {
 	if len(args) == 0 {
 		printLearningUsage()
@@ -202,6 +203,7 @@ func initEngine(cfg *config.Config) (*learning.LearningEngine, memory.MemoryMana
 	return engine, mem
 }
 
+//nolint:unused
 func loadMinimalConfig() *config.Config {
 	wd, _ := os.Getwd()
 	configFilePath := filepath.Join(wd, "config.yaml")

@@ -58,6 +58,7 @@ func ParseHooksCommand(args []string) (*HooksOptions, error) {
 	return opts, nil
 }
 
+//nolint:unused
 func printHooksUsage() {
 	fmt.Println("Usage: switchAILocal hooks <command> [options]")
 	fmt.Println("\nCommands:")
@@ -84,6 +85,7 @@ func printHooksUsage() {
 	fmt.Println("  switchAILocal hooks reload")
 }
 
+//nolint:unused
 func handleHooksCommand(args []string) {
 	opts, err := ParseHooksCommand(args)
 	if err != nil {
@@ -119,6 +121,7 @@ func handleHooksCommand(args []string) {
 	}
 }
 
+//nolint:unused
 func getHookManager(cfg *config.Config) (*hooks.HookManager, error) {
 	var hooksDir string
 
@@ -148,6 +151,7 @@ func getHookManager(cfg *config.Config) (*hooks.HookManager, error) {
 	return manager, nil
 }
 
+//nolint:unused
 func doHooksList(cfg *config.Config, opts *HooksOptions) {
 	manager, err := getHookManager(cfg)
 	if err != nil {
@@ -201,6 +205,7 @@ func doHooksList(cfg *config.Config, opts *HooksOptions) {
 	}
 }
 
+//nolint:unused
 func doHooksEnableDisable(cfg *config.Config, opts *HooksOptions, enable bool) {
 	if opts.HookID == "" {
 		fmt.Println("Error: --id required")
@@ -258,6 +263,7 @@ func doHooksEnableDisable(cfg *config.Config, opts *HooksOptions, enable bool) {
 	fmt.Println("  Changes will take effect after hook reload")
 }
 
+//nolint:unused
 func doHooksTest(cfg *config.Config, opts *HooksOptions) {
 	manager, err := getHookManager(cfg)
 	if err != nil {
@@ -375,6 +381,7 @@ func doHooksTest(cfg *config.Config, opts *HooksOptions) {
 	}
 }
 
+//nolint:unused
 func doHooksLogs(cfg *config.Config, opts *HooksOptions) {
 	fmt.Println("Hook Execution Logs")
 	fmt.Println("==================")
@@ -443,6 +450,7 @@ func doHooksLogs(cfg *config.Config, opts *HooksOptions) {
 	}
 }
 
+//nolint:unused
 func doHooksReload(cfg *config.Config, opts *HooksOptions) {
 	fmt.Println("Reloading Hooks from Disk")
 	fmt.Println("========================")

@@ -56,6 +56,7 @@ func ParseSteeringCommand(args []string) (*SteeringOptions, error) {
 	return opts, nil
 }
 
+//nolint:unused
 func printSteeringUsage() {
 	fmt.Println("Usage: switchAILocal steering <command> [options]")
 	fmt.Println("\nCommands:")
@@ -72,6 +73,7 @@ func printSteeringUsage() {
 }
 
 // handleSteeringCommand processes steering subcommands
+//nolint:unused
 func handleSteeringCommand(args []string) {
 	opts, err := ParseSteeringCommand(args)
 	if err != nil {
@@ -103,6 +105,7 @@ func handleSteeringCommand(args []string) {
 	}
 }
 
+//nolint:unused
 func getSteeringDir(cfg *config.Config) string {
 	// Use AuthDir + steering subdirectory if available
 	if cfg != nil && cfg.AuthDir != "" {
@@ -118,6 +121,7 @@ func getSteeringDir(cfg *config.Config) string {
 	return filepath.Join(home, ".switchailocal", "steering")
 }
 
+//nolint:unused
 func doSteeringList(cfg *config.Config, opts *SteeringOptions) {
 	engine, err := steering.NewSteeringEngine(getSteeringDir(cfg))
 	if err != nil {
@@ -146,6 +150,7 @@ func doSteeringList(cfg *config.Config, opts *SteeringOptions) {
 	w.Flush()
 }
 
+//nolint:unused
 func doSteeringTest(cfg *config.Config, opts *SteeringOptions) {
 	engine, err := steering.NewSteeringEngine(getSteeringDir(cfg))
 	if err != nil {
@@ -199,11 +204,13 @@ func doSteeringTest(cfg *config.Config, opts *SteeringOptions) {
 	}
 }
 
+//nolint:unused
 func doSteeringReload(cfg *config.Config, opts *SteeringOptions) {
 	// In a real CLI, this might send a signal to a running process or just verify paths
 	fmt.Println("Reloading rules requires a running server process. Use 'switchAILocal steering list' to verify currently loaded files.")
 }
 
+//nolint:unused
 func doSteeringValidate(cfg *config.Config, opts *SteeringOptions) {
 	// Similar to load, but specifically check for syntax errors
 	fmt.Println("Validating rules...")
