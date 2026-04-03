@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -110,7 +111,7 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 		if responseIDResult := gjson.GetBytes(rawJSON, "response.responseId"); responseIDResult.Exists() {
 			messageStartTemplate, _ = sjson.Set(messageStartTemplate, "message.id", responseIDResult.String())
 		}
-		output = output + fmt.Sprintf("data: %s\n\n\n", messageStartTemplate)
+		output = output + "data: " + messageStartTemplate + "\n\n\n"
 
 		params.HasFirstResponse = true
 	}
@@ -141,32 +142,32 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 						}
 
 						output = output + "event: content_block_delta\n"
-						data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"signature_delta","signature":""}}`, params.ResponseIndex), "delta.signature", thoughtSignature.String())
-						output = output + fmt.Sprintf("data: %s\n\n\n", data)
+						data, _ := sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"signature_delta\",\"signature\":\"\"}}", "delta.signature", thoughtSignature.String())
+						output = output + "data: " + data + "\n\n\n"
 						params.HasContent = true
 					} else if params.ResponseType == 2 { // Continue existing thinking block if already in thinking state
 						params.CurrentThinkingText.WriteString(partTextResult.String())
 						output = output + "event: content_block_delta\n"
-						data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":""}}`, params.ResponseIndex), "delta.thinking", partTextResult.String())
-						output = output + fmt.Sprintf("data: %s\n\n\n", data)
+						data, _ := sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"\"}}", "delta.thinking", partTextResult.String())
+						output = output + "data: " + data + "\n\n\n"
 						params.HasContent = true
 					} else {
 						// Transition from another state to thinking
 						// First, close any existing content block
 						if params.ResponseType != 0 {
 							output = output + "event: content_block_stop\n"
-							output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+							output = output + "data: {\"type\":\"content_block_stop\",\"index\":" + strconv.Itoa(params.ResponseIndex) + "}"
 							output = output + "\n\n\n"
 							params.ResponseIndex++
 						}
 
 						// Start a new thinking content block
 						output = output + "event: content_block_start\n"
-						output = output + fmt.Sprintf(`data: {"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":""}}`, params.ResponseIndex)
+						output = output + "data: {\"type\":\"content_block_start\",\"index\":" + strconv.Itoa(params.ResponseIndex) + ",\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}"
 						output = output + "\n\n\n"
 						output = output + "event: content_block_delta\n"
-						data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":""}}`, params.ResponseIndex), "delta.thinking", partTextResult.String())
-						output = output + fmt.Sprintf("data: %s\n\n\n", data)
+						data, _ := sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"\"}}", "delta.thinking", partTextResult.String())
+						output = output + "data: " + data + "\n\n\n"
 						params.ResponseType = 2 // Set state to thinking
 						params.HasContent = true
 						// Start accumulating thinking text for signature caching
@@ -180,26 +181,26 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 						// Continue existing text block if already in content state
 						if params.ResponseType == 1 {
 							output = output + "event: content_block_delta\n"
-							data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":""}}`, params.ResponseIndex), "delta.text", partTextResult.String())
-							output = output + fmt.Sprintf("data: %s\n\n\n", data)
+							data, _ := sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}", "delta.text", partTextResult.String())
+							output = output + "data: " + data + "\n\n\n"
 							params.HasContent = true
 						} else {
 							// Transition from another state to text content
 							// First, close any existing content block
 							if params.ResponseType != 0 {
 								output = output + "event: content_block_stop\n"
-								output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+								output = output + "data: {\"type\":\"content_block_stop\",\"index\":" + strconv.Itoa(params.ResponseIndex) + "}"
 								output = output + "\n\n\n"
 								params.ResponseIndex++
 							}
 							if partTextResult.String() != "" {
 								// Start a new text content block
 								output = output + "event: content_block_start\n"
-								output = output + fmt.Sprintf(`data: {"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, params.ResponseIndex)
+								output = output + "data: {\"type\":\"content_block_start\",\"index\":" + strconv.Itoa(params.ResponseIndex) + ",\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"
 								output = output + "\n\n\n"
 								output = output + "event: content_block_delta\n"
-								data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":""}}`, params.ResponseIndex), "delta.text", partTextResult.String())
-								output = output + fmt.Sprintf("data: %s\n\n\n", data)
+								data, _ := sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}", "delta.text", partTextResult.String())
+								output = output + "data: " + data + "\n\n\n"
 								params.ResponseType = 1 // Set state to content
 								params.HasContent = true
 							}
@@ -216,7 +217,7 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 				// Close any existing function call block first
 				if params.ResponseType == 3 {
 					output = output + "event: content_block_stop\n"
-					output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+					output = output + "data: {\"type\":\"content_block_stop\",\"index\":" + strconv.Itoa(params.ResponseIndex) + "}"
 					output = output + "\n\n\n"
 					params.ResponseIndex++
 					params.ResponseType = 0
@@ -227,7 +228,7 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 				// Close any other existing content block
 				if params.ResponseType != 0 {
 					output = output + "event: content_block_stop\n"
-					output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+					output = output + "data: {\"type\":\"content_block_stop\",\"index\":" + strconv.Itoa(params.ResponseIndex) + "}"
 					output = output + "\n\n\n"
 					params.ResponseIndex++
 				}
@@ -237,15 +238,15 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 				output = output + "event: content_block_start\n"
 
 				// Create the tool use block with unique ID and function details
-				data := fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"","name":"","input":{}}}`, params.ResponseIndex)
+				data := "{\"type\":\"content_block_start\",\"index\":" + strconv.Itoa(params.ResponseIndex) + ",\"content_block\":{\"type\":\"tool_use\",\"id\":\"\",\"name\":\"\",\"input\":{}}}"
 				data, _ = sjson.Set(data, "content_block.id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&toolUseIDCounter, 1)))
 				data, _ = sjson.Set(data, "content_block.name", fcName)
-				output = output + fmt.Sprintf("data: %s\n\n\n", data)
+				output = output + "data: " + data + "\n\n\n"
 
 				if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
 					output = output + "event: content_block_delta\n"
-					data, _ = sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":""}}`, params.ResponseIndex), "delta.partial_json", fcArgsResult.Raw)
-					output = output + fmt.Sprintf("data: %s\n\n\n", data)
+					data, _ = sjson.Set("{\"type\":\"content_block_delta\",\"index\":"+strconv.Itoa(params.ResponseIndex)+",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}", "delta.partial_json", fcArgsResult.Raw)
+					output = output + "data: " + data + "\n\n\n"
 				}
 				params.ResponseType = 3
 				params.HasContent = true
@@ -296,7 +297,7 @@ func appendFinalEvents(params *Params, output *string, force bool) {
 
 	if params.ResponseType != 0 {
 		*output = *output + "event: content_block_stop\n"
-		*output = *output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+		*output = *output + "data: {\"type\":\"content_block_stop\",\"index\":" + strconv.Itoa(params.ResponseIndex) + "}"
 		*output = *output + "\n\n\n"
 		params.ResponseType = 0
 	}

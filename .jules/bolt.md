@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2024-03-09 - Eliminate Reflection Overhead in SSE Streaming
+**Learning:** `fmt.Sprintf` incurs significant reflection overhead for string formatting. In highly active streaming handlers (like Claude SSE streaming), repeatedly using `fmt.Sprintf` for assembling simple JSON fragments creates unnecessary CPU overhead and numerous small allocations, which compound rapidly when hundreds of tokens stream per second.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation and use `strconv.Itoa` for integers when building highly repetitive string frames like SSE `data:` payloads to avoid reflection completely.
