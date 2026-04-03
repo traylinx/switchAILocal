@@ -157,7 +157,7 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 		} else {
 			client.Transport = &http.Transport{
 				Proxy:           http.ProxyURL(pURL),
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			}
 			tests["proxy"] = gin.H{"passed": true, "message": "Proxy configured"}
 		}

@@ -68,7 +68,7 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 		}
 		client.Transport = &http.Transport{
 			Proxy:           http.ProxyURL(proxyURL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // Allow insecure for testing/local proxies? Maybe strictly verifying is better but for devs...
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		}
 	}
 
