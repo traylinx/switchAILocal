@@ -157,6 +157,7 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 		} else {
 			client.Transport = &http.Transport{
 				Proxy:           http.ProxyURL(pURL),
+				// 🛡️ Sentinel: Enforce secure TLS verification to prevent Man-in-the-Middle (MITM) attacks.
 				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			}
 			tests["proxy"] = gin.H{"passed": true, "message": "Proxy configured"}

@@ -68,6 +68,7 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 		}
 		client.Transport = &http.Transport{
 			Proxy:           http.ProxyURL(proxyURL),
+			// 🛡️ Sentinel: Enforce secure TLS verification to prevent Man-in-the-Middle (MITM) attacks.
 			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		}
 	}
