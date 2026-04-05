@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-04-05 - Avoid fmt.Sprintf in SSE Streaming Handlers
+**Learning:** `fmt.Sprintf` uses reflection to parse format strings at runtime, which adds measurable CPU overhead and memory allocations when executed repeatedly in hot loops, such as when generating Server-Sent Events (SSE) stream chunks. Since SSE chunks simply require string concatenation (e.g., `output += "data: " + template + "\n\n"`), using `fmt.Sprintf` is unnecessary and degrades performance.
+**Action:** Always use direct string concatenation (`+`) instead of `fmt.Sprintf` for building string messages in streaming handlers where performance is critical.
