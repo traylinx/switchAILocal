@@ -11,7 +11,6 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  GOTOOLCHAIN: auto
 
 jobs:
   build:
@@ -29,13 +28,9 @@ jobs:
 
       - name: Build main binary
         run: go build -v ./cmd/server
-        env:
-          GOTOOLCHAIN: auto
 
       - name: Build bridge-agent
         run: go build -v ./cmd/bridge-agent
-        env:
-          GOTOOLCHAIN: auto
 
   test:
     name: Test
@@ -52,8 +47,6 @@ jobs:
 
       - name: Run tests with race detection
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-        env:
-          GOTOOLCHAIN: auto
 
       - name: Check coverage threshold
         run: |
@@ -86,7 +79,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --timeout=5m --go 1.24
+          args: --timeout=5m
 
       - name: Run go vet
         run: go vet ./...
