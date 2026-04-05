@@ -11,6 +11,7 @@ on:
 
 env:
   GO_VERSION: '1.24'
+  GOTOOLCHAIN: 'auto'
 
 jobs:
   build:
@@ -79,7 +80,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --timeout=5m
+          args: --timeout=5m --go 1.24
 
       - name: Run go vet
         run: go vet ./...
