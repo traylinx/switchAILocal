@@ -28,9 +28,13 @@ jobs:
 
       - name: Build main binary
         run: env GOTOOLCHAIN=auto go build -v ./cmd/server
+        env:
+          GOTOOLCHAIN: auto
 
       - name: Build bridge-agent
         run: env GOTOOLCHAIN=auto go build -v ./cmd/bridge-agent
+        env:
+          GOTOOLCHAIN: auto
 
   test:
     name: Test
@@ -47,6 +51,8 @@ jobs:
 
       - name: Run tests with race detection
         run: env GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        env:
+          GOTOOLCHAIN: auto
 
       - name: Check coverage threshold
         run: |
@@ -55,6 +61,8 @@ jobs:
           if (( $(echo "$COVERAGE < 60" | bc -l) )); then
             echo "::warning::Coverage ${COVERAGE}% is below 60% threshold"
           fi
+        env:
+          GOTOOLCHAIN: auto
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -80,6 +88,10 @@ jobs:
         with:
           version: latest
           args: --timeout=5m --go 1.24
+        env:
+          GOTOOLCHAIN: auto
 
       - name: Run go vet
         run: env GOTOOLCHAIN=auto go vet ./...
+        env:
+          GOTOOLCHAIN: auto
