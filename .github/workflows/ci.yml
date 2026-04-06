@@ -83,6 +83,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Override GOTOOLCHAIN
+        run: echo "GOTOOLCHAIN=auto" >> $GITHUB_ENV
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
