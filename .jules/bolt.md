@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2025-03-05 - Optimize Streaming Hot Paths by Removing Reflection Overhead
+**Learning:** `fmt.Sprintf` uses reflection to parse format verbs at runtime, creating unnecessary CPU overhead and memory allocations when interpolating strings. This is particularly inefficient in high-volume streaming response handlers where simple string concatenation is safe, typed, and significantly faster.
+**Action:** In streaming hot paths (e.g., SSE event generation), always use direct string concatenation (`+`) instead of `fmt.Sprintf` when all variables are already strings.
