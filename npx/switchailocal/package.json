@@ -1,0 +1,28 @@
+{
+  "name": "@traylinx/switchailocal",
+  "version": "0.1.0",
+  "description": "One local endpoint. All your AI providers. Install and run switchAILocal instantly.",
+  "bin": {
+    "switchailocal": "bin.js"
+  },
+  "type": "module",
+  "keywords": [
+    "ai",
+    "gateway",
+    "proxy",
+    "openai",
+    "claude",
+    "gemini",
+    "ollama",
+    "llm",
+    "api"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/traylinx/switchAILocal.git",
+    "directory": "npx/switchailocal"
+  },
+  "homepage": "https://github.com/traylinx/switchAILocal",
+  "dependencies": {}
+}
