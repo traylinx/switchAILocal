@@ -14,10 +14,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"

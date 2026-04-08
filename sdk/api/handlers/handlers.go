@@ -9,13 +9,15 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"context"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -52,6 +54,17 @@ type ErrorDetail struct {
 	// Code is a short code identifying the error, if applicable.
 	Code string `json:"code,omitempty"`
 }
+
+// bufPool recycles byte buffers on the hot path to reduce GC pressure.
+var bufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 512)
+		return &b
+	},
+}
+
+func getBuf() *[]byte  { return bufPool.Get().(*[]byte) }
+func putBuf(b *[]byte) { *b = (*b)[:0]; bufPool.Put(b) }
 
 const idempotencyKeyMetadataKey = "idempotency_key"
 

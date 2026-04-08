@@ -196,7 +196,7 @@ Each model is scored: `FinalScore = (W_a×Availability + W_q×Quota + W_l×Laten
 
 The model with the highest score wins. The Lab continuously optimizes the weights.
 
-> For deep architecture details, see the [docs-site](https://ail.traylinx.com/intelligent-systems/cortex-router).
+> For deep architecture details, see the local `docs-site/intelligent-systems/` or the online [docs-site](https://ail.traylinx.com/intelligent-systems/cortex-router).
 
 ---
 
@@ -273,6 +273,41 @@ Add `"stream": true` to any request for SSE token streaming.
 
 ---
 
+## 🎨 Image Generation
+
+Generate images via the `/v1/images/generations` endpoint:
+
+```bash
+curl --location 'http://localhost:18080/v1/images/generations' \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:image-01",
+    "prompt": "A dog wearing a space suit on Mars, photorealistic",
+    "aspect_ratio": "16:9",
+    "response_format": "url"
+  }'
+```
+
+**Parameters:**
+- `model` — Always use `minimax:image-01`
+- `prompt` — Text description of the desired image
+- `aspect_ratio` — `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
+- `response_format` — `url` (returns HTTP URL) or `base64` (returns base64 encoded image)
+
+**Example Python:**
+```python
+response = client.images.generate(
+    model="minimax:image-01",
+    prompt="A serene Japanese garden with cherry blossoms",
+    aspect_ratio="16:9",
+    response_format="url"
+)
+image_url = response.data[0].url
+```
+
+---
+
 ## `ail` CLI Reference
 
 ```bash
@@ -307,6 +342,7 @@ What do you need?
 | File | Description |
 | ---- | ----------- |
 | **SKILL.md** (this file) | Core workflow and quick reference |
+| [docs-site/](docs-site/) | **Comprehensive Manual**: AI agents should crawl this directory for complete CLI, API, architecture, and SDK docs. |
 | [references/routing.md](references/routing.md) | Auto-routing config, intent matrix, Lab |
 | [references/management-api.md](references/management-api.md) | Full Management & Telemetry API |
 | [references/examples.md](references/examples.md) | Real-world agentic use cases |

@@ -66,3 +66,61 @@ func TestDetectSSEErrorEvent_OpenAIStyleError(t *testing.T) {
 	}
 	t.Logf("✓ OpenAI-style error detected: code=%d msg=%q", se.code, se.msg)
 }
+
+func TestDetectSSEErrorEvent_AnthropicOverloaded(t *testing.T) {
+	line := []byte(`data: {"type":"overloaded_error","message":"Overloaded"}`)
+	err := detectSSEErrorEvent(line)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	se, ok := err.(statusErr)
+	if !ok {
+		t.Fatalf("expected statusErr, got %T", err)
+	}
+	if se.code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", se.code)
+	}
+	if se.msg != "Overloaded" {
+		t.Errorf("unexpected message: %s", se.msg)
+	}
+	t.Logf("✓ Anthropic overloaded detected: code=%d msg=%q", se.code, se.msg)
+}
+
+func TestDetectSSEErrorEvent_AnthropicRateLimit(t *testing.T) {
+	line := []byte(`data: {"type":"rate_limit_error","message":"Rate limit reached"}`)
+	err := detectSSEErrorEvent(line)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	se := err.(statusErr)
+	if se.code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", se.code)
+	}
+	t.Logf("✓ Anthropic rate_limit_error detected: code=%d msg=%q", se.code, se.msg)
+}
+
+func TestDetectSSEErrorEvent_DetailFormat(t *testing.T) {
+	line := []byte(`data: {"detail":"Rate limit exceeded for model","status_code":429}`)
+	err := detectSSEErrorEvent(line)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	se := err.(statusErr)
+	if se.code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", se.code)
+	}
+	t.Logf("✓ detail+status_code format detected: code=%d msg=%q", se.code, se.msg)
+}
+
+func TestDetectSSEErrorEvent_ErrorCodeAsInt(t *testing.T) {
+	line := []byte(`data: {"error":{"message":"Too many requests","type":"rate_limit","code":429}}`)
+	err := detectSSEErrorEvent(line)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	se := err.(statusErr)
+	if se.code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", se.code)
+	}
+	t.Logf("✓ error.code as int detected: code=%d msg=%q", se.code, se.msg)
+}

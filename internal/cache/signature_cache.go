@@ -5,11 +5,12 @@
 package cache
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // SignatureEntry holds a cached thinking signature with timestamp
@@ -41,10 +42,10 @@ type sessionCache struct {
 	entries map[string]SignatureEntry
 }
 
-// hashText creates a stable, Unicode-safe key from text content
+// hashText creates a stable, Unicode-safe key from text content.
+// Uses xxhash (non-cryptographic) for speed — this is a cache key, not a security hash.
 func hashText(text string) string {
-	h := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(h[:])[:SignatureTextHashLen]
+	return strconv.FormatUint(xxhash.Sum64String(text), 36)
 }
 
 // getOrCreateSession gets or creates a session cache

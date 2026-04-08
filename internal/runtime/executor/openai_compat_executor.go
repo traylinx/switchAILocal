@@ -588,7 +588,34 @@ func detectSSEErrorEvent(line []byte) error {
 					code = parsed
 				}
 			}
+			// Also check "code" field as int (used by some providers like Groq, Cohere)
+			if code == http.StatusInternalServerError {
+				if codeField := gjson.GetBytes(data, "error.code"); codeField.Exists() {
+					if parsed := int(codeField.Int()); parsed >= 400 {
+						code = parsed
+					}
+				}
+			}
 			return statusErr{code: code, msg: msg}
+		}
+	}
+
+	// Pattern 3: {"type":"overloaded_error","message":"Overloaded"}
+	// Anthropic sends this when their API is overloaded — no wrapping "error" object.
+	if typeField.String() == "overloaded_error" || typeField.String() == "rate_limit_error" {
+		msg := gjson.GetBytes(data, "message").String()
+		if msg == "" {
+			msg = "upstream provider overloaded"
+		}
+		return statusErr{code: http.StatusTooManyRequests, msg: msg}
+	}
+
+	// Pattern 4: {"detail":"...", "status_code":429}
+	// Used by some providers (vLLM, Fireworks) for rate limit responses in SSE.
+	if detail := gjson.GetBytes(data, "detail"); detail.Exists() {
+		statusCode := int(gjson.GetBytes(data, "status_code").Int())
+		if statusCode >= 400 {
+			return statusErr{code: statusCode, msg: detail.String()}
 		}
 	}
 

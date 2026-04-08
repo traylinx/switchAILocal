@@ -13,11 +13,12 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
