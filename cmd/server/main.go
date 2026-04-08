@@ -228,26 +228,6 @@ func main() {
 		return
 	}
 
-	// if len(os.Args) > 1 && os.Args[1] == "heartbeat" {
-	// 	handleHeartbeatCommand(os.Args[2:])
-	// 	return
-	// }
-
-	// if len(os.Args) > 1 && os.Args[1] == "steering" {
-	// 	handleSteeringCommand(os.Args[2:])
-	// 	return
-	// }
-
-	// if len(os.Args) > 1 && os.Args[1] == "hooks" {
-	// 	handleHooksCommand(os.Args[2:])
-	// 	return
-	// }
-
-	// if len(os.Args) > 1 && os.Args[1] == "learning" {
-	// 	handleLearningCommand(os.Args[2:])
-	// 	return
-	// }
-
 	// Validate environment variables for security issues
 	if err := validateEnvironmentVariables(); err != nil {
 		log.Errorf("environment validation failed: %v", err)
