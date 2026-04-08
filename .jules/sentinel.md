@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2025-03-09 - Path Traversal Vulnerability in Auth Files Handlers
+**Vulnerability:** The `UploadAuthFile` and `DeleteAuthFile` handlers in `internal/api/handlers/management/auth_files.go` used `strings.Contains(name, string(os.PathSeparator))` to validate user-provided filenames (`c.Query("name")`).
+**Learning:** Checking strictly against `os.PathSeparator` fails to prevent path traversal across platforms. Specifically, on Windows, `os.PathSeparator` is `\`, allowing an attacker to bypass the validation using forward slashes (`/`), which Windows file APIs still accept as directory separators.
+**Prevention:** Use the Sentinel Security Pattern by replacing `strings.Contains(name, string(os.PathSeparator))` with `strings.ContainsAny(name, "/\\")` to universally block both forward and backward slashes on all platforms.
