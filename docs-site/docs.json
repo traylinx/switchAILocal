@@ -155,11 +155,7 @@
             "pages": [
               "cli/server",
               "cli/login",
-              "cli/memory",
-              "cli/heartbeat",
-              "cli/steering",
-              "cli/hooks",
-              "cli/learning"
+              "cli/memory"
             ]
           }
         ]

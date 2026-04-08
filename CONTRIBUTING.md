@@ -4,7 +4,7 @@ Thank you for your interest in contributing! We welcome help in improving this p
 
 ## Development Setup
 
-1. **Go Version**: Ensure you have Go 1.22+ installed.
+1. **Go Version**: Ensure you have Go 1.25+ installed (CGO required for onnxruntime).
 2. **Clone the Repo**:
    ```bash
    git clone https://github.com/traylinx/switchAILocal.git
@@ -12,7 +12,7 @@ Thank you for your interest in contributing! We welcome help in improving this p
    ```
 3. **Build**:
    ```bash
-   go build ./cmd/switchAILocal
+   CGO_ENABLED=1 go build ./cmd/server
    ```
 
 ## Pull Request Process

@@ -69,19 +69,32 @@
 
 ## Prerequisites
 
-| Requirement | Minimum  | Notes                                      |
-| ----------- | -------- | ------------------------------------------ |
-| **Go**      | 1.24+    | `./ail.sh setup` can auto-install via brew |
-| **Docker**  | Optional | Only needed for `ail start --docker`       |
-| **macOS**   | Ventura+ | Linux support is experimental              |
+| Requirement | Minimum  | Notes                                        |
+| ----------- | -------- | -------------------------------------------- |
+| **Node.js** | 18+      | For `npx` install (recommended)              |
+| **Go**      | 1.25+    | Only needed for building from source         |
+| **Docker**  | Optional | Only needed for `ail start --docker`         |
+| **macOS**   | Ventura+ | Linux support is experimental                |
 
 ---
 
 ## Quick Start
 
-### 1. Clone & Setup
+### Option 1: npx (Recommended)
 
-We provide a unified Hub Script (`ail.sh`) to manage everything.
+```bash
+npx @traylinx/switchailocal
+```
+
+That's it. Downloads the right binary for your platform, caches it, and runs.
+
+### Option 2: Docker
+
+```bash
+docker run -p 18080:18080 ghcr.io/traylinx/switchailocal:latest
+```
+
+### Option 3: Build from Source
 
 ```bash
 git clone https://github.com/traylinx/switchAILocal.git

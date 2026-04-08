@@ -10,14 +10,13 @@ This guide covers all installation methods for switchAILocal, from quick local s
 <CardGroup cols={2}>
 
 <Card title="Required" icon="check">
-  - **Go 1.24+** - [Download](https://go.dev/doc/install)
-  - **Git** - For cloning the repository
+  - **Node.js 18+** - For `npx` install (recommended), or
+  - **Go 1.25+** - For building from source (CGO required)
   - **Terminal/Shell** - Command line access
 </Card>
 
 <Card title="Optional" icon="star">
   - **Docker** - For containerized deployment
-  - **Node.js 18+** - For building the Management UI
   - **CLI Tools** - `gemini`, `claude`, `vibe` for zero-config providers
 </Card>
 
@@ -27,9 +26,59 @@ This guide covers all installation methods for switchAILocal, from quick local s
 
 <Tabs>
 
+<Tab title="npx (Recommended)">
+
+### One Command Install
+
+The fastest way to get started. Downloads the right binary for your platform and runs it.
+
+```bash
+npx @traylinx/switchailocal
+```
+
+This will:
+1. Download the pre-built binary for your OS/architecture
+2. Cache it locally (subsequent runs start instantly)
+3. Create a default `~/.switchailocal/config.yaml` on first run
+4. Start the server on `http://localhost:18080`
+
+<CodeGroup>
+
+```bash Run specific version
+npx @traylinx/switchailocal --version=v0.1.0
+```
+
+```bash Custom port
+npx @traylinx/switchailocal --port 8080
+```
+
+</CodeGroup>
+
+<Note>
+  Requires Node.js 18+. The npm package has zero dependencies — it's just a 200-line launcher script.
+</Note>
+
+</Tab>
+
+<Tab title="Docker">
+
+### Docker Install
+
+```bash
+docker run -d \
+  --name switchailocal \
+  -p 18080:18080 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  ghcr.io/traylinx/switchailocal:latest
+```
+
+See the [Docker Deployment Guide](/guides/docker-deployment) for production setups with volumes and compose.
+
+</Tab>
+
 <Tab title="Local (Hub Script)">
 
-### Using ail.sh (Recommended)
+### Using ail.sh
 
 The unified operations hub script handles building, dependencies, and lifecycle management automatically.
 
@@ -286,16 +335,9 @@ go build -ldflags="-s -w" -o switchAILocal ./cmd/server
 go build -race -o switchAILocal ./cmd/server
 ```
 
-```bash Static Binary
-# For containerized environments
-CGO_ENABLED=0 go build -ldflags="-s -w" -o switchAILocal ./cmd/server
-```
-
-```bash Cross-Compile
-# Build for different platforms
-GOOS=linux GOARCH=amd64 go build -o switchAILocal-linux ./cmd/server
-GOOS=darwin GOARCH=arm64 go build -o switchAILocal-mac ./cmd/server
-GOOS=windows GOARCH=amd64 go build -o switchAILocal.exe ./cmd/server
+```bash Static Binary (Linux)
+# For containerized environments (requires musl-dev)
+CGO_ENABLED=1 go build -ldflags="-s -w -linkmode external -extldflags '-static'" -o switchAILocal ./cmd/server
 ```
 
 </CodeGroup>
@@ -686,7 +728,7 @@ Expected response:
 <AccordionGroup>
 
 <Accordion title="Go version too old">
-  **Error:** `go: directive requires go version >= 1.24`
+  **Error:** `go: directive requires go version >= 1.25`
   
   **Solution:**
   ```bash
@@ -698,8 +740,8 @@ Expected response:
   brew upgrade go
   
   # Linux
-  wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
-  sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+  wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+  sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
   ```
 </Accordion>
 

@@ -7,31 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-08
+
+First public release. One local endpoint. All your AI providers.
+
 ### Added
-- **Management Page V2**: Complete rewrite of the management interface
-  - Modern React-based UI with responsive design
-  - Provider management with 15+ supported providers (CLI tools, local models, cloud APIs)
-  - Model routing configuration (create mappings without editing YAML)
-  - System settings panel (debug mode, proxy URL, system info)
-  - Single-file architecture (226 KB, zero external dependencies)
-  - State-box integration with read-only mode support
-  - Authentication with management key and URL parameter support (`?key=...`)
-  - Built with React 18, Zustand, SWR, and Vite
+- **npx installer**: `npx @traylinx/switchailocal` — zero-setup, auto-downloads platform binary
+- **Rolling update script** (`scripts/update-switchailocal.sh`) for zero-downtime deployments
+- **5 new SSE error patterns**: Anthropic overload/rate_limit, detail+status_code format, error.code as int
+- **GitHub Release** with pre-built binaries (darwin/arm64, linux/amd64)
+- **GitHub Actions**: npx auto-publish workflow, matrix release workflow with CGO support
+
+### Performance
+- Switched hot-path JSON to `goccy/go-json` (~2-3x faster marshal/unmarshal)
+- Replaced SHA-256 with `xxhash` for signature cache keys (~10x faster)
+- Enriched SSE error detection for better retry/fallback decisions
+
+### Fixed
+- Docker healthcheck: `CMD` → `CMD-SHELL` (was passing `|| exit 1` as part of URL)
+- CI workflows: Go version 1.22-1.24 → 1.25 (matching go.mod)
+- GoReleaser: fixed CGO_ENABLED=0 → matrix build with CGO_ENABLED=1 (onnxruntime_go)
+- golangci-lint: install from source for Go 1.25 compatibility
+- Security: updated `cloudflare/circl` v1.6.1 → v1.6.3 (CVE fix)
+- GHCR build: added `:latest` Docker tag on main branch pushes
+
+### Removed
+- Dead CLI subcommand files: heartbeat.go, hooks.go, learning.go, steering.go (1,290 lines)
+  - Underlying packages remain intact for future re-enablement via management API
 
 ### Changed
-- Management dashboard now uses modern React stack instead of legacy implementation
-- Build process simplified with `vite-plugin-singlefile` for single HTML output
-- Provider configuration moved to dedicated modal dialogs
-- Model aliasing renamed to "Model Routing" with improved UI
-
-### Technical
-- Frontend: React 18 + Vite + vite-plugin-singlefile
-- State Management: Zustand (lightweight, minimal boilerplate)
-- Data Fetching: SWR (caching, revalidation, optimistic updates)
-- Styling: Vanilla CSS with CSS variables (no external frameworks)
-- Icons: lucide-react (inline SVGs)
-- Build Output: Single 226 KB HTML file with all assets inlined
-- Testing: Jest + React Testing Library configured
+- **Management Page V2**: Complete rewrite of the management interface
+  - Modern React-based UI with responsive design
+  - Provider management with 15+ supported providers
+  - Model routing configuration
+  - Single-file architecture (226 KB, zero external dependencies)
+  - Built with React 18, Zustand, SWR, and Vite
 
 ## [1.0.0-rc1] - 2026-01-22
 

@@ -45,8 +45,14 @@ Unified LLM proxy and intelligent router for AI agents. Always use `http://local
 
 Follow these steps IN ORDER to bootstrap switchAILocal from scratch on a user's machine.
 
-### Step 1 — Clone & Install
+### Step 1 — Install & Start
 
+**Option A (npx — recommended, no git clone needed):**
+```bash
+npx @traylinx/switchailocal
+```
+
+**Option B (from source):**
 ```bash
 git clone https://github.com/traylinx/switchAILocal.git
 cd switchAILocal
