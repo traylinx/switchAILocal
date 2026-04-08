@@ -1,5 +1,7 @@
 # Release Workflow
 # Triggered on version tags (v*)
+# Builds CGO-enabled binaries natively on each platform via matrix,
+# then creates a single GitHub Release with all artifacts.
 
 name: Release
 
@@ -13,39 +15,94 @@ permissions:
   packages: write
 
 jobs:
-  release:
-    name: Release
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache: true
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Install Linux build deps
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      - name: Build binaries
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT="${GITHUB_SHA::8}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
+
+          OUTDIR="switchAILocal_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "${OUTDIR}"
+
+          echo "Building switchAILocal ${GOOS}/${GOARCH}..."
+          CGO_ENABLED=1 go build -ldflags="${LDFLAGS}" -o "${OUTDIR}/switchAILocal" ./cmd/server/
+
+          echo "Building bridge-agent ${GOOS}/${GOARCH}..."
+          CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o "${OUTDIR}/bridge-agent" ./cmd/bridge-agent/
+
+          cp README.md LICENSE config.example.yaml "${OUTDIR}/"
+          [ -f CHANGELOG.md ] && cp CHANGELOG.md "${OUTDIR}/"
+
+          tar czf "${OUTDIR}.tar.gz" "${OUTDIR}/"
+          sha256sum "${OUTDIR}.tar.gz" > "${OUTDIR}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            switchAILocal_*.tar.gz
+            switchAILocal_*.tar.gz.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cat *.sha256 > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            switchAILocal_*.tar.gz
+            checksums.txt

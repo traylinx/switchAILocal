@@ -1,5 +1,9 @@
 # GoReleaser configuration for switchAILocal
 # Documentation: https://goreleaser.com
+#
+# NOTE: This project requires CGO (onnxruntime_go) so we use a matrix
+# release workflow that builds natively on each OS. GoReleaser runs
+# in --split mode per-OS, then the release job combines all artifacts.
 
 version: 2
 
@@ -14,17 +18,11 @@ builds:
     main: ./cmd/server
     binary: switchAILocal
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
-      - linux
-      - darwin
-      - windows
+      - "{{ .Env.GOOS }}"
     goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
+      - "{{ .Env.GOARCH }}"
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -37,15 +35,9 @@ builds:
     env:
       - CGO_ENABLED=0
     goos:
-      - linux
-      - darwin
-      - windows
+      - "{{ .Env.GOOS }}"
     goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
+      - "{{ .Env.GOARCH }}"
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -66,7 +58,6 @@ archives:
       - LICENSE
       - CHANGELOG.md
       - config.example.yaml
-      - docs/**/*
 
 checksum:
   name_template: "checksums.txt"
@@ -81,43 +72,6 @@ changelog:
       - "^ci:"
       - Merge pull request
       - Merge branch
-
-dockers:
-  - image_templates:
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source={{ .GitURL }}"
-    extra_files:
-      - config.example.yaml
-
-  - image_templates:
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source={{ .GitURL }}"
-    goarch: arm64
-    extra_files:
-      - config.example.yaml
-
-docker_manifests:
-  - name_template: "ghcr.io/traylinx/switchailocal:{{ .Tag }}"
-    image_templates:
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
-
-  - name_template: "ghcr.io/traylinx/switchailocal:latest"
-    image_templates:
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-amd64"
-      - "ghcr.io/traylinx/switchailocal:{{ .Tag }}-arm64"
 
 release:
   github:
