@@ -71,7 +71,11 @@ jobs:
           [ -f CHANGELOG.md ] && cp CHANGELOG.md "${OUTDIR}/"
 
           tar czf "${OUTDIR}.tar.gz" "${OUTDIR}/"
-          sha256sum "${OUTDIR}.tar.gz" > "${OUTDIR}.tar.gz.sha256"
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "${OUTDIR}.tar.gz" > "${OUTDIR}.tar.gz.sha256"
+          else
+            shasum -a 256 "${OUTDIR}.tar.gz" > "${OUTDIR}.tar.gz.sha256"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
