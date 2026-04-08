@@ -11,7 +11,6 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   build:
@@ -28,10 +27,10 @@ jobs:
           cache: true
 
       - name: Build main binary
-        run: env GOTOOLCHAIN=auto go build -v ./cmd/server
+        run: go build -v ./cmd/server
 
       - name: Build bridge-agent
-        run: env GOTOOLCHAIN=auto go build -v ./cmd/bridge-agent
+        run: go build -v ./cmd/bridge-agent
 
   test:
     name: Test
@@ -47,11 +46,11 @@ jobs:
           cache: true
 
       - name: Run tests with race detection
-        run: env GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out -covermode=atomic $(env GOTOOLCHAIN=auto go list -f '{{if len .TestGoFiles}}{{.ImportPath}}{{end}}' ./...)
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage threshold
         run: |
-          COVERAGE=$(env GOTOOLCHAIN=auto go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total coverage: ${COVERAGE}%"
           if (( $(echo "$COVERAGE < 60" | bc -l) )); then
             echo "::warning::Coverage ${COVERAGE}% is below 60% threshold"
@@ -81,8 +80,6 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
-        env:
-          GOTOOLCHAIN: auto
 
       - name: Run go vet
-        run: env GOTOOLCHAIN=auto go vet ./...
+        run: go vet ./...
