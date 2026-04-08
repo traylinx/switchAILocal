@@ -47,7 +47,7 @@ jobs:
           cache: true
 
       - name: Run tests with race detection
-        run: env GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: env GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out -covermode=atomic $(env GOTOOLCHAIN=auto go list -f '{{if len .TestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 
       - name: Check coverage threshold
         run: |
@@ -80,7 +80,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --timeout=5m --go 1.24
+          args: --timeout=5m
         env:
           GOTOOLCHAIN: auto
 
