@@ -3,50 +3,43 @@ title: Quickstart
 description: Get switchAILocal running in 5 minutes
 ---
 
-Get switchAILocal up and running with your first AI request in minutes. This guide will help you install, configure, and test your unified AI gateway.
+Get switchAILocal up and running with your first AI request in minutes.
 
 ## What You'll Build
 
 By the end of this guide, you'll have:
-- switchAILocal server running on `http://localhost:18080`
-- At least one AI provider configured (CLI, API, or local)
-- Made your first successful API request
+- switchAILocal server running at `http://localhost:18080`
+- At least one AI provider connected
+- Made your first successful AI request
 
 <Steps>
 
-### Clone the Repository
+### Install & Start
 
-Get the latest version of switchAILocal:
-
-```bash
-git clone https://github.com/traylinx/switchAILocal.git
-cd switchAILocal
-```
-
-### Start the Server
-
-Use the unified hub script to start switchAILocal. It automatically builds and runs the server:
+Pick whichever method works for you:
 
 <CodeGroup>
 
-```bash Local (Recommended)
-./ail.sh start
+```bash npx (Recommended)
+npx @traylinx/switchailocal
 ```
 
 ```bash Docker
-./ail.sh start --docker --build
+docker run -p 18080:18080 ghcr.io/traylinx/switchailocal:latest
 ```
 
-```bash Local with Logs
-./ail.sh start -f
+```bash From Source
+git clone https://github.com/traylinx/switchAILocal.git
+cd switchAILocal
+./ail.sh start
 ```
 
 </CodeGroup>
 
-The server will start on `http://localhost:18080` by default.
+The server starts on `http://localhost:18080`.
 
 <Note>
-  **First time running?** The hub script will automatically check for Go dependencies and build the binary for you.
+  **Using npx?** It downloads the right binary for your system automatically — no Go, no Docker, no build step needed.
 </Note>
 
 ### Choose Your Provider
@@ -261,7 +254,7 @@ Bridge: Not running.
   ./ail.sh logs -f
   
   # Verify Go installation
-  go version  # Should be 1.24+
+  go version  # Should be 1.25+
   ```
 </Accordion>
 
@@ -310,7 +303,7 @@ Bridge: Not running.
   **Problem:** Go build errors
   
   **Solution:**
-  - Update Go to 1.24+: `go version`
+  - Update Go to 1.25+: `go version`
   - Clean modules: `go clean -modcache`
   - Re-download dependencies: `go mod download`
 </Card>
