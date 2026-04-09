@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - Prevent Path Traversal and SSRF in API Handlers and Browser Launcher
+**Vulnerability:** The API endpoint handlers for downloading, uploading, and deleting auth files previously relied on `os.PathSeparator` to validate file names, which failed to prevent path traversal across platforms (e.g., bypassing a `/` check using `\` on Windows, which standard file APIs still resolve). Additionally, the system browser launcher blindly passed arbitrary URLs to OS `open` commands, allowing for SSRF or command injection via arbitrary schemes (like `file://` or custom local handlers).
+**Learning:** Checking for single path separators or relying solely on the host OS's default path separator is insufficient for complete traversal protection, as Go's `os` and `filepath` modules might resolve paths differently than the validation logic. Furthermore, blindly executing URLs in `exec.Command` exposes the system to local file reads and arbitrary handler execution.
+**Prevention:** Always validate file names with `strings.ContainsAny(name, "/\\")` to comprehensively catch both Unix and Windows separators. For browser launchers, explicitly enforce `http://` or `https://` schemas to prevent URL handler abuses and command injection.

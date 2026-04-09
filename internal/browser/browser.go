@@ -25,6 +25,10 @@ import (
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
 func OpenURL(url string) error {
+	if !isValidURL(url) {
+		return fmt.Errorf("invalid URL: must start with http:// or https://")
+	}
+
 	fmt.Printf("Attempting to open URL in browser: %s\n", url)
 
 	// Try using the open-golang library first
@@ -40,6 +44,13 @@ func OpenURL(url string) error {
 	return openURLPlatformSpecific(url)
 }
 
+// isValidURL checks if the URL starts with http:// or https:// to prevent command injection
+func isValidURL(url string) bool {
+	// Basic validation to ensure the URL starts with http:// or https://
+	// This prevents executing arbitrary commands on macOS (e.g., using "file://" or local paths)
+	return len(url) > 7 && (url[:7] == "http://" || url[:8] == "https://")
+}
+
 // openURLPlatformSpecific is a helper function that opens a URL using OS-specific commands.
 // This serves as a fallback mechanism for OpenURL.
 //
@@ -49,6 +60,10 @@ func OpenURL(url string) error {
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
 func openURLPlatformSpecific(url string) error {
+	if !isValidURL(url) {
+		return fmt.Errorf("invalid URL: must start with http:// or https://")
+	}
+
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
