@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-03-02 - Optimize string concatenation in translator package
+**Learning:** Found string formatting allocations using `fmt.Sprintf` and replacing them with native string concatenation reduces allocations on hot paths. `fmt.Sprintf` builds intermediate structures.
+**Action:** Always prefer native string concatenation (+) over `fmt.Sprintf` in high-throughput hot paths.
