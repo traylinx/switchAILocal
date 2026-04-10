@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-04-10 - Fix Path Traversal in AuthFiles
+**Vulnerability:** Path traversal in `UploadAuthFile` and `DeleteAuthFile` query parameter parsing due to `os.PathSeparator` bypasses on some operating systems.
+**Learning:** Using `os.PathSeparator` is insufficient to protect against path traversals because HTTP payloads and malicious inputs can use `\` on linux or `/` on windows to bypass these checks. In addition, the validation was occurring after the authManager checks, preventing bypassing of the auth manager in unit tests.
+**Prevention:** Explicitly validate path traversal characters using `strings.ContainsAny(name, "/\\")` early in the handler.
