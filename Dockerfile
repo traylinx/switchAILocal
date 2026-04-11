@@ -33,6 +33,7 @@ WORKDIR /app
 COPY --from=builder /app/switchAILocal /app/switchAILocal
 COPY config.example.yaml /app/config.example.yaml
 COPY static /app/static
+COPY plugins /app/plugins
 
 # Ensure the non-root user owns the application files
 RUN chown -R appuser:appgroup /app
