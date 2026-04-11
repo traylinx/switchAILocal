@@ -394,7 +394,7 @@ local Plugin = {}
 
 function Plugin:on_request(req)
     if req.model ~= "auto" and req.model ~= "cortex" then
-        return nil 
+        return nil
     end
 
     -- Do not route if a specific provider is requested
@@ -404,6 +404,21 @@ function Plugin:on_request(req)
 
     -- Initialize metadata if missing
     req.metadata = req.metadata or {}
+
+    -- Auto target from config: intelligence.matrix.auto
+    -- When set, auto/cortex requests go straight there (no tier cascade).
+    -- IMPORTANT: do NOT split the "provider:model" prefix here. The Go conductor's
+    -- auth lookup only finds the credential when it resolves the prefix itself
+    -- (matches how a direct client call with model="provider:model" works).
+    local auto_model = switchai.config.matrix and switchai.config.matrix.auto
+    if auto_model and auto_model ~= "" then
+        do
+            switchai.log("Auto-routing: matrix.auto -> " .. auto_model)
+            req.model = auto_model
+            req.metadata.routing_tier = "matrix-auto"
+            return req
+        end
+    end
 
     local input = req.body or ""
     
