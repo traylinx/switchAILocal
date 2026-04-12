@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-04-12 - Fix MITM vulnerability in proxy configurations
+**Vulnerability:** The management handlers `discover_models.go` and `test_provider.go` hardcoded `InsecureSkipVerify: true` in the `tls.Config` when a proxy is configured. This explicitly disabled TLS certificate verification, leaving the application vulnerable to Man-in-the-Middle (MITM) attacks.
+**Learning:** This occurred because developers might have temporarily enabled it for easier local testing with intercepting proxies and committed the change, prioritizing testing convenience over security in production code.
+**Prevention:** Always enforce standard TLS certificate validation for external API communication in production handlers. Never commit `InsecureSkipVerify: true` without explicit and tightly scoped development flags, and use secure internal certificates rather than disabling verification outright.
