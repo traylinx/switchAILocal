@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2025-03-05 - Fix Command Injection in Browser URL Handler
+**Vulnerability:** Command Injection / SSRF in OS-level browser invocation
+**Learning:** `exec.Command("open", url)` (and Linux/Windows equivalents) can execute arbitrary local files (e.g., `file://`) or potentially arbitrary commands if a malicious custom scheme handler is registered or unexpected command arguments are parsed by the OS when handling non-HTTP schemes.
+**Prevention:** Always validate that URLs passed to external browser execution commands begin strictly with `http://` or `https://` to ensure they are safely handled as web protocols.
