@@ -8,8 +8,50 @@ package chat_completions
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
+
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+// sanitizeJSONString extracts the first complete JSON object from a string
+// that might contain multiple concatenated JSON objects (e.g. {"a":1}{"b":2}).
+// This fixes parsing errors caused by improperly merged tool calls in history.
+func sanitizeJSONString(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "{") {
+		return s
+	}
+	depth := 0
+	inQuote := false
+	escape := false
+	for i, c := range s {
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if !inQuote {
+			if c == '{' {
+				depth++
+			} else if c == '}' {
+				depth--
+				if depth == 0 {
+					return s[:i+1]
+				}
+			}
+		}
+	}
+	return s
+}
 
 // ConvertOpenAIRequestToOpenAI converts an OpenAI Chat Completions request (raw JSON)
 // into a complete Gemini CLI request JSON. All JSON construction uses sjson and lookups use gjson.
@@ -31,5 +73,29 @@ func ConvertOpenAIRequestToOpenAI(modelName string, inputRawJSON []byte, _ bool)
 		// handling mechanism would be needed.
 		return bytes.Clone(inputRawJSON)
 	}
+	// Sanitize corrupted tool_calls in the history
+	if msgs := gjson.GetBytes(updatedJSON, "messages"); msgs.Exists() && msgs.IsArray() {
+		msgs.ForEach(func(i, msg gjson.Result) bool {
+			if tcs := msg.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
+				tcs.ForEach(func(j, tc gjson.Result) bool {
+					if args := tc.Get("function.arguments"); args.Exists() {
+						s := sanitizeJSONString(args.String())
+						if s != args.String() {
+							updatedJSON, _ = sjson.SetBytes(updatedJSON, fmt.Sprintf("messages.%d.tool_calls.%d.function.arguments", i.Int(), j.Int()), s)
+						}
+					}
+					return true
+				})
+			}
+			if fc := msg.Get("function_call.arguments"); fc.Exists() {
+				s := sanitizeJSONString(fc.String())
+				if s != fc.String() {
+					updatedJSON, _ = sjson.SetBytes(updatedJSON, fmt.Sprintf("messages.%d.function_call.arguments", i.Int()), s)
+				}
+			}
+			return true
+		})
+	}
+
 	return updatedJSON
 }
