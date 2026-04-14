@@ -12,6 +12,44 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// sanitizeJSONString extracts the first complete JSON object from a string
+// that might contain multiple concatenated JSON objects (e.g. {"a":1}{"b":2}).
+// This fixes parsing errors caused by improperly merged tool calls in history.
+func sanitizeJSONString(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "{") {
+		return s
+	}
+	depth := 0
+	inQuote := false
+	escape := false
+	for i, c := range s {
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if !inQuote {
+			if c == '{' {
+				depth++
+			} else if c == '}' {
+				depth--
+				if depth == 0 {
+					return s[:i+1]
+				}
+			}
+		}
+	}
+	return s
+}
+
 // ConvertOpenAIResponsesRequestToOpenAIChatCompletions converts OpenAI responses format to OpenAI chat completions format.
 // It transforms the OpenAI responses API format (with instructions and input array) into the standard
 // OpenAI chat completions format (with messages array and system content).
@@ -132,7 +170,7 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 				}
 
 				if arguments := item.Get("arguments"); arguments.Exists() {
-					toolCall, _ = sjson.Set(toolCall, "function.arguments", arguments.String())
+					toolCall, _ = sjson.Set(toolCall, "function.arguments", sanitizeJSONString(arguments.String()))
 				}
 
 				assistantMessage, _ = sjson.SetRaw(assistantMessage, "tool_calls.0", toolCall)
