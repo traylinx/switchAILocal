@@ -167,14 +167,28 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		var chatCompletionsTools []interface{}
 
 		tools.ForEach(func(_, tool gjson.Result) bool {
+			toolType := tool.Get("type").String()
+
+			// Skip built-in Responses API tool types that don't map to Chat Completions functions.
+			// These include web_search, web_search_preview, code_interpreter, file_search,
+			// computer_use, etc. They don't have a "name" field and would cause
+			// "tools[N] is missing function.name" errors on downstream providers.
+			if toolType != "" && toolType != "function" {
+				return true
+			}
+
+			// Only process function-type tools (explicit "function" type or tools with a "name" field)
+			name := tool.Get("name")
+			if !name.Exists() || name.String() == "" {
+				return true
+			}
+
 			chatTool := `{"type":"function","function":{}}`
 
 			// Convert tool structure from responses format to chat completions format
 			function := `{"name":"","description":"","parameters":{}}`
 
-			if name := tool.Get("name"); name.Exists() {
-				function, _ = sjson.Set(function, "name", name.String())
-			}
+			function, _ = sjson.Set(function, "name", name.String())
 
 			if description := tool.Get("description"); description.Exists() {
 				function, _ = sjson.Set(function, "description", description.String())
