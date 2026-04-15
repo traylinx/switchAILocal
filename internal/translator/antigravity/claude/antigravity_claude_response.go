@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -155,14 +156,14 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 						// First, close any existing content block
 						if params.ResponseType != 0 {
 							output = output + "event: content_block_stop\n"
-							output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+							output = output + `data: {"type":"content_block_stop","index":` + strconv.Itoa(params.ResponseIndex) + `}`
 							output = output + "\n\n\n"
 							params.ResponseIndex++
 						}
 
 						// Start a new thinking content block
 						output = output + "event: content_block_start\n"
-						output = output + fmt.Sprintf(`data: {"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":""}}`, params.ResponseIndex)
+						output = output + `data: {"type":"content_block_start","index":` + strconv.Itoa(params.ResponseIndex) + `,"content_block":{"type":"thinking","thinking":""}}`
 						output = output + "\n\n\n"
 						output = output + "event: content_block_delta\n"
 						data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":""}}`, params.ResponseIndex), "delta.thinking", partTextResult.String())
@@ -188,14 +189,14 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 							// First, close any existing content block
 							if params.ResponseType != 0 {
 								output = output + "event: content_block_stop\n"
-								output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+								output = output + `data: {"type":"content_block_stop","index":` + strconv.Itoa(params.ResponseIndex) + `}`
 								output = output + "\n\n\n"
 								params.ResponseIndex++
 							}
 							if partTextResult.String() != "" {
 								// Start a new text content block
 								output = output + "event: content_block_start\n"
-								output = output + fmt.Sprintf(`data: {"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, params.ResponseIndex)
+								output = output + `data: {"type":"content_block_start","index":` + strconv.Itoa(params.ResponseIndex) + `,"content_block":{"type":"text","text":""}}`
 								output = output + "\n\n\n"
 								output = output + "event: content_block_delta\n"
 								data, _ := sjson.Set(fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":""}}`, params.ResponseIndex), "delta.text", partTextResult.String())
@@ -216,7 +217,7 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 				// Close any existing function call block first
 				if params.ResponseType == 3 {
 					output = output + "event: content_block_stop\n"
-					output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+					output = output + `data: {"type":"content_block_stop","index":` + strconv.Itoa(params.ResponseIndex) + `}`
 					output = output + "\n\n\n"
 					params.ResponseIndex++
 					params.ResponseType = 0
@@ -227,7 +228,7 @@ func ConvertAntigravityResponseToClaude(_ context.Context, _ string, originalReq
 				// Close any other existing content block
 				if params.ResponseType != 0 {
 					output = output + "event: content_block_stop\n"
-					output = output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+					output = output + `data: {"type":"content_block_stop","index":` + strconv.Itoa(params.ResponseIndex) + `}`
 					output = output + "\n\n\n"
 					params.ResponseIndex++
 				}
@@ -296,7 +297,7 @@ func appendFinalEvents(params *Params, output *string, force bool) {
 
 	if params.ResponseType != 0 {
 		*output = *output + "event: content_block_stop\n"
-		*output = *output + fmt.Sprintf(`data: {"type":"content_block_stop","index":%d}`, params.ResponseIndex)
+		*output = *output + `data: {"type":"content_block_stop","index":` + strconv.Itoa(params.ResponseIndex) + `}`
 		*output = *output + "\n\n\n"
 		params.ResponseType = 0
 	}

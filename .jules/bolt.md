@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2023-10-27 - [Avoid fmt.Sprintf for String Concatenation in Streaming]
+**Learning:** In streaming handlers, `fmt.Sprintf` creates significant reflection overhead and per-chunk memory allocations, especially in tight loops building Server-Sent Events (SSE) responses.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`), `strconv.Itoa`, or `strconv.FormatInt` when building event chunks (e.g. `data: ...` lines) and data URIs. This eliminates reflection overhead and minimizes memory allocations for better throughput.
