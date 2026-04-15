@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/skratchdot/open-golang/open"
@@ -25,6 +26,10 @@ import (
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
 func OpenURL(url string) error {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return fmt.Errorf("invalid URL scheme: only http:// and https:// are allowed")
+	}
+
 	fmt.Printf("Attempting to open URL in browser: %s\n", url)
 
 	// Try using the open-golang library first
