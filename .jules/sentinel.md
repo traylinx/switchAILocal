@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2025-04-16 - Prevent Command Injection/SSRF in URL Handler
+**Vulnerability:** OS-specific URL handler exec.Command("open", url) did not validate URL schemes, allowing local file access (file://) or injected flags.
+**Learning:** System commands interacting with user-provided URIs must strictly allowlist known safe schemes.
+**Prevention:** Enforce http:// or https:// prefix validation before passing arguments to shell execution or open-golang.
