@@ -24,6 +24,25 @@ Standard OpenAI chat completions. Supports streaming (`"stream": true`).
 | `model` | string | Yes | Model name (e.g., `gemini-2.5-pro`, `ollama:llama3.2`) |
 | `messages` | array | Yes | Array of message objects |
 | `stream` | boolean | No | Enable SSE streaming |
+| `tools` | array | No | Tool definitions. `[{"type":"web_search"}]` is supported natively by `minimax:MiniMax-M2.7` — see Web Search below. |
+
+#### Web Search (MiniMax native tool)
+
+`minimax:MiniMax-M2.7` supports a built-in `web_search` tool that performs live web lookups and folds the results into the response. Enable it via the `tools` field:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:MiniMax-M2.7",
+    "messages": [{"role": "user", "content": "Who won the 2026 Super Bowl?"}],
+    "max_tokens": 2000,
+    "tools": [{"type": "web_search"}]
+  }'
+```
+
+**Important:** web search inflates the prompt context with search results (often 6k–13k prompt tokens per query). Set `max_tokens >= 2000` to leave headroom for reasoning + final answer, otherwise the response will be truncated or empty. The response returns the final answer in `choices[0].message.content` — there are no separate `tool_calls` for the client to handle; the model calls search internally.
 
 ### Completions
 
@@ -109,6 +128,145 @@ Convert text to speech audio.
 | `response_format` | string | No | `mp3` (default), `opus`, `aac`, `flac`, `wav`, `pcm` |
 
 Response is binary audio with appropriate `Content-Type`.
+
+#### MiniMax TTS — working example
+
+MiniMax `speech-02-hd` is the default `speech` model in `intelligence.matrix`. The gateway runs an adapter (`internal/runtime/executor/minimax_tts.go`) that translates the OpenAI-shape request into MiniMax's native `/v1/t2a_pro` API and resolves the returned audio URL to raw bytes before handing them back.
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:speech-02-hd",
+    "input": "Hello from switchAILocal",
+    "voice": "male-qn-qingse",
+    "response_format": "mp3"
+  }' \
+  --output hello.mp3
+```
+
+**Voice IDs are MiniMax-native** — OpenAI voice names (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) are not aliased. Sample MiniMax voices:
+
+| Voice ID | Description |
+|---|---|
+| `male-qn-qingse` | Male, calm (default for testing) |
+| `female-shaonv` | Female, young |
+| `audiobook_male_2` | Male, narrator-style |
+| `presenter_male` | Male, anchor-style |
+| `clever_boy` | Male, youthful |
+
+**Supported formats:** `mp3` (default), `pcm`, `flac`, `wav`. Bitrate and sample rate can be overridden via top-level `bitrate`, `audio_sample_rate`, `channel`.
+
+**Plan limits:** MiniMax Plus token plan allows ~9000 characters/day and imposes a very tight RPM (1–5 requests/min). When the RPM is exceeded, MiniMax returns internal code `1002` which the adapter maps to HTTP 429 (rate_limit) — the failover taxonomy then classifies this as `ClassRateLimit` and advances to the next provider if a fallback chain is configured. Internal code `2061` ("plan not support") maps to HTTP 402 (out_of_credits).
+
+**Known error codes (internal MiniMax → HTTP):**
+
+| MiniMax code | HTTP | Meaning | Failover class |
+|---|---|---|---|
+| 0 | 200 | success | — |
+| 1002 | 429 | RPM rate limit | ClassRateLimit (advances) |
+| 1004 / 1008 | 401 | auth / balance | ClassAuth (advances) |
+| 2013 | 400 | invalid params | ClassPermanent (aborts) |
+| 2061 | 402 | plan doesn't support this model | ClassOutOfCredits (advances) |
+
+### Music Generation
+
+```
+POST /v1/music/generations
+```
+
+Generate music from lyrics using MiniMax `music-2.6` (text-to-music) or `music-cover` (reference-audio style transfer). Synthesis runs synchronously and typically takes 30–90 seconds for a 1–2 minute song. The adapter hex-decodes the upstream audio response and returns base64-encoded MP3 bytes with lifted metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `model` | string | No | `minimax:music-2.6` (default via `intelligence.matrix.music_generation`) or `minimax:music-cover` |
+| `lyrics` | string | Yes for `music-2.6` | Lyrics with optional structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`, `[Inst]` |
+| `prompt` | string | Yes for `music-cover` (10–300 chars) | Style description for the cover |
+| `audio_url` OR `audio_base64` | string | Yes for `music-cover` | Reference audio: 6s–6min, ≤50MB, mp3/wav/flac. Mutually exclusive. |
+
+**Response shape:**
+```json
+{
+  "model": "music-2.6",
+  "trace_id": "063294b934ecf975cf75a296dc3cc3f4",
+  "data": {
+    "audio": "<base64-encoded MP3 bytes>",
+    "format": "mp3",
+    "size_bytes": 3150729,
+    "duration_ms": 98298,
+    "sample_rate": 44100,
+    "channels": 2,
+    "bitrate": 256000
+  },
+  "extra_info": { /* raw upstream metadata */ }
+}
+```
+
+**Text-to-music example:**
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
+  }' | jq -r .data.audio | base64 -d > song.mp3
+```
+
+**Style-cover example (reference audio):**
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-cover",
+    "prompt": "upbeat jazz cover with saxophone solo",
+    "audio_url": "https://example.com/reference.mp3"
+  }' | jq -r .data.audio | base64 -d > cover.mp3
+```
+
+**Plan limits:** MiniMax Plus plan = 100 songs/day each for `music-2.6` and `music-cover`. Max song length 6 minutes. Errors follow the same mapping as TTS — `2013` (invalid_params) aborts, `1002` (rate_limit) and `2061` (plan_not_support) are advance-eligible.
+
+### Lyrics Generation
+
+```
+POST /v1/music/lyrics
+```
+
+Generate structured song lyrics. Typical latency 2–5 seconds. Pure JSON in / JSON out — no audio.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mode` | string | No | `write_full_song` (default) or `edit` (modify/continue existing `lyrics`) |
+| `prompt` | string | No | Song theme / style description (max 2000 chars). Empty = random. |
+| `lyrics` | string | Only in `edit` mode | Existing lyrics to extend (max 3500 chars) |
+| `title` | string | No | Desired song title |
+
+**Response shape:**
+```json
+{
+  "song_title": "Midnight Code Delight",
+  "style_tags": "pop, happy, coding, late night, electronic",
+  "lyrics": "[Intro]\n\n[Verse]\nScreen glow bright...",
+  "base_resp": { "status_code": 0, "status_msg": "success" }
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:18080/v1/music/lyrics \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "write_full_song",
+    "prompt": "a happy pop song about sunshine"
+  }'
+```
+
+**Common workflow:** call `/v1/music/lyrics` first to generate structured lyrics, then feed the result into `/v1/music/generations` with `model: "minimax:music-2.6"`.
+
+**Plan limits:** 100 lyrics/day on the Plus plan.
 
 ### Audio Transcription
 

@@ -615,6 +615,10 @@ func (s *Server) setupRoutes() {
 		v1.POST("/audio/transcriptions", openaiHandlers.AudioTranscriptions)
 		v1.POST("/audio/translations", openaiHandlers.AudioTranslations)
 		v1.POST("/audio/speech", openaiHandlers.AudioSpeech)
+		// Music + lyrics — MiniMax-native endpoints under /v1/music/*.
+		// See internal/runtime/executor/minimax_music.go for the adapter.
+		v1.POST("/music/generations", openaiHandlers.MusicGenerations)
+		v1.POST("/music/lyrics", openaiHandlers.MusicLyrics)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)

@@ -91,6 +91,31 @@ streaming:
   # Number of retries before the first byte is sent to handle auth rotation.
   bootstrap-retries: 2
 
+# Performance & reliability tuning (circuit breaker, timeouts, stall detection, etc.)
+performance:
+  circuit-breaker:
+    enabled: true
+    failure-threshold: 5    # consecutive failures before circuit opens
+    reset-timeout: 30s      # time in OPEN state before HALF_OPEN probe
+    half-open-max: 3        # probe requests allowed in HALF_OPEN
+  provider-timeouts:
+    # Fallback used when a provider has no explicit entry below.
+    default: 120s
+    # Per-provider overrides. Commented entries show recommended starting points.
+    # per-provider:
+    #   openai: 30s
+    #   anthropic: 60s
+    #   gemini: 45s
+    #   ollama: 180s         # local, can be slow on cold start
+  streaming:
+    # Max time to wait for the first byte. A stall before first-byte is recoverable —
+    # we can transparently failover to the next provider.
+    first-byte-timeout: 15s
+    # Max gap between SSE chunks before we classify the stream as stalled. Post-
+    # first-chunk stalls CANNOT be transparently recovered — we terminate with an
+    # SSE error event and the client must retry.
+    stall-timeout: 60s
+
 # Quota exceeded behavior
 quota-exceeded:
   switch-project: true # Move to next project/credential if current quota hit.
@@ -167,6 +192,12 @@ auto-routing:
   #   coding:
   #     - "claude:claude-3-5-sonnet-20241022"
   #     - "gemini:gemini-2.5-pro"
+
+  # Hard blacklist — providers listed here are never selected, even if they score
+  # highest. Use when credits are exhausted or a provider is known-bad. Cleared
+  # manually; no auto-recovery (by design — prevents silent credit drain).
+  # disabled-providers:
+  #   - anthropic
 
 # =============================================================================
 # 5. PROVIDER CONFIGURATIONS
@@ -267,6 +298,42 @@ openai-compatibility:
       - name: "mimo-v2-tts"
         alias: "xiaomi:mimo-v2-tts"
 
+  # MiniMax — chat, image generation, and TTS.
+  #
+  # Chat (MiniMax-M2.7) supports built-in web_search via tools field — see
+  # docs/user/api-reference.md §Web Search.
+  #
+  # TTS (speech-02-hd) is served through the MiniMax T2A adapter
+  # (internal/runtime/executor/minimax_tts.go). When a request hits
+  # /v1/audio/speech with a minimax model, the adapter translates the
+  # OpenAI-shape request to MiniMax's native /v1/t2a_pro schema and resolves
+  # the returned audio_file URL to raw bytes. Use MiniMax voice IDs (e.g.
+  # male-qn-qingse), not OpenAI voice names.
+  #
+  # Plan caveats: the Plus token plan has a very restrictive RPM (~1–5 req/min)
+  # on TTS. MiniMax's 1002 error is translated to HTTP 429 so the failover
+  # taxonomy classifies it as ClassRateLimit (advance-eligible).
+  - name: "minimax"
+    prefix: "minimax"
+    base-url: "https://api.minimax.io/v1"
+    api-key-entries:
+      - api-key: "sk-..."
+    models:
+      - name: "MiniMax-M2.7"
+        alias: "minimax:MiniMax-M2.7"
+      - name: "image-01"
+        alias: "minimax:image-01"
+      - name: "speech-02-hd"
+        alias: "minimax:speech-02-hd"
+      # music-2.6: text-to-music (Plus plan, 100 songs/day). Served via
+      # POST /v1/music/generations → MiniMax music adapter (minimax_music.go).
+      - name: "music-2.6"
+        alias: "minimax:music-2.6"
+      # music-cover: reference-audio style transfer (Plus plan, 100/day).
+      # Same upstream endpoint as music-2.6 — model field switches mode.
+      - name: "music-cover"
+        alias: "minimax:music-cover"
+
 # -- VERTEX COMPATIBILITY --
 # For third-party providers using Vertex-style protocols
 # vertex-api-key:
@@ -289,13 +356,41 @@ intelligence:
   router-fallback: "openai:gpt-4o-mini"
 
   # Static intent-to-model mapping matrix.
+  #
+  # Chat intents (auto/coding/reasoning/fast/creative/secure/research/chat/cli/
+  # long_ctx/long_context) route the /v1/chat/completions request to the listed
+  # model. Specialized slots (image_gen, transcription, speech, embedding,
+  # web_search) are used by their dedicated endpoints — see below.
   matrix:
     coding: "switchai-chat"
     reasoning: "switchai-reasoner"
     fast: "switchai-fast"
     secure: "ollama:llama3.2"
-    vision: "ollama:qwen3-vl:235b-instruct-cloud"
+    vision: "minimax:MiniMax-M2.7"              # MiniMax-M2.7 is multimodal
+    audio: "minimax:MiniMax-M2.7"
     embedding: "switchai-embed"
+    image_gen: "minimax:image-01"               # POST /v1/images/generations
+    transcription: "whisper-large-v3"           # POST /v1/audio/transcriptions (via groq)
+    # speech: POST /v1/audio/speech — routed through the MiniMax T2A adapter
+    # when the upstream is MiniMax. Adapter translates OpenAI shape to MiniMax
+    # /v1/t2a_pro. Use MiniMax voice IDs (e.g. male-qn-qingse) — OpenAI voice
+    # names (alloy, echo, fable...) are NOT aliased. See docs/user/api-reference.md.
+    speech: "minimax:speech-02-hd"
+    # web_search: MiniMax M2.7 supports built-in web_search via chat completion
+    # tools=[{"type":"web_search"}]. Requires max_tokens >= 2000 (search inflates
+    # prompt context to 6k–13k tokens). See docs/user/api-reference.md.
+    web_search: "minimax:MiniMax-M2.7"
+    # music_generation: POST /v1/music/generations — MiniMax music-2.6 for
+    # text-to-music. Adapter translates response {data.audio: hex-encoded MP3}
+    # to {data.audio: base64, duration_ms, sample_rate, channels, bitrate}.
+    # See docs/user/api-reference.md § Music Generation.
+    music_generation: "minimax:music-2.6"
+    # music_cover: same POST /v1/music/generations endpoint but with model set
+    # to minimax:music-cover and body carrying audio_url OR audio_base64.
+    music_cover: "minimax:music-cover"
+    # lyrics_generation: POST /v1/music/lyrics — MiniMax-native lyrics writer.
+    # Accepts {mode: "write_full_song"|"edit", prompt, lyrics?, title?}.
+    lyrics_generation: "minimax:music-2.6"
 
   # -- PHASE 2 FEATURES --
 

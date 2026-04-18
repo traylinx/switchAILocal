@@ -299,21 +299,57 @@ curl http://localhost:18080/v1/images/edits \
 ```
 
 #### Text-to-Speech
+
+Works natively via the MiniMax T2A adapter — gateway translates OpenAI shape to MiniMax `/v1/t2a_pro` behind the scenes. Use MiniMax voice IDs (not OpenAI voice names):
+
 ```bash
 curl http://localhost:18080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
-  -d '{"model": "tts-1", "input": "Hello!", "voice": "alloy"}' \
-  --output speech.mp3
+  -d '{
+    "model": "minimax:speech-02-hd",
+    "input": "Hello from switchAILocal",
+    "voice": "male-qn-qingse",
+    "response_format": "mp3"
+  }' --output speech.mp3
 ```
+
+Common voice IDs: `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`, `presenter_male`, `clever_boy`. Formats: `mp3`, `pcm`, `flac`, `wav`.
 
 #### Audio Transcription
 ```bash
 curl http://localhost:18080/v1/audio/transcriptions \
   -H "Authorization: Bearer sk-test-123" \
   -F file="@audio.mp3" \
-  -F model="whisper-1"
+  -F model="whisper-large-v3"
 ```
+
+#### Music Generation
+
+Generate songs (text-to-music) or covers via MiniMax. 30–90s sync, 100/day on Plus plan.
+
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing"
+  }' | jq -r .data.audio | base64 -d > song.mp3
+```
+
+Returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. For cover mode use `"model": "minimax:music-cover"` with `"audio_url"` or `"audio_base64"` + `"prompt"`.
+
+#### Lyrics Generation
+
+```bash
+curl http://localhost:18080/v1/music/lyrics \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"write_full_song","prompt":"happy pop about coding"}'
+```
+
+Returns `{song_title, style_tags, lyrics}` with `[Verse]`/`[Chorus]` structure tags.
 
 #### Audio Translation (to English)
 ```bash
@@ -329,17 +365,20 @@ switchAILocal passes through all standard and provider-specific parameters, so y
 
 #### Tool Calling (Web Search)
 
-Some providers support built-in tools like web search. These are forwarded as-is:
+Built-in tools like web search are forwarded as-is to the upstream. **MiniMax M2.7** is the canonical web-search provider — the model runs the search internally and returns the synthesized answer in `choices[0].message.content`.
+
+> **Critical:** set `max_tokens >= 2000` when using web_search. Search results are folded into the prompt and inflate context to 6k–13k tokens — lower budgets produce truncated or empty responses.
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "xiaomi:mimo-v2-flash",
+    "model": "minimax:MiniMax-M2.7",
     "messages": [
       {"role": "user", "content": "What are the latest AI news today?"}
     ],
+    "max_tokens": 2000,
     "tools": [
       {
         "type": "web_search",

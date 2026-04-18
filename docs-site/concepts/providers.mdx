@@ -249,10 +249,13 @@ func (e *OpenAICompatExecutor) Identifier() string {
 ```
 
 Supports:
-- Chat completions: `/chat/completions`
-- Image generation: `/images/generations`  
+- Chat completions: `/chat/completions` (incl. native tools like `web_search` for MiniMax)
+- Embeddings: `/embeddings`
+- Image generation: `/images/generations` (path auto-rewritten to `/image_generation` for MiniMax)
 - Audio transcription: `/audio/transcriptions`
-- Audio speech: `/audio/speech`
+- Audio speech: `/audio/speech` — for MiniMax, the request is translated to native `/t2a_pro` by an adapter in `internal/runtime/executor/minimax_tts.go`. MiniMax error codes (1002/2013/2061) are mapped onto HTTP status so the failover taxonomy can classify them correctly.
+- Music generation + covers: `/music/generations` — for MiniMax, adapter in `internal/runtime/executor/minimax_music.go` routes to upstream `/v1/music_generation`, hex-decodes the audio, and returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}}`.
+- Lyrics generation: `/music/lyrics` — MiniMax `/v1/lyrics_generation` pass-through with mode defaulting.
 </Accordion>
 
 ### Supported Services

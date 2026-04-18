@@ -95,12 +95,83 @@ switchAILocal supports these providers (all discoverable by the wizard):
 | Gemini CLI | `geminicli:` | `gemini-2.5-pro`, `gemini-3-flash-preview` |
 | Claude CLI | `claudecli:` | `claude-sonnet-4` |
 | Ollama | `ollama:` | `qwen3.5:cloud`, `kimi-k2.5:cloud` |
-| Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile` |
+| Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile`, `whisper-large-v3` |
 | Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
 | Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
-| MiniMax | `minimax:` | `MiniMax-M2.7`, `image-01` |
-| switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast` |
+| MiniMax | `minimax:` | `MiniMax-M2.7`, `image-01`, **`speech-02-hd`** |
+| switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast`, `switchai-embed` |
 | OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
+
+## Capability Endpoints (for AI agents)
+
+Use these endpoints directly — no special client needed. All accept OpenAI-compatible shapes. The gateway internally translates to the upstream provider's native API where needed (e.g. MiniMax TTS → `/v1/t2a_pro`).
+
+| Endpoint | What it does | Default model | Notes |
+|----------|--------------|---------------|-------|
+| `POST /v1/chat/completions` | Chat / reasoning / vision | `minimax:MiniMax-M2.7` (via `model: "auto"`) | Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
+| `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallbacks: `switchai-embed`, alibaba `text-embedding-v3`. All return dim=1024. |
+| `POST /v1/images/generations` | Image generation | `minimax:image-01` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
+| `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |
+| `POST /v1/audio/speech` | Text → speech (TTS) | `minimax:speech-02-hd` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
+| `POST /v1/music/generations` | Text → music / style cover | `minimax:music-2.6` | Generate real songs from lyrics (text-to-music) or covers (`model: "minimax:music-cover"` + `audio_url`). Response: `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`. 30–90s sync. 100 songs/day. |
+| `POST /v1/music/lyrics` | Song lyrics generator | (same credential) | Fast (~2s). Modes: `write_full_song` (default) or `edit`. Returns `{song_title, style_tags, lyrics}` with `[Verse]`/`[Chorus]` structure. 100/day. |
+
+### Chat + web search (agent recipe)
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:MiniMax-M2.7",
+    "messages": [{"role":"user","content":"What did Apple announce today? Use web search."}],
+    "max_tokens": 2000,
+    "tools": [{"type": "web_search"}]
+  }'
+```
+
+### Text-to-speech (agent recipe)
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:speech-02-hd",
+    "input": "Hello from your agent",
+    "voice": "male-qn-qingse",
+    "response_format": "mp3"
+  }' --output out.mp3
+```
+
+**Rate-limit caveat:** MiniMax TTS on the Plus plan is ~1–5 RPM. Plan daily usage budget, not just total bytes. Gateway failover will classify 429 as `ClassRateLimit` and advance to the next provider if one is wired — otherwise the client sees 429.
+
+### Transcription (agent recipe)
+
+```bash
+curl http://localhost:18080/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-test-123" \
+  -F model=whisper-large-v3 \
+  -F file=@voice-note.wav
+```
+
+### Music + lyrics (agent recipe — full pipeline)
+
+Generate lyrics then synthesize music from them. Both calls share MiniMax's 100/day quota bucket per endpoint.
+
+```bash
+# Step 1 — generate lyrics (~2s)
+LYRICS=$(curl -sS http://localhost:18080/v1/music/lyrics \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"mode":"write_full_song","prompt":"upbeat anthem about shipping code"}' \
+  | jq -r .lyrics)
+
+# Step 2 — synthesize music (~30-90s)
+curl -sS http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg l "$LYRICS" '{"model":"minimax:music-2.6","lyrics":$l}')" \
+  | jq -r .data.audio | base64 -d > song.mp3
+```
+
+**Errors (MiniMax internal → HTTP):** 1002 rate_limit → 429 (failover advances), 2061 plan_not_support → 402 (failover advances), 2013 invalid_params → 400 (aborts).
 
 ---
 

@@ -981,6 +981,83 @@ func (h *OpenAIAPIHandler) AudioTranslations(c *gin.Context) {
 	cliCancel()
 }
 
+// MusicGenerations handles POST /v1/music/generations.
+//
+// Unified endpoint for both text-to-music (music-2.6) and music-cover
+// (reference-audio style transfer). Model field switches the mode upstream.
+// The adapter (internal/runtime/executor/minimax_music.go) translates to
+// MiniMax's native /v1/music_generation and decodes the hex-encoded audio
+// into OpenAI-ish JSON {data: {audio: <base64>, duration_ms, sample_rate, ...}}.
+//
+// Default model comes from intelligence.matrix["music_generation"].
+// Plus-plan quota on MiniMax is 100 songs/day per model. Requests can take
+// 30–90 seconds sync (streaming is a future extension).
+func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
+		return
+	}
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["music_generation"]; ok && val != "" {
+			modelName = val
+		} else {
+			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'music_generation' configured in intelligence.matrix")})
+			return
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "music_generation", "application/json")
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}
+
+// MusicLyrics handles POST /v1/music/lyrics.
+//
+// Thin pass-through over MiniMax's /v1/lyrics_generation. Accepts
+// {mode, prompt, lyrics?, title?} (mode defaults to "write_full_song" in
+// the adapter if omitted). Returns {song_title, style_tags, lyrics}.
+func (h *OpenAIAPIHandler) MusicLyrics(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
+		return
+	}
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		if val, ok := h.Cfg.Intelligence.Matrix["lyrics_generation"]; ok && val != "" {
+			modelName = val
+		} else {
+			// Lyrics has no "real" model name (upstream ignores it), but we
+			// need SOMETHING to route with. Default to the same credential
+			// the music_generation slot resolves to.
+			if val, ok := h.Cfg.Intelligence.Matrix["music_generation"]; ok && val != "" {
+				modelName = val
+			} else {
+				h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("no 'lyrics_generation' or 'music_generation' configured in intelligence.matrix")})
+				return
+			}
+		}
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "lyrics_generation", "application/json")
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp)
+	cliCancel()
+}
+
 // AudioTranscriptions handles /v1/audio/transcriptions
 func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) {
 	// For multipart, we read the whole body to forward it,

@@ -106,6 +106,22 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
 				contentType = ct
 			}
+		case "music_generation":
+			// MiniMax music (music-2.6 / music-cover) returns hex-encoded
+			// audio and uses its own base_resp shape — only MiniMax
+			// implements this endpoint today, so we always dispatch to the
+			// adapter when it matches.
+			if isMinimaxTTSRequest(e.Identifier(), auth) {
+				return e.executeMinimaxMusic(ctx, auth, req, baseURL, apiKey)
+			}
+			return resp, statusErr{code: http.StatusNotImplemented, msg: fmt.Sprintf("music_generation not supported for provider %q", e.Identifier())}
+		case "lyrics_generation":
+			// Lyrics is MiniMax-only too. Pure JSON in / JSON out — no hex
+			// decoding needed, but the mode-required schema needs defaulting.
+			if isMinimaxTTSRequest(e.Identifier(), auth) {
+				return e.executeMinimaxLyrics(ctx, auth, req, baseURL, apiKey)
+			}
+			return resp, statusErr{code: http.StatusNotImplemented, msg: fmt.Sprintf("lyrics_generation not supported for provider %q", e.Identifier())}
 		}
 	}
 

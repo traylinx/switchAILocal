@@ -194,7 +194,7 @@ curl http://localhost:18080/v1/chat/completions \
   -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a Go sorting algorithm"}]}'
 ```
 
-Supported intents: `coding`, `reasoning`, `creative`, `fast`, `secure`, `vision`, `audio`.
+Supported intents: `coding`, `reasoning`, `creative`, `fast`, `secure`, `vision`, `audio`, `web_search`, `research`, `chat`, `cli`, `long_ctx`. Specialized slots — `image_gen`, `transcription`, `speech`, `embedding` — are used by their dedicated endpoints (see sections below), not by auto chat routing.
 
 ### How Scoring Works
 
@@ -311,6 +311,128 @@ response = client.images.generate(
 )
 image_url = response.data[0].url
 ```
+
+---
+
+## 🔊 Text-to-Speech
+
+Generate audio from text via `/v1/audio/speech`. switchAILocal ships a MiniMax T2A adapter that translates the OpenAI-shape request to MiniMax's native `/v1/t2a_pro` API behind the scenes.
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:speech-02-hd",
+    "input": "Hello from switchAILocal",
+    "voice": "male-qn-qingse",
+    "response_format": "mp3"
+  }' --output hello.mp3
+```
+
+**Voice IDs — use MiniMax-native, NOT OpenAI voice names:**
+
+| Voice ID | Description |
+|---|---|
+| `male-qn-qingse` | Male, calm |
+| `female-shaonv` | Female, young |
+| `audiobook_male_2` | Male, narrator |
+| `presenter_male` | Male, anchor-style |
+| `clever_boy` | Male, youthful |
+
+**Formats:** `mp3` (default), `pcm`, `flac`, `wav`. Override `bitrate`, `audio_sample_rate`, `channel` at the top level if needed.
+
+**Rate limit:** Plus plan = ~1–5 RPM (very strict). MiniMax error 1002 → HTTP 429 → `ClassRateLimit` in failover taxonomy. Plan throughput accordingly.
+
+---
+
+## 🎵 Music & Lyrics Generation
+
+MiniMax-powered music suite — three capabilities under `/v1/music/*`.
+
+### Lyrics (fast, ~2-5s)
+
+```bash
+curl http://localhost:18080/v1/music/lyrics \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"write_full_song","prompt":"a happy pop song about sunshine"}'
+```
+
+Returns `{song_title, style_tags, lyrics}` with structure tags `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`, `[Inst]`.
+
+**Modes:** `write_full_song` (default) or `edit` (extend existing `lyrics`).
+
+### Music generation (text-to-music, ~30-90s)
+
+Generate a real song from lyrics. Plan daily quota: 100 songs.
+
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
+  }' | jq -r .data.audio | base64 -d > song.mp3
+```
+
+Returns `{data: {audio: <base64>, format, size_bytes, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. The adapter decodes MiniMax's hex-encoded audio server-side and hands base64 to clients (same convention as OpenAI `b64_json`).
+
+### Music cover (reference-audio style transfer)
+
+Generate a cover of an existing track in a different style. Same endpoint, different `model`.
+
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "minimax:music-cover",
+    "prompt": "upbeat jazz cover with saxophone solo",
+    "audio_url": "https://example.com/reference.mp3"
+  }' | jq -r .data.audio | base64 -d > cover.mp3
+```
+
+Reference audio must be 6s–6min, ≤50MB, formats: mp3/wav/flac. Use `audio_url` OR `audio_base64` (mutually exclusive).
+
+**Typical agent workflow:** generate lyrics first (`/v1/music/lyrics`), then synthesize music from them (`/v1/music/generations`). Both calls share the same MiniMax daily quota bucket (100/day each).
+
+---
+
+## 🎤 Audio Transcription (ASR)
+
+Transcribe audio to text via `/v1/audio/transcriptions` using groq-hosted whisper:
+
+```bash
+curl http://localhost:18080/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-test-123" \
+  -F model=whisper-large-v3 \
+  -F file=@voice-note.wav
+```
+
+Returns `{text: "..."}`. Supports `whisper-large-v3` (accurate) and `whisper-large-v3-turbo` (fast).
+
+---
+
+## 🌐 Web Search (Built-in Tool)
+
+MiniMax M2.7 supports live web search as a native chat tool. Enable via the `tools` field:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:MiniMax-M2.7",
+    "messages": [{"role":"user","content":"What happened today in tech news?"}],
+    "max_tokens": 2000,
+    "tools": [{"type": "web_search"}]
+  }'
+```
+
+**Critical:** set `max_tokens >= 2000`. Web search inflates prompt context to 6k–13k tokens (search results are folded in), so low budgets produce empty responses.
+
+**Response shape:** the model does the search internally and returns the synthesized answer in `choices[0].message.content`. There are no `tool_calls` for the client to execute — MiniMax handles everything server-side.
 
 ---
 
