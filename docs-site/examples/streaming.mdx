@@ -516,6 +516,80 @@ print()
 | OpenAI API | ✅ Full | Cloud streaming |
 | LM Studio | ✅ Full | Local streaming |
 
+## Music Streaming (Binary Audio)
+
+`POST /v1/music/generations` with `stream: true` returns progressive MP3 bytes instead of JSON. Unlike chat streaming (SSE token deltas), the response is `Content-Type: audio/mpeg` — you get raw MP3 frames as they're rendered upstream.
+
+**Measured vs sync mode** (live against MiniMax on 2026-04-18, 107-second song):
+
+| | Sync | Stream |
+|---|---|---|
+| TTFB | 30–90s | **19.6s** |
+| Wire bytes | 4.5 MB base64 in JSON | **3.4 MB raw MP3** (≈25–50% less) |
+| Playable while downloading | ❌ | ✅ (first chunk carries ID3v2 header) |
+| Client decode logic | base64 → binary | none — pipe directly to `<audio>` |
+
+<CodeGroup>
+
+```bash cURL
+curl -N http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "stream": true,
+    "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nShipping makes it right"
+  }' > song.mp3
+```
+
+```python Python
+import httpx
+
+with httpx.stream(
+    "POST",
+    "http://localhost:18080/v1/music/generations",
+    headers={"Authorization": "Bearer sk-test-123"},
+    json={
+        "model": "minimax:music-2.6",
+        "stream": True,
+        "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing",
+    },
+    timeout=180.0,
+) as response:
+    response.raise_for_status()
+    with open("song.mp3", "wb") as f:
+        for chunk in response.iter_bytes():
+            f.write(chunk)  # bytes are valid MP3 frames — player can start immediately
+```
+
+```javascript Browser
+const res = await fetch("/v1/music/generations", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer sk-test-123",
+  },
+  body: JSON.stringify({
+    model: "minimax:music-2.6",
+    stream: true,
+    lyrics: "[Verse]\nHello world\n[Chorus]\nLet us sing",
+  }),
+});
+
+// Option A: download to Blob and play
+const blob = await res.blob();
+const audio = new Audio(URL.createObjectURL(blob));
+await audio.play();
+
+// Option B (advanced): feed response.body into MediaSource for true progressive playback
+```
+
+</CodeGroup>
+
+**Error handling:** pre-first-byte errors (HTTP 5xx, 429, MiniMax plan-exhausted) come back as a JSON error with the proper status code — nothing has been flushed yet, so failover / conductor retry still works. Errors that arrive *after* bytes have been committed close the stream cleanly; the client keeps whatever MP3 frames were received (still playable, just truncated).
+
+**When to use sync instead:** you need the metadata block (duration_ms, sample_rate, bitrate) upfront, or you're chaining to a tool that expects JSON.
+
 ## Next Steps
 
 <CardGroup cols={2}>

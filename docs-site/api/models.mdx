@@ -235,14 +235,20 @@ See [Provider Prefixes](/api/provider-prefixes) for filtering options.
 
 Different models support different features:
 
-| Capability | Gemini | Claude | Ollama | switchAI |
-|------------|--------|--------|--------|----------|
-| Chat Completions | ✅ | ✅ | ✅ | ✅ |
-| Streaming | ✅ | ✅ | ✅ | ✅ |
-| Function Calling | ✅ | ✅ | ⚠️ | ✅ |
-| Vision | ✅ | ✅ | ⚠️ | ✅ |
-| JSON Mode | ✅ | ✅ | ✅ | ✅ |
-| Embeddings | ✅ | ❌ | ✅ | ✅ |
+| Capability | Gemini | Claude | Ollama | switchAI | MiniMax |
+|------------|--------|--------|--------|----------|---------|
+| Chat Completions | ✅ | ✅ | ✅ | ✅ | ✅ (`MiniMax-M2.7`) |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Function Calling | ✅ | ✅ | ⚠️ | ✅ | ✅ |
+| Vision | ✅ | ✅ | ⚠️ | ✅ | ✅ (`MiniMax-M2.7`) |
+| JSON Mode | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Embeddings | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Native web search | ❌ | ❌ | ❌ | ❌ | ✅ (`tools: [{"type":"web_search"}]`) |
+| Image generation | ❌ | ❌ | ❌ | ❌ | ✅ (`image-01`) |
+| Text-to-speech | ❌ | ❌ | ❌ | ❌ | ✅ (`speech-02-hd`, binary `audio/mpeg`) |
+| Music generation | ❌ | ❌ | ❌ | ❌ | ✅ (`music-2.6`, `music-cover`) |
+| Music streaming (raw MP3, ~20s TTFB) | ❌ | ❌ | ❌ | ❌ | ✅ (`music-2.6` + `stream: true`) |
+| Lyrics generation | ❌ | ❌ | ❌ | ❌ | ✅ (`/v1/music/lyrics`) |
 
 ⚠️ = Model-dependent
 
