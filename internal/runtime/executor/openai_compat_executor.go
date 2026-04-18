@@ -90,6 +90,14 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 				contentType = ct
 			}
 		case "audio_speech":
+			// MiniMax ships its own native TTS API at /v1/t2a_pro with a
+			// different request/response shape — the dumb-proxy path 404s
+			// because /v1/audio/speech doesn't exist upstream. Detect early
+			// and dispatch to the dedicated adapter, which returns binary
+			// audio bytes in the same shape the public handler expects.
+			if isMinimaxTTSRequest(e.Identifier(), auth) {
+				return e.executeMinimaxTTS(ctx, auth, req, baseURL, apiKey)
+			}
 			endpoint = "/audio/speech"
 			skipTranslation = true
 		case "audio_translations":
