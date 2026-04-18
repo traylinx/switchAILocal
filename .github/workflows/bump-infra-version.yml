@@ -1,0 +1,139 @@
+# Bump infra version on tag push
+#
+# When a release tag like v0.3.0 lands on this repo, open a PR against
+# the infrastructure repo (traylinx/wannolot-infrastructure) that bumps
+# switchailocal-version.txt to the new tag. Reviewing + merging that PR
+# is the action that triggers fleet-wide rollout via the gitops timer.
+#
+# Why a PR (not a direct push):
+#   - A broken release should never reach prod droplets unreviewed.
+#   - The PR body links to this release's notes, giving the reviewer
+#     context before they approve the rollout.
+#   - Closing the PR without merging = "skip this release", which is a
+#     first-class option.
+#
+# Required secret: INFRA_REPO_PAT
+#   - Fine-grained PAT with contents:write and pull-requests:write on
+#     traylinx/wannolot-infrastructure. NOT the default GITHUB_TOKEN,
+#     which can't write to a different repo.
+#
+# If the secret is missing the job is a no-op (logged + skipped) so the
+# release workflow itself never fails on a misconfigured cross-repo bump.
+
+name: Bump infra version
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Open PR in infrastructure repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version_no_prefix=${TAG#v}" >> "${GITHUB_OUTPUT}"
+          echo "Released: ${TAG}"
+
+      - name: Check for infra PAT
+        id: gate
+        env:
+          PAT: ${{ secrets.INFRA_REPO_PAT }}
+        run: |
+          if [ -z "${PAT:-}" ]; then
+            echo "INFRA_REPO_PAT secret not set — skipping infra PR."
+            echo "has_pat=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_pat=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout infrastructure repo
+        if: steps.gate.outputs.has_pat == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: traylinx/wannolot-infrastructure
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra
+          # Full history so we can see the prior pin in the PR body.
+          fetch-depth: 0
+
+      - name: Bump switchailocal-version.txt
+        if: steps.gate.outputs.has_pat == 'true'
+        id: bump
+        working-directory: infra
+        run: |
+          PIN_FILE="switchailocal-version.txt"
+          NEW_TAG="${{ steps.tag.outputs.tag }}"
+
+          if [ ! -f "${PIN_FILE}" ]; then
+            echo "${PIN_FILE} missing in infra repo — creating fresh"
+            OLD_TAG=""
+          else
+            OLD_TAG="$(tr -d '[:space:]' < "${PIN_FILE}")"
+          fi
+
+          if [ "${OLD_TAG}" = "${NEW_TAG}" ]; then
+            echo "Pin already at ${NEW_TAG} — nothing to do."
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "${NEW_TAG}" > "${PIN_FILE}"
+          echo "old_tag=${OLD_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "new_tag=${NEW_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "skip=false" >> "${GITHUB_OUTPUT}"
+          echo "Bumped ${PIN_FILE}: ${OLD_TAG:-<unset>} → ${NEW_TAG}"
+
+      - name: Open PR
+        if: steps.gate.outputs.has_pat == 'true' && steps.bump.outputs.skip != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: infra
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          branch: bump-switchailocal-${{ steps.tag.outputs.tag }}
+          delete-branch: true
+          commit-message: |
+            chore(switchailocal): pin to ${{ steps.tag.outputs.tag }}
+
+            Released: https://github.com/traylinx/switchAILocal/releases/tag/${{ steps.tag.outputs.tag }}
+          title: "Bump switchAILocal → ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## Rollout
+
+            Merging this PR pins the fleet to `${{ steps.tag.outputs.tag }}`. The
+            `wannolot-gitops.timer` systemd unit on each droplet runs
+            `gitops/pull-and-apply.sh` every 10 minutes — within one tick of
+            merge, every droplet:
+
+            1. `git pull` this repo
+            2. Reads `switchailocal-version.txt` → sees `${{ steps.tag.outputs.tag }}`
+            3. Rewrites `AIL_IMAGE` in `.env.droplet`
+            4. Re-renders `docker-compose.switchailocal.yml`
+            5. Runs `scripts/update-switchailocal.sh` → zero-downtime rolling
+               restart with per-instance health-check + auto-rollback on failure
+
+            **Change:** `${{ steps.bump.outputs.old_tag }}` → `${{ steps.bump.outputs.new_tag }}`
+
+            **Release notes:**
+            https://github.com/traylinx/switchAILocal/releases/tag/${{ steps.tag.outputs.tag }}
+
+            ## Safety
+
+            - Health check during rolling restart reverts the instance if the new
+              image fails `/health` — a broken release is caught per-droplet.
+            - To pause the rollout during an incident: close this PR, or
+              `systemctl stop wannolot-gitops.timer` on affected droplets.
+            - To roll back after merge: `git revert` this commit and droplets
+              converge back within one tick.
+
+            🤖 Opened automatically by
+            [bump-infra-version.yml](https://github.com/traylinx/switchAILocal/blob/main/.github/workflows/bump-infra-version.yml)
+            on tag push.
