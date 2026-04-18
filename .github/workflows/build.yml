@@ -3,9 +3,21 @@ name: Build & Push to GHCR
 on:
   push:
     branches: [main]
+    # Also fire on version tags — release:published is unreliable when the
+    # release is created by another workflow (action-gh-release in release.yml)
+    # so we trigger directly off the tag ref. Covers semver tags like v0.3.0.
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (branch/tag/SHA). Defaults to the ref gh workflow run was invoked with.'
+        required: false
+      push:
+        description: 'Push the built image to GHCR (default false for safe local/test builds)'
+        type: boolean
+        default: false
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/switchailocal
@@ -45,8 +57,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'workflow_dispatch' }}
-          platforms: ${{ github.event_name == 'workflow_dispatch' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          platforms: ${{ github.event_name == 'workflow_dispatch' && !inputs.push && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
