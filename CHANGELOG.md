@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-18
+
+CI pipeline fix — no runtime code changes.
+
+### Fixed
+- `build.yml` now triggers on version-tag pushes (`tags: ['v*']`) directly, independent of the `release:published` event. The `release:published` event is unreliable when the release is created by another workflow (`action-gh-release` in `release.yml`), which silently suppressed the Docker build for v0.3.0 — GHCR got `:latest` but no `:0.3.0` tag, breaking pin-based rollout to droplets. Going forward, every version tag push publishes `:X.Y.Z` reliably.
+- `workflow_dispatch` now accepts a `push` input, enabling `gh workflow run build.yml --ref vX.Y.Z -f push=true` to backfill a missing tag without cutting a new release.
+
+### Not changed
+- Gateway binary, behaviour, API surface, dependencies — identical to v0.3.0. This release exists only to validate the CI fix end-to-end and unblock fleet-wide rollout.
+
 ## [0.3.0] - 2026-04-18
 
 MiniMax music generation streaming — raw MP3 bytes flow as they're rendered.
