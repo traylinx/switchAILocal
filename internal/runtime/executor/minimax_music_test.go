@@ -260,6 +260,235 @@ func TestExecuteMinimaxLyrics_HappyPath(t *testing.T) {
 	}
 }
 
+// sseWriter is a tiny helper for emitting event-stream frames in tests. It
+// matches the wire format observed from MiniMax: `data: <json>\n\n`.
+func sseWriter(t *testing.T, w http.ResponseWriter, payload map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(payload)
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		t.Errorf("sse write prefix: %v", err)
+	}
+	if _, err := w.Write(body); err != nil {
+		t.Errorf("sse write body: %v", err)
+	}
+	if _, err := w.Write([]byte("\n\n")); err != nil {
+		t.Errorf("sse write sep: %v", err)
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// TestExecuteMinimaxMusicStream_HappyPath verifies the full SSE → raw MP3
+// pipeline: three progressive hex-encoded chunks land as raw bytes on the
+// output channel, the terminal frame (status=2, duplicated audio) is
+// discarded, and the channel closes cleanly with no error.
+func TestExecuteMinimaxMusicStream_HappyPath(t *testing.T) {
+	chunk1 := []byte{0x49, 0x44, 0x33, 0x04, 0x00, 0x01, 0x02, 0x03} // ID3v2 header
+	chunk2 := []byte{0xFF, 0xFB, 0xD0, 0x64, 0x10, 0x11, 0x12, 0x13} // MP3 frame sync
+	chunk3 := []byte{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify the handler injected stream:true before posting upstream.
+		var reqBody map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		if reqBody["stream"] != true {
+			t.Errorf("upstream saw stream=%v, want true", reqBody["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriter(t, w, map[string]any{
+			"data": map[string]any{"audio": hex.EncodeToString(chunk1), "status": 1},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+		})
+		sseWriter(t, w, map[string]any{
+			"data": map[string]any{"audio": hex.EncodeToString(chunk2), "status": 1},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+		})
+		sseWriter(t, w, map[string]any{
+			"data": map[string]any{"audio": hex.EncodeToString(chunk3), "status": 1},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+		})
+		// Terminal frame: status=2, duplicated audio (full concat), extra_info.
+		// Adapter MUST drop the audio and keep the metadata for logging only.
+		sseWriter(t, w, map[string]any{
+			"data": map[string]any{"audio": hex.EncodeToString(append(append(append([]byte{}, chunk1...), chunk2...), chunk3...)), "status": 2},
+			"trace_id":   "stream-trace-abc",
+			"extra_info": map[string]any{"music_duration": 45000, "music_sample_rate": 44100, "music_channel": 2, "bitrate": 256000},
+			"base_resp":  map[string]any{"status_code": 0, "status_msg": "success"},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"lyrics":"la la la"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+	stream, err := exec.executeMinimaxMusicStream(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("executeMinimaxMusicStream returned err: %v", err)
+	}
+
+	var got [][]byte
+	for chunk := range stream {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected mid-stream error: %v", chunk.Err)
+		}
+		got = append(got, chunk.Payload)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d chunks, want 3 (terminal frame audio should be dropped); sizes=%v", len(got), chunkSizes(got))
+	}
+	if string(got[0]) != string(chunk1) || string(got[1]) != string(chunk2) || string(got[2]) != string(chunk3) {
+		t.Errorf("chunk bytes did not match: got[0]=%x got[1]=%x got[2]=%x", got[0], got[1], got[2])
+	}
+}
+
+func chunkSizes(chunks [][]byte) []int {
+	out := make([]int, len(chunks))
+	for i, c := range chunks {
+		out[i] = len(c)
+	}
+	return out
+}
+
+// TestExecuteMinimaxMusicStream_PreFirstByteError verifies that an upstream
+// application error in the FIRST SSE frame surfaces as a retryable
+// statusErr (not a raw bytes emission). This is the "failover still works"
+// contract — conductor needs to see the right HTTP code to advance.
+func TestExecuteMinimaxMusicStream_PreFirstByteError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriter(t, w, map[string]any{
+			"data":      map[string]any{"audio": "", "status": 1},
+			"base_resp": map[string]any{"status_code": 2061, "status_msg": "plan not support"},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"lyrics":"test"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+	stream, err := exec.executeMinimaxMusicStream(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("expected channel (pre-body error), got immediate err: %v", err)
+	}
+	var sawErr error
+	var audioBytes int
+	for chunk := range stream {
+		if chunk.Err != nil {
+			sawErr = chunk.Err
+		}
+		audioBytes += len(chunk.Payload)
+	}
+	if audioBytes != 0 {
+		t.Errorf("got %d audio bytes before error — expected zero for pre-first-byte failure", audioBytes)
+	}
+	if sawErr == nil {
+		t.Fatal("expected error on channel, got nil")
+	}
+	se, ok := sawErr.(statusErr)
+	if !ok {
+		t.Fatalf("error is %T, want statusErr (needed for failover classify): %v", sawErr, sawErr)
+	}
+	if se.code != http.StatusPaymentRequired {
+		t.Errorf("HTTP code=%d, want 402 (maps from MiniMax 2061)", se.code)
+	}
+}
+
+// TestExecuteMinimaxMusicStream_MidStreamError pins the "already committed"
+// behaviour: client got audio bytes before upstream died, so the error goes
+// on the channel but we don't retry — client has a partial, still-playable
+// MP3 to work with.
+func TestExecuteMinimaxMusicStream_MidStreamError(t *testing.T) {
+	chunk1 := []byte{0x49, 0x44, 0x33, 0x04, 0x00}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		sseWriter(t, w, map[string]any{
+			"data":      map[string]any{"audio": hex.EncodeToString(chunk1), "status": 1},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+		})
+		sseWriter(t, w, map[string]any{
+			"data":      map[string]any{"audio": "", "status": 1},
+			"base_resp": map[string]any{"status_code": 1002, "status_msg": "rpm exceeded"},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"lyrics":"x"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+	stream, err := exec.executeMinimaxMusicStream(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("unexpected setup err: %v", err)
+	}
+	var sawErr error
+	var audioBytes int
+	for chunk := range stream {
+		if chunk.Err != nil {
+			sawErr = chunk.Err
+		}
+		audioBytes += len(chunk.Payload)
+	}
+	if audioBytes != len(chunk1) {
+		t.Errorf("got %d audio bytes, want %d (one progressive frame before the error)", audioBytes, len(chunk1))
+	}
+	if sawErr == nil {
+		t.Fatal("expected error on channel after partial audio, got nil")
+	}
+}
+
+// TestExecuteMinimaxMusicStream_HTTPError pins that a transport-level 4xx/5xx
+// surfaces synchronously (before a channel is returned) so the conductor's
+// pre-stream failover path picks it up.
+func TestExecuteMinimaxMusicStream_HTTPError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"lyrics":"x"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+	_, err := exec.executeMinimaxMusicStream(context.Background(), nil, req, upstream.URL+"/v1", "bad-key")
+	if err == nil {
+		t.Fatal("expected synchronous error for HTTP 401, got nil")
+	}
+	se, ok := err.(statusErr)
+	if !ok {
+		t.Fatalf("error is %T, want statusErr: %v", err, err)
+	}
+	if se.code != http.StatusUnauthorized {
+		t.Errorf("HTTP code=%d, want 401", se.code)
+	}
+}
+
+// TestNormaliseMinimaxMusicRequest_StripsStream pins the safety fence: if a
+// client sends stream:true to the SYNC path (before the stream-aware
+// handler was wired), we strip it so the sync JSON parser doesn't choke on
+// SSE bytes. The streaming path re-injects it explicitly.
+func TestNormaliseMinimaxMusicRequest_StripsStream(t *testing.T) {
+	req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-2.6","stream":true,"lyrics":"x"}`)}
+	out := normaliseMinimaxMusicRequest(req)
+	if gjson.GetBytes(out, "stream").Exists() {
+		t.Errorf("stream should be stripped for sync path: %s", out)
+	}
+}
+
 // TestExecuteMinimaxLyrics_ErrorMapping — same code table, different
 // endpoint. Pins the same HTTP-status translation is applied.
 func TestExecuteMinimaxLyrics_ErrorMapping(t *testing.T) {

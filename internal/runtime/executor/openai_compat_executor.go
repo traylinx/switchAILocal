@@ -260,6 +260,22 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 		err = statusErr{code: http.StatusUnauthorized, msg: "missing provider baseURL"}
 		return nil, err
 	}
+
+	// Music streaming is a different beast from chat streaming: upstream SSE
+	// carries hex-encoded MP3 bytes, not token deltas, and we emit raw audio
+	// to the client rather than re-wrapping in SSE. Route early and skip the
+	// chat-completions translation pipeline entirely.
+	op, _ := req.Metadata["operation"].(string)
+	if op == "" {
+		op, _ = opts.Metadata["operation"].(string)
+	}
+	if op == "music_generation" {
+		if isMinimaxTTSRequest(e.Identifier(), auth) {
+			return e.executeMinimaxMusicStream(ctx, auth, req, baseURL, apiKey)
+		}
+		return nil, statusErr{code: http.StatusNotImplemented, msg: fmt.Sprintf("music_generation streaming not supported for provider %q", e.Identifier())}
+	}
+
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
 	translated := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), true)

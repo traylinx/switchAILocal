@@ -21,6 +21,7 @@ import (
 	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	. "github.com/traylinx/switchAILocal/internal/constant"
@@ -991,7 +992,14 @@ func (h *OpenAIAPIHandler) AudioTranslations(c *gin.Context) {
 //
 // Default model comes from intelligence.matrix["music_generation"].
 // Plus-plan quota on MiniMax is 100 songs/day per model. Requests can take
-// 30–90 seconds sync (streaming is a future extension).
+// 30–90 seconds sync.
+//
+// Streaming (stream:true): returns Content-Type: audio/mpeg with raw MP3
+// bytes instead of the JSON wrapper. First byte arrives at ~20s TTFB vs
+// 30–90s for sync, and the player can start decoding immediately
+// (concatenated hex chunks form a valid MP3 from frame one). The terminal
+// upstream frame — which duplicates the full song — is discarded, cutting
+// client bandwidth by ~75% vs passthrough.
 func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
 	rawJSON, err := c.GetRawData()
 	if err != nil {
@@ -1008,6 +1016,11 @@ func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
 		}
 	}
 
+	if gjson.GetBytes(rawJSON, "stream").Bool() {
+		h.musicGenerationsStream(c, modelName, rawJSON)
+		return
+	}
+
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "music_generation", "application/json")
 	if errMsg != nil {
@@ -1017,6 +1030,67 @@ func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
 	}
 	c.Data(http.StatusOK, "application/json", resp)
 	cliCancel()
+}
+
+// musicGenerationsStream runs the streaming variant of /v1/music/generations.
+// Writes raw MP3 bytes as they arrive from MiniMax so the client can start
+// playback before the song finishes rendering upstream.
+//
+// Header-commit semantics: we hold the response status until the first audio
+// byte is ready. If a retryable pre-first-byte error occurs (HTTP 5xx, 429,
+// upstream base_resp error, stall_pre_first_byte), we still have the chance
+// to return a JSON error with the right status code. Once any byte is
+// flushed we commit to 200 audio/mpeg and later errors just close the body.
+func (h *OpenAIAPIHandler) musicGenerationsStream(c *gin.Context, modelName string, rawJSON []byte) {
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	defer cliCancel()
+
+	dataCh, errCh := h.ExecuteStreamMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "music_generation", "application/json")
+
+	flusher, canFlush := c.Writer.(http.Flusher)
+	headersWritten := false
+	for {
+		select {
+		case <-cliCtx.Done():
+			return
+		case chunk, ok := <-dataCh:
+			if !ok {
+				// Channel closed without error — stream ended cleanly.
+				if !headersWritten {
+					// Upstream produced zero audio bytes and no error — rare,
+					// but treat as an upstream failure the client can retry.
+					h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("music_generation: empty stream from upstream")})
+				}
+				return
+			}
+			if !headersWritten {
+				c.Writer.Header().Set("Content-Type", "audio/mpeg")
+				c.Writer.Header().Set("Cache-Control", "no-cache")
+				c.Writer.Header().Set("X-Accel-Buffering", "no")
+				c.Writer.WriteHeader(http.StatusOK)
+				headersWritten = true
+			}
+			if _, wErr := c.Writer.Write(chunk); wErr != nil {
+				// Client disconnected mid-stream — stop cleanly.
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		case errMsg, ok := <-errCh:
+			if !ok || errMsg == nil {
+				return
+			}
+			if !headersWritten {
+				// Safe to return a structured error with the right status.
+				h.WriteErrorResponse(c, errMsg)
+				return
+			}
+			// Already committed to audio/mpeg — can't retract. Log and close.
+			log.Errorf("music_generation stream: mid-stream error after headers committed: %v", errMsg.Error)
+			return
+		}
+	}
 }
 
 // MusicLyrics handles POST /v1/music/lyrics.

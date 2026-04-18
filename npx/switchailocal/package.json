@@ -1,6 +1,6 @@
 {
   "name": "@traylinx/switchailocal",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "One local endpoint. All your AI providers. Install and run switchAILocal instantly.",
   "bin": {
     "switchailocal": "bin.js"
@@ -24,5 +24,7 @@
     "directory": "npx/switchailocal"
   },
   "homepage": "https://github.com/traylinx/switchAILocal",
-  "dependencies": {}
+  "dependencies": {
+    "@traylinx/pi-switchai-provider": "^0.3.2"
+  }
 }

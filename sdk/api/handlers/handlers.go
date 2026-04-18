@@ -624,6 +624,27 @@ func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, h
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
+	return h.executeStreamWithAuthManagerInternal(ctx, handlerType, modelName, rawJSON, alt, nil)
+}
+
+// ExecuteStreamMultimodalWithAuthManager is the streaming counterpart to
+// ExecuteMultimodalWithAuthManager: it injects operation + content-type
+// metadata so multimodal executors (currently MiniMax music) can dispatch
+// to a non-chat streaming path. Binary chunks (e.g. raw MP3 bytes) flow
+// through the same []byte channel; the caller is responsible for setting
+// the correct Content-Type on the HTTP response.
+func (h *BaseAPIHandler) ExecuteStreamMultimodalWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, operation, contentType string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
+	extra := map[string]any{}
+	if operation != "" {
+		extra["operation"] = operation
+	}
+	if contentType != "" {
+		extra["content_type"] = contentType
+	}
+	return h.executeStreamWithAuthManagerInternal(ctx, handlerType, modelName, rawJSON, alt, extra)
+}
+
+func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, extraMetadata map[string]any) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
 	startTime := time.Now()
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
@@ -662,6 +683,17 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 	if cloned := cloneMetadata(metadata); cloned != nil {
 		req.Metadata = cloned
 	}
+	// Overlay operation/content-type onto req.Metadata so executors that key
+	// off req.Metadata["operation"] (e.g. OpenAICompatExecutor music dispatch)
+	// see it — matches how ExecuteMultimodalWithAuthManager wires it.
+	if len(extraMetadata) > 0 {
+		if req.Metadata == nil {
+			req.Metadata = make(map[string]any)
+		}
+		for k, v := range extraMetadata {
+			req.Metadata[k] = v
+		}
+	}
 	opts := coreexecutor.Options{
 		Stream:          true,
 		Alt:             alt,
@@ -669,8 +701,16 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
+	if len(extraMetadata) > 0 {
+		if opts.Metadata == nil {
+			opts.Metadata = make(map[string]any)
+		}
+		for k, v := range extraMetadata {
+			opts.Metadata[k] = v
+		}
+	}
 	routingStartTime := time.Now()
-	
+
 	chunks, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	
 	routingLatency := time.Since(routingStartTime).Milliseconds()

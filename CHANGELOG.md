@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-18
+
+MiniMax music generation streaming — raw MP3 bytes flow as they're rendered.
+
+### Added
+- **Music streaming via `stream: true` on `POST /v1/music/generations`** — server unwraps MiniMax's upstream SSE (hex-encoded MP3 chunks), hex-decodes each progressive frame, and writes raw bytes to the client with `Content-Type: audio/mpeg` + `Transfer-Encoding: chunked`. The terminal frame (which duplicates the full song at 2× overhead) is discarded. Source: `internal/runtime/executor/minimax_music.go:executeMinimaxMusicStream`.
+- **Measured wins vs sync mode** (verified 2026-04-18 against live MiniMax, 107-second song):
+  - TTFB 19.6s (vs 30–90s sync). Wire overhead above upstream TTFB is ≈0s — the adapter adds no latency of its own.
+  - Client bandwidth 3.4 MB (vs 6.8 MB if we passed the hex SSE through unmodified). 50% reduction is structural: half the upstream SSE payload is a terminal-frame duplicate the adapter drops.
+  - Memory flat — no buffering of the full song; chunks stream through `bufio.Reader.ReadBytes` (handles arbitrary line length, unlike the 1 MB `bufio.Scanner` cap).
+  - Client cancellation works end-to-end: disconnecting mid-stream cancels the upstream context and stops generation.
+- **Music-tuned stall watchdog** (`minimax_music.go:minimaxMusicFirstByteMin` = 60s, `minimaxMusicStallMin` = 120s). The global `FirstByteTimeout: 15s` default is correct for chat token streams but kills MiniMax music — TTFB is legitimately ~20s. The adapter raises the floor locally; operators who set explicit higher values in `performance.streaming.*` still win.
+- **`ExecuteStreamMultimodalWithAuthManager` handler helper** (`sdk/api/handlers/handlers.go`) — streaming counterpart to the existing `ExecuteMultimodalWithAuthManager`. Injects `operation` + `content_type` into opts metadata so executors can dispatch to a non-chat streaming path without re-implementing circuit-breaker / auto-routing plumbing.
+- **5 new unit tests** (`internal/runtime/executor/minimax_music_test.go`): happy path (3 progressive chunks + terminal drop), pre-first-byte upstream error → retryable `statusErr`, mid-stream error after partial audio, HTTP 4xx synchronous error, stream-field stripping for the sync path. `sseWriter` fixture helper for future MiniMax-SSE tests.
+
+### Changed
+- `normaliseMinimaxMusicRequest` now strips `stream` from the payload on the sync path. Previously a client that sent `stream: true` to sync-mode would have reached upstream and crashed the JSON parser on the SSE bytes that came back. The streaming path re-injects it explicitly. (Latent bug fix — no behaviour change for existing callers.)
+- `OpenAICompatExecutor.ExecuteStream` routes `operation == "music_generation"` to `executeMinimaxMusicStream` before the chat translation pipeline. Non-MiniMax providers return 501 Not Implemented with a clear error.
+
+### Failover behaviour (unchanged contract)
+- Pre-first-byte errors (HTTP 5xx, 429, upstream `base_resp.status_code != 0` in the first frame, stall within 60s): surfaced as typed `statusErr` on the stream channel → conductor's existing bootstrap retry classifies normally and advances to the next provider if one exists.
+- Post-first-byte errors: client already has a playable partial MP3. Adapter logs the upstream error, closes the stream. No retry (can't retract bytes already sent).
+- Watchdog-fired cancellations produce `*stallError` with the correct phase (`pre_first_byte` retryable, `mid_stream` terminal) via the existing `StallPhaser` interface.
+
+### Known Issues (carried from v0.2.0)
+- `NPM_TOKEN` secret still scoped too narrowly for CI auto-publish. Manual `npm publish` from `npx/switchailocal/` works around it; see `docs/user/release.md` if present or the 0.2.0 release notes.
+- `internal/intelligence/embedding/TestIntegration` still fails in the full `go test ./...` run due to ONNX runtime CGO global-state leakage between tests. Passes in isolation; not introduced by this release.
+
 ## [0.2.0] - 2026-04-18
 
 Intelligent failover + MiniMax speech/music/lyrics + built-in web search.

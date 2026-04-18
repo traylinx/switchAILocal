@@ -363,10 +363,11 @@ Returns `{song_title, style_tags, lyrics}` with structure tags `[Intro]`, `[Vers
 
 **Modes:** `write_full_song` (default) or `edit` (extend existing `lyrics`).
 
-### Music generation (text-to-music, ~30-90s)
+### Music generation (text-to-music, ~30-90s sync or ~20s TTFB streaming)
 
-Generate a real song from lyrics. Plan daily quota: 100 songs.
+Generate a real song from lyrics. Plan daily quota: 100 songs. Two modes:
 
+**Sync (default):** blocks until complete, returns JSON with base64 audio.
 ```bash
 curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
@@ -378,6 +379,16 @@ curl http://localhost:18080/v1/music/generations \
 ```
 
 Returns `{data: {audio: <base64>, format, size_bytes, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. The adapter decodes MiniMax's hex-encoded audio server-side and hands base64 to clients (same convention as OpenAI `b64_json`).
+
+**Streaming (`stream: true`):** returns raw `audio/mpeg` bytes as MiniMax generates them — first bytes in ~20s, ~50% less wire (adapter drops the duplicated terminal frame MiniMax emits).
+```bash
+curl -N http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"minimax:music-2.6","stream":true,"lyrics":"[Verse]\nHello world"}' > song.mp3
+```
+
+Use streaming when UX matters (web player, agent progress signal). Use sync when you need the metadata block (duration_ms, sample_rate, bitrate) upfront — those fields are logged server-side during streaming but not exposed to the client.
 
 ### Music cover (reference-audio style transfer)
 

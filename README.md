@@ -326,9 +326,10 @@ curl http://localhost:18080/v1/audio/transcriptions \
 
 #### Music Generation
 
-Generate songs (text-to-music) or covers via MiniMax. 30–90s sync, 100/day on Plus plan.
+Generate songs (text-to-music) or covers via MiniMax. 30–90s sync, 100/day on Plus plan. Pass `stream: true` to stream raw MP3 bytes as they arrive (~20s TTFB instead of ~60s wall-clock).
 
 ```bash
+# Sync: returns JSON with base64-encoded MP3
 curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
@@ -336,9 +337,19 @@ curl http://localhost:18080/v1/music/generations \
     "model": "minimax:music-2.6",
     "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing"
   }' | jq -r .data.audio | base64 -d > song.mp3
+
+# Stream: returns audio/mpeg directly, playable as it downloads
+curl -N http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "stream": true,
+    "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing"
+  }' > song.mp3
 ```
 
-Returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. For cover mode use `"model": "minimax:music-cover"` with `"audio_url"` or `"audio_base64"` + `"prompt"`.
+Sync returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. Streaming returns `Content-Type: audio/mpeg` with progressive MP3 frames. For cover mode use `"model": "minimax:music-cover"` with `"audio_url"` or `"audio_base64"` + `"prompt"`.
 
 #### Lyrics Generation
 

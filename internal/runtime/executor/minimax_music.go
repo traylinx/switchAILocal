@@ -5,15 +5,18 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -21,6 +24,17 @@ import (
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+)
+
+// MiniMax music generation legitimately needs ~20s server-side before the
+// first hex chunk arrives (verified 2026-04-18: TTFB 19.5s on a 45s song).
+// The global Streaming.FirstByteTimeout default of 15s would kill every
+// music request before it could start. Use these minimums instead so the
+// watchdog still fires on genuinely-dead upstreams but doesn't cancel the
+// happy path. Operators who set explicit higher values in config win.
+const (
+	minimaxMusicFirstByteMin = 60 * time.Second  // ~3× observed TTFB
+	minimaxMusicStallMin     = 120 * time.Second // inter-chunk gap observed up to ~8s; generous headroom
 )
 
 // MiniMax exposes three subscription capabilities under a weird topology:
@@ -219,6 +233,11 @@ func normaliseMinimaxMusicRequest(req switchailocalexecutor.Request) []byte {
 	if !gjson.GetBytes(payload, "model").Exists() || gjson.GetBytes(payload, "model").String() == "" {
 		payload, _ = sjson.SetBytes(payload, "model", "music-2.6")
 	}
+	// Sync path must not receive stream:true — upstream would return SSE
+	// and the caller's json.Unmarshal of a single response would fail.
+	// The streaming path injects stream:true itself; everyone else gets it
+	// stripped here.
+	payload, _ = sjson.DeleteBytes(payload, "stream")
 	return payload
 }
 
@@ -237,6 +256,206 @@ func normaliseMinimaxLyricsRequest(req switchailocalexecutor.Request) []byte {
 	// to keep the upstream logs clean.
 	payload, _ = sjson.DeleteBytes(payload, "model")
 	return payload
+}
+
+// executeMinimaxMusicStream is the streaming sibling of executeMinimaxMusic.
+// Wire-verified against the live API (2026-04-18): upstream returns a real
+// text/event-stream with ~20s TTFB, 6–8 progressive frames of hex-encoded
+// MP3 bytes (status=1), and a terminal frame (status=2) that re-duplicates
+// the FULL audio. This adapter unwraps the SSE, hex-decodes each progressive
+// chunk, and emits raw MP3 bytes on the returned channel so the handler can
+// stream them to the client as Content-Type: audio/mpeg. The duplicated
+// audio in the terminal frame is discarded; extra_info (duration, bitrate,
+// sample_rate) and trace_id are logged server-side.
+//
+// Failover-friendly behaviour:
+//   - base_resp.status_code != 0 observed BEFORE any bytes are sent → emit a
+//     typed statusErr so the conductor can advance to the next provider.
+//   - base_resp.status_code != 0 AFTER bytes have been sent → log + close
+//     (client already has a partial, possibly-playable MP3).
+//   - Upstream stall during streaming → streamStallWatchdog fires stallError
+//     with the correct phase (pre-first-byte is retryable, mid-stream is not).
+//
+// Why raw MP3 rather than re-wrapping in our own SSE: it matches the TTS
+// precedent (AudioSpeech returns audio/mpeg directly), every MP3 client
+// can decode concatenated frames natively (the first frame carries the
+// ID3v2 header), and it cuts client bandwidth by ~75% vs passing the hex
+// through (hex is 2× overhead, plus we drop the duplicated final frame).
+func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, baseURL, apiKey string) (<-chan switchailocalexecutor.StreamChunk, error) {
+	payload := normaliseMinimaxMusicRequest(req)
+	payload, _ = sjson.SetBytes(payload, "stream", true)
+
+	url := strings.TrimSuffix(baseURL, "/") + minimaxMusicEndpoint
+	log.Infof("MINIMAX music stream: posting to %s with body=%s", url, truncate(string(payload), 400))
+
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		streamCancel()
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	if auth != nil {
+		util.ApplyCustomHeadersFromAttrs(httpReq, auth.Attributes)
+	}
+
+	// Watchdog guards against an upstream that accepts the connection and
+	// then hangs silently. First-byte timeout covers connect+TTFB (~20s is
+	// normal for MiniMax), stall timeout covers inter-frame gaps. The
+	// global SSE defaults (15s / 60s) are tuned for chat token streaming
+	// and too aggressive for music — we bump to a music-appropriate floor.
+	firstByte := e.cfg.Performance.Streaming.FirstByteTimeout
+	if firstByte < minimaxMusicFirstByteMin {
+		firstByte = minimaxMusicFirstByteMin
+	}
+	stallT := e.cfg.Performance.Streaming.StallTimeout
+	if stallT < minimaxMusicStallMin {
+		stallT = minimaxMusicStallMin
+	}
+	var watchdog *streamStallWatchdog
+	if firstByte > 0 || stallT > 0 {
+		watchdog = newStreamStallWatchdog(streamCancel, firstByte, stallT)
+		watchdog.start()
+	}
+
+	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		if watchdog != nil {
+			watchdog.stop()
+		}
+		streamCancel()
+		return nil, err
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		if watchdog != nil {
+			watchdog.stop()
+		}
+		b, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		streamCancel()
+		return nil, statusErr{code: httpResp.StatusCode, msg: truncate(string(b), 300)}
+	}
+
+	out := make(chan switchailocalexecutor.StreamChunk)
+	go func() {
+		defer close(out)
+		defer streamCancel()
+		defer func() {
+			if watchdog != nil {
+				watchdog.stop()
+			}
+			if cerr := httpResp.Body.Close(); cerr != nil {
+				log.Errorf("minimax-music-stream: close response body: %v", cerr)
+			}
+		}()
+
+		// bufio.Reader.ReadBytes handles lines of arbitrary length — SSE
+		// frames from MiniMax can exceed 2.9MB (the terminal frame carries a
+		// duplicate of the full song). bufio.Scanner would hit its 1MB cap.
+		reader := bufio.NewReader(httpResp.Body)
+		sentFirstByte := false
+		for {
+			line, err := reader.ReadBytes('\n')
+			if len(line) > 0 && watchdog != nil {
+				watchdog.onChunk()
+			}
+			if len(line) > 0 {
+				// SSE frames are `data: <json>\n\n`. Strip trailing \n and
+				// leading `data: ` prefix; skip heartbeats and blank lines.
+				line = bytes.TrimRight(line, "\r\n")
+				if len(line) > 0 && bytes.HasPrefix(line, []byte("data:")) {
+					jsonPart := bytes.TrimSpace(line[len("data:"):])
+					if emitErr, gotBytes := e.handleMinimaxMusicFrame(jsonPart, out, sentFirstByte); emitErr != nil {
+						out <- switchailocalexecutor.StreamChunk{Err: emitErr}
+						return
+					} else if gotBytes {
+						sentFirstByte = true
+					}
+				}
+			}
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				if watchdog != nil && watchdog.firedDueToStall() {
+					phase := stallPhaseMidStream
+					timeout := stallT
+					if watchdog.preFirstChunk() {
+						phase = stallPhasePreFirstByte
+						if firstByte > 0 {
+							timeout = firstByte
+						}
+					}
+					out <- switchailocalexecutor.StreamChunk{Err: &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}}
+					return
+				}
+				out <- switchailocalexecutor.StreamChunk{Err: err}
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// handleMinimaxMusicFrame parses a single `data:`-stripped JSON payload
+// from the MiniMax music SSE stream and either emits raw MP3 bytes on the
+// out channel or returns an error for the caller to propagate.
+//
+// Returns (err, emittedBytes). err != nil aborts the stream; emittedBytes
+// tells the caller whether we crossed the pre-first-byte boundary (used to
+// decide if an upstream application error is still retryable).
+func (e *OpenAICompatExecutor) handleMinimaxMusicFrame(jsonPart []byte, out chan<- switchailocalexecutor.StreamChunk, alreadySentBytes bool) (error, bool) {
+	var frame minimaxMusicResponse
+	if err := json.Unmarshal(jsonPart, &frame); err != nil {
+		// Malformed frames are logged and skipped rather than killing the
+		// stream — a single bad frame shouldn't abort a song in progress.
+		log.Warnf("minimax-music-stream: skip unparseable frame: %v (snippet=%s)", err, truncate(string(jsonPart), 120))
+		return nil, false
+	}
+	if frame.BaseResp.StatusCode != 0 {
+		httpCode, _ := minimaxStatusToHTTP(frame.BaseResp.StatusCode)
+		err := statusErr{
+			code: httpCode,
+			msg:  fmt.Sprintf("minimax music stream: code=%d msg=%q trace=%s", frame.BaseResp.StatusCode, frame.BaseResp.StatusMsg, frame.TraceID),
+		}
+		if alreadySentBytes {
+			// Client already has bytes — no point surfacing as retryable.
+			// Log the upstream error so it appears in audit trails; the
+			// stream closes cleanly on the next read.
+			log.Warnf("minimax-music-stream: upstream error mid-stream: %v", err)
+			return err, false
+		}
+		return err, false
+	}
+	if frame.Data == nil || frame.Data.Audio == "" {
+		// Heartbeat / metadata-only frame. No audio to emit.
+		return nil, false
+	}
+	// status=2 is the terminal frame. Its audio field duplicates the full
+	// song (wasteful) while extra_info carries real metadata. Drop the audio,
+	// log the metadata for observability.
+	if frame.Data.Status == 2 {
+		if len(frame.ExtraInfo) > 0 {
+			log.Infof("MINIMAX music stream: complete trace=%s extra_info=%s", frame.TraceID, truncate(string(frame.ExtraInfo), 200))
+		}
+		return nil, false
+	}
+	audioBytes, err := hex.DecodeString(frame.Data.Audio)
+	if err != nil {
+		log.Warnf("minimax-music-stream: hex decode failed, skipping frame: %v", err)
+		return nil, false
+	}
+	if len(audioBytes) == 0 {
+		return nil, false
+	}
+	out <- switchailocalexecutor.StreamChunk{Payload: audioBytes}
+	return nil, true
 }
 
 // postMinimaxJSON is the shared POST helper for music + lyrics + any future

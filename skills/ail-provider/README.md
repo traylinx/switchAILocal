@@ -113,7 +113,7 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 | `POST /v1/images/generations` | Image generation | `minimax:image-01` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
 | `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |
 | `POST /v1/audio/speech` | Text → speech (TTS) | `minimax:speech-02-hd` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
-| `POST /v1/music/generations` | Text → music / style cover | `minimax:music-2.6` | Generate real songs from lyrics (text-to-music) or covers (`model: "minimax:music-cover"` + `audio_url`). Response: `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`. 30–90s sync. 100 songs/day. |
+| `POST /v1/music/generations` | Text → music / style cover | `minimax:music-2.6` | Generate real songs from lyrics (text-to-music) or covers (`model: "minimax:music-cover"` + `audio_url`). Sync (default): returns `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`, 30–90s. Streaming (`stream: true`): returns raw `audio/mpeg`, TTFB ~20s. 100 songs/day. |
 | `POST /v1/music/lyrics` | Song lyrics generator | (same credential) | Fast (~2s). Modes: `write_full_song` (default) or `edit`. Returns `{song_title, style_tags, lyrics}` with `[Verse]`/`[Chorus]` structure. 100/day. |
 
 ### Chat + web search (agent recipe)
@@ -164,14 +164,20 @@ LYRICS=$(curl -sS http://localhost:18080/v1/music/lyrics \
   -d '{"mode":"write_full_song","prompt":"upbeat anthem about shipping code"}' \
   | jq -r .lyrics)
 
-# Step 2 — synthesize music (~30-90s)
+# Step 2 — synthesize music (~30-90s sync, or use stream: true for ~20s TTFB)
 curl -sS http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
   -d "$(jq -n --arg l "$LYRICS" '{"model":"minimax:music-2.6","lyrics":$l}')" \
   | jq -r .data.audio | base64 -d > song.mp3
+
+# Or stream raw MP3 as it's generated (Content-Type: audio/mpeg):
+curl -N -sS http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg l "$LYRICS" '{"model":"minimax:music-2.6","stream":true,"lyrics":$l}')" \
+  > song.mp3
 ```
 
-**Errors (MiniMax internal → HTTP):** 1002 rate_limit → 429 (failover advances), 2061 plan_not_support → 402 (failover advances), 2013 invalid_params → 400 (aborts).
+**Errors (MiniMax internal → HTTP):** 1002 rate_limit → 429 (failover advances), 2061 plan_not_support → 402 (failover advances), 2013 invalid_params → 400 (aborts). Streaming mode: pre-first-byte errors return the proper status code; errors after first byte close the stream cleanly — client keeps the partial (still-playable) MP3.
 
 ---
 

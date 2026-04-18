@@ -176,11 +176,12 @@ curl http://localhost:18080/v1/audio/speech \
 POST /v1/music/generations
 ```
 
-Generate music from lyrics using MiniMax `music-2.6` (text-to-music) or `music-cover` (reference-audio style transfer). Synthesis runs synchronously and typically takes 30–90 seconds for a 1–2 minute song. The adapter hex-decodes the upstream audio response and returns base64-encoded MP3 bytes with lifted metadata.
+Generate music from lyrics using MiniMax `music-2.6` (text-to-music) or `music-cover` (reference-audio style transfer). Synthesis runs synchronously by default and typically takes 30–90 seconds for a 1–2 minute song; the sync response hex-decodes the upstream audio and returns base64-encoded MP3 bytes with lifted metadata. Pass `stream: true` to get raw MP3 bytes streamed progressively (see **Streaming mode** below).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `model` | string | No | `minimax:music-2.6` (default via `intelligence.matrix.music_generation`) or `minimax:music-cover` |
+| `stream` | bool | No | `true` streams raw `audio/mpeg` bytes as they arrive (~20s TTFB vs ~60s sync); default `false` returns JSON with base64 audio |
 | `lyrics` | string | Yes for `music-2.6` | Lyrics with optional structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`, `[Inst]` |
 | `prompt` | string | Yes for `music-cover` (10–300 chars) | Style description for the cover |
 | `audio_url` OR `audio_base64` | string | Yes for `music-cover` | Reference audio: 6s–6min, ≤50MB, mp3/wav/flac. Mutually exclusive. |
@@ -227,6 +228,33 @@ curl http://localhost:18080/v1/music/generations \
 ```
 
 **Plan limits:** MiniMax Plus plan = 100 songs/day each for `music-2.6` and `music-cover`. Max song length 6 minutes. Errors follow the same mapping as TTS — `2013` (invalid_params) aborts, `1002` (rate_limit) and `2061` (plan_not_support) are advance-eligible.
+
+**Streaming mode (`stream: true`):**
+
+Instead of JSON with a base64 audio blob, the server returns `Content-Type: audio/mpeg` with raw MP3 bytes streamed as they arrive from upstream. Measured wins vs sync mode (verified 2026-04-18 against live MiniMax):
+
+- **TTFB ≈ 20s** vs 30–90s sync — client can start playback before MiniMax finishes generating
+- **~50% less wire bandwidth** — upstream's SSE stream includes a terminal frame that duplicates the full song as hex; the adapter discards it and only forwards progressive chunks
+- **Natively playable** — the first chunk carries the ID3v2 header, so concatenated bytes form a valid MP3 that any audio element can decode while downloading
+
+```bash
+curl -N http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax:music-2.6",
+    "stream": true,
+    "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
+  }' > song.mp3
+```
+
+```html
+<!-- Browser: play while downloading -->
+<audio src="/v1/music/generations" controls></audio>
+<!-- send the request via fetch() with POST body then feed response.body to MediaSource -->
+```
+
+Pre-first-byte errors (HTTP 5xx, 429, `2061` plan-not-support, upstream stall within 60s) return a JSON error with the appropriate status code. Errors that arrive AFTER bytes have been flushed close the stream cleanly — the client keeps whatever MP3 frames it received, which are still playable.
 
 ### Lyrics Generation
 
