@@ -22,6 +22,48 @@ type PerformanceConfig struct {
 
 	// LoadShedding configures graceful degradation under load.
 	LoadShedding LoadSheddingConfig `yaml:"load-shedding" json:"load-shedding"`
+
+	// ProviderTimeouts configures per-provider request timeouts. Keys are provider
+	// names (e.g. "openai", "anthropic", "gemini", "ollama") and the special key
+	// "default" sets the fallback for providers not listed. Timeouts apply to the
+	// entire request — including connection, headers, and body read.
+	ProviderTimeouts ProviderTimeoutsConfig `yaml:"provider-timeouts" json:"provider-timeouts"`
+
+	// Streaming configures server-sent-event stream health.
+	Streaming StreamHealthConfig `yaml:"streaming" json:"streaming"`
+}
+
+// ProviderTimeoutsConfig holds per-provider and default request timeouts.
+// Use Resolve(provider) to look up the effective timeout for a given provider name.
+type ProviderTimeoutsConfig struct {
+	// Default is the fallback timeout used when a provider has no explicit entry.
+	Default time.Duration `yaml:"default" json:"default"`
+
+	// PerProvider maps provider-name → timeout. Case-sensitive, lowercase preferred.
+	PerProvider map[string]time.Duration `yaml:"per-provider" json:"per-provider"`
+}
+
+// Resolve returns the effective timeout for a given provider. Unknown providers
+// fall back to Default. If both are zero, returns 0 (caller must interpret as
+// "no timeout configured" and apply its own hard default).
+func (p ProviderTimeoutsConfig) Resolve(provider string) time.Duration {
+	if t, ok := p.PerProvider[provider]; ok && t > 0 {
+		return t
+	}
+	return p.Default
+}
+
+// StreamHealthConfig controls server-sent-event stream health and stall detection.
+type StreamHealthConfig struct {
+	// FirstByteTimeout is the max time to wait for the first byte from upstream
+	// before classifying the request as stalled. Pre-first-byte stalls are
+	// transparently recoverable (nothing has been flushed to the client yet).
+	FirstByteTimeout time.Duration `yaml:"first-byte-timeout" json:"first-byte-timeout"`
+
+	// StallTimeout is the max gap between SSE chunks before we classify the stream
+	// as stalled and cancel it. Post-first-chunk stalls CANNOT be transparently
+	// recovered — we terminate with an SSE error event.
+	StallTimeout time.Duration `yaml:"stall-timeout" json:"stall-timeout"`
 }
 
 // RateLimiterConfig configures the token-bucket rate limiter.
@@ -100,5 +142,17 @@ func (c *PerformanceConfig) SanitizePerformance() {
 	}
 	if c.LoadShedding.RetryAfterSeconds == 0 {
 		c.LoadShedding.RetryAfterSeconds = 5
+	}
+	if c.ProviderTimeouts.Default == 0 {
+		c.ProviderTimeouts.Default = 120 * time.Second
+	}
+	if c.ProviderTimeouts.PerProvider == nil {
+		c.ProviderTimeouts.PerProvider = map[string]time.Duration{}
+	}
+	if c.Streaming.FirstByteTimeout == 0 {
+		c.Streaming.FirstByteTimeout = 15 * time.Second
+	}
+	if c.Streaming.StallTimeout == 0 {
+		c.Streaming.StallTimeout = 60 * time.Second
 	}
 }

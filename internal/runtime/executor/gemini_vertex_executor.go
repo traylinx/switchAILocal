@@ -188,6 +188,9 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
@@ -289,6 +292,9 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *swit
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
@@ -385,6 +391,8 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		AuthValue: authValue,
 	})
 
+	// TODO(failover P0-streaming): use http.Transport.ResponseHeaderTimeout for
+	// first-byte; mid-stream stalls are handled by the SSE watchdog (separate task).
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
@@ -503,6 +511,8 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 		AuthValue: authValue,
 	})
 
+	// TODO(failover P0-streaming): use http.Transport.ResponseHeaderTimeout for
+	// first-byte; mid-stream stalls are handled by the SSE watchdog (separate task).
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
@@ -613,6 +623,9 @@ func (e *GeminiVertexExecutor) countTokensWithServiceAccount(ctx context.Context
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
@@ -702,6 +715,9 @@ func (e *GeminiVertexExecutor) countTokensWithAPIKey(ctx context.Context, auth *
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {

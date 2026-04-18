@@ -138,6 +138,86 @@ func TestResolver_IntentFilter(t *testing.T) {
 	}
 }
 
+func TestResolver_DisabledProviders(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.DisabledProviders = []string{"anthropic"}
+	resolver := NewAutoResolver(cfg, t.TempDir())
+
+	req := &RoutingRequest{
+		Content: "Hello",
+		AvailableModels: []CandidateInput{
+			{Model: "anthropic:claude-3-5-sonnet", Provider: "anthropic", Available: true, QuotaHealth: 1.0, Latency: 50 * time.Millisecond, SuccessRate: 0.99},
+			{Model: "gemini:gemini-2.5-pro", Provider: "gemini", Available: true, QuotaHealth: 0.8, Latency: 200 * time.Millisecond, SuccessRate: 0.9},
+			{Model: "ollama:llama3:latest", Provider: "ollama", Available: true, QuotaHealth: 0.7, Latency: 500 * time.Millisecond, SuccessRate: 0.85},
+		},
+	}
+
+	decision, err := resolver.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Anthropic scored highest (1.0 quota, 50ms latency, 0.99 success) but is blacklisted.
+	// Winner must be gemini or ollama, never anthropic.
+	if decision.SelectedModel == "anthropic:claude-3-5-sonnet" {
+		t.Errorf("Disabled provider anthropic was selected: %s", decision.SelectedModel)
+	}
+	for _, fb := range decision.FallbackChain {
+		if fb.Provider == "anthropic" {
+			t.Errorf("Disabled provider anthropic appeared in fallback chain: %+v", fb)
+		}
+	}
+}
+
+func TestResolver_DisabledProviders_AllBlocked(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.DisabledProviders = []string{"anthropic", "gemini"}
+	resolver := NewAutoResolver(cfg, t.TempDir())
+
+	req := &RoutingRequest{
+		Content: "Hello",
+		AvailableModels: []CandidateInput{
+			{Model: "anthropic:claude-3-5-sonnet", Provider: "anthropic", Available: true, QuotaHealth: 1.0, SuccessRate: 0.99},
+			{Model: "gemini:gemini-2.5-pro", Provider: "gemini", Available: true, QuotaHealth: 0.9, SuccessRate: 0.95},
+		},
+	}
+
+	// Every candidate is blacklisted — must fail, never silently bypass.
+	_, err := resolver.Resolve(context.Background(), req)
+	if err != ErrNoAvailableProviders {
+		t.Errorf("Expected ErrNoAvailableProviders when all providers disabled, got %v", err)
+	}
+}
+
+func TestFilterDisabledProviders(t *testing.T) {
+	candidates := []CandidateInput{
+		{Model: "a:m", Provider: "a"},
+		{Model: "b:m", Provider: "b"},
+		{Model: "c:m", Provider: "c"},
+	}
+
+	// Empty disabled list → unchanged
+	if got := filterDisabledProviders(candidates, nil); len(got) != 3 {
+		t.Errorf("nil disabled list should return all 3 candidates, got %d", len(got))
+	}
+
+	// Block one
+	got := filterDisabledProviders(candidates, []string{"b"})
+	if len(got) != 2 {
+		t.Fatalf("blocking 'b' should leave 2 candidates, got %d", len(got))
+	}
+	for _, c := range got {
+		if c.Provider == "b" {
+			t.Errorf("provider 'b' was not filtered out")
+		}
+	}
+
+	// Block all
+	if got := filterDisabledProviders(candidates, []string{"a", "b", "c"}); len(got) != 0 {
+		t.Errorf("blocking all should leave 0 candidates, got %d", len(got))
+	}
+}
+
 func TestParseAutoModelHint(t *testing.T) {
 	tests := []struct {
 		input    string

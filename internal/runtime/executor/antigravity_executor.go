@@ -110,6 +110,12 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *switchailocalau
 	translated = applyPayloadConfigWithRoot(e.cfg, req.Model, "antigravity", "request", translated)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
+	// Per-provider timeout caps total time across all baseURL fallbacks.
+	if timeout := e.cfg.Performance.ProviderTimeouts.Resolve(e.Identifier()); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 
 	var lastStatus int
@@ -205,6 +211,14 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 	translated = applyPayloadConfigWithRoot(e.cfg, req.Model, "antigravity", "request", translated)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
+	// Per-provider timeout caps total time across all baseURL fallbacks. Safe for
+	// executeClaudeNonStream because we aggregate the upstream stream into a
+	// non-streaming response before returning.
+	if timeout := e.cfg.Performance.ProviderTimeouts.Resolve(e.Identifier()); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 
 	var lastStatus int
@@ -538,6 +552,8 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *switchail
 	translated = applyPayloadConfigWithRoot(e.cfg, req.Model, "antigravity", "request", translated)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
+	// TODO(failover P0-streaming): use http.Transport.ResponseHeaderTimeout for
+	// first-byte; mid-stream stalls are handled by the SSE watchdog (separate task).
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 
 	var lastStatus int
@@ -685,6 +701,12 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *switchailoc
 	respCtx := context.WithValue(ctx, altKey, opts.Alt)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
+	// Per-provider timeout caps total time across all baseURL fallbacks.
+	if timeout := e.cfg.Performance.ProviderTimeouts.Resolve(e.Identifier()); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 
 	var authID, authLabel, authType, authValue string

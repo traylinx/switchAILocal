@@ -110,6 +110,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *switchailocalauth.Au
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -221,6 +224,8 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 		AuthValue: authValue,
 	})
 
+	// TODO(failover P0-streaming): use http.Transport.ResponseHeaderTimeout for
+	// first-byte; mid-stream stalls are handled by the SSE watchdog (separate task).
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -362,6 +367,9 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *switchailocalaut
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {

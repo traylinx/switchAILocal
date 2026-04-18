@@ -2,6 +2,7 @@ package autoroute
 
 import (
 	"context"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -9,6 +10,49 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/observability"
 )
+
+// Cooldown backoff constants. Replaces the prior hardcoded 5-minute cooldown.
+// Sequence (jitter aside): 5s, 10s, 20s, 40s, 80s, 160s, 300s, 300s, ...
+const (
+	cooldownBackoffBase    = 5 * time.Second
+	cooldownBackoffMax     = 5 * time.Minute
+	cooldownJitterFraction = 0.10 // ±10%
+)
+
+// computeCooldownBackoff returns min(base * 2^attempts, max) +/- jitter.
+// attempts is 0-indexed: attempts=0 → base; attempts=N → base * 2^N (capped).
+//
+// Jitter is symmetric around the deterministic value to avoid thundering
+// herd when many requests trip the breaker on the same provider in lockstep
+// (common under widespread upstream incidents). Jitter is applied AFTER
+// the cap so the variance budget is consistent at the ceiling.
+func computeCooldownBackoff(attempts int) time.Duration {
+	if attempts < 0 {
+		attempts = 0
+	}
+	// Compute base * 2^attempts in float64 to avoid integer overflow on
+	// pathological attempt counts (e.g. 64 → wraps).
+	mult := float64(int64(1) << minInt(attempts, 30))
+	dur := time.Duration(float64(cooldownBackoffBase) * mult)
+	if dur <= 0 || dur > cooldownBackoffMax {
+		dur = cooldownBackoffMax
+	}
+	// Jitter ±cooldownJitterFraction. rand.Float64 ∈ [0, 1).
+	jitterRange := float64(dur) * cooldownJitterFraction
+	jitter := (rand.Float64()*2 - 1) * jitterRange
+	out := time.Duration(float64(dur) + jitter)
+	if out < 0 {
+		out = 0
+	}
+	return out
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // ProviderHealthState tracks the live latency, availability, and quota health
 // of a specific provider.
@@ -21,6 +65,10 @@ type ProviderHealthState struct {
 	ConsecutiveFail int
 	CoolingDown     bool
 	CooldownUntil   time.Time
+	// CooldownAttempts counts how many times this provider has tripped the
+	// circuit. Used to compute exponential backoff for the next cooldown.
+	// Resets to 0 after a successful request that follows a cooldown.
+	CooldownAttempts int
 }
 
 // ProviderHealthMonitor runs passively and actively to maintain provider health.
@@ -87,7 +135,11 @@ func (m *ProviderHealthMonitor) loop(ctx context.Context) {
 func (m *ProviderHealthMonitor) activeProbeCycle() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.activeProbeCycleLocked()
+}
 
+// activeProbeCycleLocked is the lock-held implementation. Caller must hold m.mu.
+func (m *ProviderHealthMonitor) activeProbeCycleLocked() {
 	// In Phase E we would query via DiscoveryService or run lightweight pings.
 	// For now, we evaluate cooldowns and reset state if cooled down.
 	now := time.Now()
@@ -157,6 +209,9 @@ func (m *ProviderHealthMonitor) RecordRequestOutcome(provider string, latency ti
 		if state.Status != "healthy" && !state.CoolingDown {
 			log.WithField("provider", provider).Info("Provider recovered, marking healthy")
 			state.Status = "healthy"
+			// Reset backoff after a confirmed recovery so the next outage
+			// starts fresh from base, not from the prior tier.
+			state.CooldownAttempts = 0
 		}
 	} else {
 		state.ConsecutiveFail++
@@ -173,10 +228,13 @@ func (m *ProviderHealthMonitor) RecordRequestOutcome(provider string, latency ti
 		if state.ConsecutiveFail >= 10 && !state.CoolingDown {
 			state.Status = "unavailable"
 			state.CoolingDown = true
-			state.CooldownUntil = time.Now().Add(5 * time.Minute)
+			backoff := computeCooldownBackoff(state.CooldownAttempts)
+			state.CooldownUntil = time.Now().Add(backoff)
+			state.CooldownAttempts++
 			log.WithFields(log.Fields{
-				"provider": provider,
-				"duration": "5m",
+				"provider":          provider,
+				"duration":          backoff.String(),
+				"cooldown_attempts": state.CooldownAttempts,
 			}).Warn("Provider circuit breaker tripped, entering cooldown")
 		} else if state.ConsecutiveFail >= 3 && state.Status == "healthy" {
 			state.Status = "degraded"

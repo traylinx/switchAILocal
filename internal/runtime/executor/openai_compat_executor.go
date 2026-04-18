@@ -181,6 +181,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		AuthValue: authValue,
 	})
 
+	// Per-provider timeout (non-streaming only).
+	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+	defer cancel()
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -286,14 +289,36 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 		AuthValue: authValue,
 	})
 
+	// SSE stall watchdog: arms a per-stream timer that cancels the request if
+	// no upstream activity occurs within FirstByteTimeout (pre-first-chunk) or
+	// StallTimeout (post-first-chunk). Cancellation closes the response body,
+	// causing scanner.Scan() to return — we then emit a *stallError on the
+	// chunk channel for the P1 retry layer to classify.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	httpReq = httpReq.WithContext(streamCtx)
+	firstByte := e.cfg.Performance.Streaming.FirstByteTimeout
+	stallT := e.cfg.Performance.Streaming.StallTimeout
+	var watchdog *streamStallWatchdog
+	if firstByte > 0 || stallT > 0 {
+		watchdog = newStreamStallWatchdog(streamCancel, firstByte, stallT)
+		watchdog.start()
+	}
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
+		if watchdog != nil {
+			watchdog.stop()
+		}
+		streamCancel()
 		recordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		if watchdog != nil {
+			watchdog.stop()
+		}
+		streamCancel()
 		b, _ := io.ReadAll(httpResp.Body)
 		appendAPIResponseChunk(ctx, e.cfg, b)
 		log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
@@ -307,7 +332,11 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	stream = out
 	go func() {
 		defer close(out)
+		defer streamCancel()
 		defer func() {
+			if watchdog != nil {
+				watchdog.stop()
+			}
 			FinalizeAPIResponse(ctx, e.cfg)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("openai compat executor: close response body error: %v", errClose)
@@ -318,6 +347,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()
+			if watchdog != nil && len(line) > 0 {
+				watchdog.onChunk()
+			}
 			appendAPIResponseChunk(ctx, e.cfg, line)
 			if detail, ok := parseOpenAIStreamUsage(line); ok {
 				reporter.publish(ctx, detail)
@@ -342,6 +374,20 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
+			// If the watchdog fired, reclassify the cancellation as a typed
+			// stall error so the P1 retry layer can distinguish it from a
+			// client disconnect or a generic transport error.
+			if watchdog != nil && watchdog.firedDueToStall() {
+				phase := stallPhaseMidStream
+				timeout := stallT
+				if watchdog.preFirstChunk() {
+					phase = stallPhasePreFirstByte
+					if firstByte > 0 {
+						timeout = firstByte
+					}
+				}
+				errScan = &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}
+			}
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
 			out <- switchailocalexecutor.StreamChunk{Err: errScan}

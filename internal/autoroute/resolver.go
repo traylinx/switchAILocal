@@ -159,6 +159,11 @@ func (r *AutoResolver) Resolve(ctx context.Context, req *RoutingRequest) (*Routi
 		candidates = filterByIntent(resolvedIntent, candidates, r.config.IntentMatrix)
 	}
 
+	// Step 3b: Filter out disabled providers (hard blacklist — overrides scoring)
+	if len(r.config.DisabledProviders) > 0 {
+		candidates = filterDisabledProviders(candidates, r.config.DisabledProviders)
+	}
+
 	// Step 3: Check for timeout before scoring
 	select {
 	case <-ctx.Done():
@@ -236,6 +241,28 @@ func filterByIntent(intent string, candidates []CandidateInput, matrix map[strin
 		return candidates // No matches → fall back to all
 	}
 
+	return filtered
+}
+
+// filterDisabledProviders removes candidates whose Provider is in the disabled list.
+// Unlike filterByIntent, this NEVER falls back: if every candidate is disabled, the
+// result is empty and the resolver will return ErrNoAvailableProviders. That is the
+// intended behaviour — a hard blacklist must not be silently bypassed.
+func filterDisabledProviders(candidates []CandidateInput, disabled []string) []CandidateInput {
+	if len(disabled) == 0 {
+		return candidates
+	}
+	blocked := make(map[string]struct{}, len(disabled))
+	for _, p := range disabled {
+		blocked[p] = struct{}{}
+	}
+	filtered := make([]CandidateInput, 0, len(candidates))
+	for _, c := range candidates {
+		if _, isBlocked := blocked[c.Provider]; isBlocked {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
 	return filtered
 }
 

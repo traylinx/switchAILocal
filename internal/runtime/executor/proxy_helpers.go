@@ -54,6 +54,26 @@ var defaultHTTPClient = &http.Client{
 // supporting per-auth and per-config proxy overrides.
 var proxyClientCache sync.Map // map[string]*http.Client
 
+// applyProviderTimeout wraps httpReq's context with a per-provider deadline
+// resolved from cfg.Performance.ProviderTimeouts. The returned cancel func must
+// be deferred by the caller. Safe to call with nil cfg; returns the request
+// unchanged and a no-op cancel when no timeout applies.
+//
+// IMPORTANT: only use this on NON-streaming requests. For SSE streams, a
+// context deadline would terminate healthy long-running bodies; use
+// http.Transport.ResponseHeaderTimeout + the SSE stall watchdog instead.
+func applyProviderTimeout(ctx context.Context, cfg *config.Config, provider string, req *http.Request) (*http.Request, context.CancelFunc) {
+	if cfg == nil || req == nil {
+		return req, func() {}
+	}
+	timeout := cfg.Performance.ProviderTimeouts.Resolve(provider)
+	if timeout <= 0 {
+		return req, func() {}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	return req.WithContext(reqCtx), cancel
+}
+
 // newProxyAwareHTTPClient returns an HTTP client with proper proxy configuration priority:
 // 1. Use auth.ProxyURL if configured (highest priority)
 // 2. Use cfg.ProxyURL if auth proxy is not configured

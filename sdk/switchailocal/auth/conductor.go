@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/config"
+	"github.com/traylinx/switchAILocal/internal/failover"
 	"github.com/traylinx/switchAILocal/internal/logging"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/util"
@@ -914,12 +915,64 @@ func (m *Manager) executeProvidersOnce(ctx context.Context, providers []string, 
 		return switchailocalexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
 	var lastErr error
-	for _, provider := range providers {
+	var lastClass failover.ErrorClass
+	requestID := requestIDFromContext(ctx)
+	for idx, provider := range providers {
+		start := time.Now()
 		resp, errExec := fn(ctx, provider)
 		if errExec == nil {
+			if idx > 0 {
+				log.WithFields(log.Fields{
+					"event":            "failover_recovered",
+					"request_id":       requestID,
+					"recovered_on":     provider,
+					"attempts":         idx + 1,
+					"prev_error_class": lastClass.String(),
+				}).Info("provider failover recovered")
+			}
 			return resp, nil
 		}
-		lastErr = errExec
+		class := failover.Classify(ctx, errExec, nil)
+		latency := time.Since(start)
+		// Wrap once at the boundary so callers can introspect.
+		fe := &failover.FailoverError{
+			Class:    class,
+			Provider: provider,
+			HTTPCode: statusCodeFromError(errExec),
+			Wrapped:  errExec,
+		}
+		lastErr = fe
+		lastClass = class
+
+		// Terminal classes short-circuit the chain.
+		if !class.ShouldAdvance() {
+			log.WithFields(log.Fields{
+				"event":       "failover_abort",
+				"request_id":  requestID,
+				"provider":    provider,
+				"error_class": class.String(),
+				"http_status": fe.HTTPCode,
+				"latency_ms":  latency.Milliseconds(),
+			}).Warn("provider failover aborted (terminal error class)")
+			return switchailocalexecutor.Response{}, fe
+		}
+
+		// Structured advance log (P4).
+		nextProvider := ""
+		if idx+1 < len(providers) {
+			nextProvider = providers[idx+1]
+		}
+		log.WithFields(log.Fields{
+			"event":            "failover",
+			"request_id":       requestID,
+			"attempt":          idx + 1,
+			"primary_provider": provider,
+			"next_provider":    nextProvider,
+			"error_class":      class.String(),
+			"http_status":      fe.HTTPCode,
+			"error_snippet":    truncateForLog(errExec.Error(), 200),
+			"latency_ms":       latency.Milliseconds(),
+		}).Warn("provider failover")
 	}
 	if lastErr != nil {
 		return switchailocalexecutor.Response{}, lastErr
@@ -927,17 +980,101 @@ func (m *Manager) executeProvidersOnce(ctx context.Context, providers []string, 
 	return switchailocalexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no active credentials found for the requested providers. Please ensure you are logged in or have configured the providers in config.yaml."}
 }
 
+// requestIDFromContext extracts a request ID for failover log correlation.
+// Returns empty string when no ID is available — caller should still log,
+// the missing field is preferable to silence.
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(requestIDContextKey{}); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	if v := ctx.Value("request_id"); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// requestIDContextKey is the typed context key for request IDs. Defined here
+// to avoid string-key collisions.
+type requestIDContextKey struct{}
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 func (m *Manager) executeStreamProvidersOnce(ctx context.Context, providers []string, fn func(context.Context, string) (<-chan switchailocalexecutor.StreamChunk, error)) (<-chan switchailocalexecutor.StreamChunk, error) {
 	if len(providers) == 0 {
 		return nil, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
+	// NOTE on streaming failover: this loop covers ONLY the pre-stream
+	// failures (handshake, auth, immediate 4xx/5xx returned before any
+	// byte flows). Once fn returns a chunk channel, bytes may already be
+	// in flight; the channel is handed to the caller as-is. Mid-stream
+	// failover (post-first-byte) is unrecoverable per validator consensus
+	// (sprint doc §"stall_mid_stream") and remains future work (P5).
 	var lastErr error
-	for _, provider := range providers {
+	requestID := requestIDFromContext(ctx)
+	for idx, provider := range providers {
+		start := time.Now()
 		chunks, errExec := fn(ctx, provider)
 		if errExec == nil {
+			if idx > 0 {
+				log.WithFields(log.Fields{
+					"event":        "failover_recovered",
+					"request_id":   requestID,
+					"recovered_on": provider,
+					"attempts":     idx + 1,
+					"stream":       true,
+				}).Info("stream provider failover recovered")
+			}
 			return chunks, nil
 		}
-		lastErr = errExec
+		class := failover.Classify(ctx, errExec, nil)
+		latency := time.Since(start)
+		fe := &failover.FailoverError{
+			Class:    class,
+			Provider: provider,
+			HTTPCode: statusCodeFromError(errExec),
+			Wrapped:  errExec,
+		}
+		lastErr = fe
+		if !class.ShouldAdvance() {
+			log.WithFields(log.Fields{
+				"event":       "failover_abort",
+				"request_id":  requestID,
+				"provider":    provider,
+				"error_class": class.String(),
+				"stream":      true,
+				"http_status": fe.HTTPCode,
+				"latency_ms":  latency.Milliseconds(),
+			}).Warn("stream provider failover aborted (terminal error class)")
+			return nil, fe
+		}
+		nextProvider := ""
+		if idx+1 < len(providers) {
+			nextProvider = providers[idx+1]
+		}
+		log.WithFields(log.Fields{
+			"event":            "failover",
+			"request_id":       requestID,
+			"attempt":          idx + 1,
+			"primary_provider": provider,
+			"next_provider":    nextProvider,
+			"error_class":      class.String(),
+			"http_status":      fe.HTTPCode,
+			"stream":           true,
+			"error_snippet":    truncateForLog(errExec.Error(), 200),
+			"latency_ms":       latency.Milliseconds(),
+		}).Warn("stream provider failover")
 	}
 	if lastErr != nil {
 		return nil, lastErr
