@@ -29,11 +29,15 @@ jobs:
             goarch: arm64
             runner: ubuntu-24.04-arm
           - goos: darwin
-            goarch: amd64
-            runner: macos-13
-          - goos: darwin
             goarch: arm64
             runner: macos-14
+          # darwin/amd64 intentionally omitted.
+          # GitHub's macos-13 Intel runners are heavily queue-limited — v0.1.0
+          # and v0.2.0 both had the darwin/amd64 matrix entry stuck "queued" for
+          # 30+ minutes, blocking the whole release. Intel Mac users build from
+          # source with: git clone && CGO_ENABLED=1 go build ./cmd/server/
+          # (onnxruntime for darwin/amd64 must be installed separately; see
+          # scripts/download-embedding-model.sh for the ARM equivalent).
     steps:
       - uses: actions/checkout@v4
         with:
