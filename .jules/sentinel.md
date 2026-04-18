@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-04-18 - Prevent SSRF and Command Injection in URL Handler
+**Vulnerability:** The `OpenURL` function passed unvalidated user input directly to OS-level exec.Command calls, allowing malicious schemes (like `file://`) or command flags to be executed.
+**Learning:** Relying purely on the assumption that a URL is well-formed is insufficient. OS-level URL handlers must restrict allowed schemes strictly to web protocols.
+**Prevention:** Explicitly validate that URLs begin with `http://` or `https://` before executing them with browser handlers.
