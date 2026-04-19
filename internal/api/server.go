@@ -49,6 +49,7 @@ import (
 	"github.com/traylinx/switchAILocal/sdk/api/handlers"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers/claude"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers/gemini"
+	"github.com/traylinx/switchAILocal/sdk/api/handlers/notifications"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers/openai"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	"gopkg.in/yaml.v3"
@@ -601,6 +602,7 @@ func (s *Server) setupRoutes() {
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
+	notificationsHandlers := notifications.NewHandler(s.handlers)
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
@@ -624,6 +626,11 @@ func (s *Server) setupRoutes() {
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.GET("/providers", s.providersHandler())
 		v1.POST("/models/refresh", s.refreshModelsHandler())
+
+		// Outbound notification relays — gateway holds the credentials so
+		// network-isolated pods can emit messages without ever seeing the token.
+		// See sdk/api/handlers/notifications/notifications.go.
+		v1.POST("/notifications/telegram/sendMessage", notificationsHandlers.TelegramSendMessage)
 	}
 
 	// Gemini compatible API routes

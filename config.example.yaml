@@ -556,3 +556,30 @@ observability:
     output: "stdout"              # "stdout" or "file"
     file-path: "logs/events.ndjson"
     include-body: false           # WARNING: enabling this produces very large logs
+
+# ============================================================================
+# NOTIFICATIONS — outbound relays for sandboxed clients
+# ============================================================================
+# When enabled, the gateway exposes /v1/notifications/<channel>/<action>
+# endpoints that forward messages to external services (Telegram today, more
+# channels later). Use case: agents inside network-isolated Tytus pods that
+# need to message a human but cannot reach the public internet directly. The
+# gateway holds the upstream credentials server-side so a compromised pod
+# never sees a real bot token.
+notifications:
+  telegram:
+    # Master switch. The endpoint returns 503 when false or when bots is empty.
+    enabled: false
+
+    # Named bots the gateway can relay through. Callers select a bot by name
+    # (default = "default" if omitted). Tokens are server-side only — never
+    # echoed in responses or logs. allowed-chat-ids optionally restricts which
+    # chat_ids each bot will message; empty = any chat_id permitted.
+    bots: []
+    # Example:
+    # bots:
+    #   - name: "default"
+    #     token: "${TELEGRAM_BOT_TOKEN}"
+    #     allowed-chat-ids: [746496145]   # optional allowlist
+    #   - name: "alerts"
+    #     token: "${TELEGRAM_ALERTS_TOKEN}"

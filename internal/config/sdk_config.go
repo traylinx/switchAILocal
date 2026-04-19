@@ -46,6 +46,11 @@ type SDKConfig struct {
 
 	// AutoRouting configures the Phase 2 intelligent routing system.
 	AutoRouting autoroute.Config `yaml:"auto-routing,omitempty" json:"auto-routing,omitempty"`
+
+	// Notifications configures the outbound notifications relay subsystem
+	// (e.g. /v1/notifications/telegram/sendMessage). Lets sandboxed clients
+	// emit messages to external services without ever holding the credentials.
+	Notifications NotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
 }
 
 // RoutingConfig configures how credentials are selected for requests.
