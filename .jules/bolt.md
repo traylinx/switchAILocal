@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-03-08 - Optimize SSE event building allocations
+**Learning:** Using `fmt.Sprintf` for high-frequency stream events (like Server-Sent Events) involves reflection, which adds measurable CPU overhead and creates multiple temporary string allocations per chunk.
+**Action:** Always prefer direct string concatenation (`+`), `strconv.Itoa`, and `strconv.FormatInt` instead of `fmt.Sprintf` when building high-throughput SSE event formats (e.g. `data: ` blocks and data URI constructions) to reduce latency and memory churn.

@@ -184,7 +184,7 @@ func ConvertAntigravityResponseToOpenAI(_ context.Context, _ string, originalReq
 				if mimeType == "" {
 					mimeType = "image/png"
 				}
-				imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+				imageURL := "data:" + mimeType + ";base64," + data
 				imagePayload := `{"image_url":{"url":""},"type":"image_url"}`
 				imagePayload, _ = sjson.Set(imagePayload, "image_url.url", imageURL)
 				imagesResult := gjson.Get(template, "choices.0.delta.images")
