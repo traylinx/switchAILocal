@@ -83,7 +83,13 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// Optional: filter by ?modality= query param (text, image, audio, embedding, vision)
 	modalityFilter := strings.ToLower(c.Query("modality"))
 
-	// Filter to only include the 4 required fields + capabilities
+	// Filter to only include the 4 required fields + capabilities + the new
+	// AI-SDK-discovery fields (attachment / tool_call / reasoning / modalities
+	// / vision / audio) emitted by the registry. These let Vercel-AI-SDK
+	// based clients (OpenCode / Cursor / Continue.dev) auto-detect whether
+	// to forward image and audio content blocks; without them the client
+	// strips media client-side and the model never sees it.
+	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio"}
 	var filteredModels []map[string]any
 	for _, model := range allModels {
 		modelID, _ := model["id"].(string)
@@ -103,13 +109,22 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
-		// Enrich with capabilities from the matrix
+		// Enrich with capabilities from the matrix (legacy string-array
+		// field — kept stable for any client that already reads it).
 		capabilities := modalityMap[modelID]
 		if len(capabilities) == 0 {
 			// Default: assume text capability for unlabeled models
 			capabilities = []string{"text"}
 		}
 		filteredModel["capabilities"] = capabilities
+
+		// Preserve registry-emitted capability discovery fields. These are
+		// what modern clients key off, complementing the legacy field.
+		for _, k := range preserveIfPresent {
+			if v, ok := model[k]; ok {
+				filteredModel[k] = v
+			}
+		}
 
 		// Apply modality filter if specified
 		if modalityFilter != "" {

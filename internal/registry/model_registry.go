@@ -54,6 +54,50 @@ type ModelInfo struct {
 	// Thinking holds provider-specific reasoning/thinking budget capabilities.
 	// This is optional and currently used for Gemini thinking budget normalization.
 	Thinking *ThinkingSupport `json:"thinking,omitempty"`
+
+	// Capabilities describes what the model supports — vision, audio, tool
+	// calling, reasoning, etc. Surfaced in /v1/models so OpenAI-compatible
+	// clients (Vercel AI SDK / OpenCode / Cursor / Continue.dev) can
+	// auto-detect feature support without per-model client-side config. If
+	// nil, capabilities are inferred from the model ID at marshal time.
+	Capabilities *ModelCapabilities `json:"capabilities,omitempty"`
+}
+
+// ModelCapabilities describes the feature surface of a model in a shape
+// compatible with what Vercel AI SDK and adjacent ecosystems look for in a
+// /v1/models response. Populated from explicit config when present, or
+// inferred from the model ID when nil (see InferCapabilities).
+//
+// The shape mirrors OpenCode's per-model schema so clients that read it
+// directly can auto-enable attachment / tool-calling without users having
+// to declare it in their local config — which was the bug that motivated
+// this field (OpenCode silently strips images when attachment is false).
+type ModelCapabilities struct {
+	// Attachment reports whether the model accepts file attachments
+	// (typically image/pdf passed as content-block image_url with a data:
+	// URI). Required for Vercel AI SDK to forward image bytes.
+	Attachment bool `json:"attachment"`
+	// ToolCall reports whether the model can emit OpenAI-style function
+	// calls (tools[] with type=function, returning tool_calls).
+	ToolCall bool `json:"tool_call"`
+	// Reasoning reports whether the model emits reasoning/thinking chunks
+	// distinct from final-answer content (DeepSeek-R1-style or Gemini
+	// thinking budget). Clients that render a chain-of-thought UI key off
+	// this flag.
+	Reasoning bool `json:"reasoning"`
+	// Modalities enumerates supported input + output media types. Each
+	// entry is one of: text, image, audio, video, pdf. Output is usually
+	// just ["text"] but TTS / image-gen / music-gen models output audio
+	// or image. A model that omits an entry is assumed not to support it.
+	Modalities ModelModalities `json:"modalities"`
+}
+
+// ModelModalities lists the media types a model accepts on input and
+// produces on output. Same vocabulary the OpenAI Realtime + Anthropic
+// models endpoints use (text/image/audio/video/pdf).
+type ModelModalities struct {
+	Input  []string `json:"input"`
+	Output []string `json:"output"`
 }
 
 // ThinkingSupport describes a model family's supported internal reasoning budget range.
@@ -811,6 +855,30 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 		if len(model.SupportedParameters) > 0 {
 			result["supported_parameters"] = model.SupportedParameters
 		}
+		// Capability metadata — explicit on the model wins; otherwise infer
+		// from the ID. Vercel AI SDK / OpenCode / Cursor / Continue.dev all
+		// look for these fields to decide whether to forward image/audio
+		// content blocks. Without this, OpenCode silently strips images
+		// because it can't tell the model supports vision.
+		//
+		// Emitted at TOP LEVEL (not nested under "capabilities") because:
+		//   1. OpenAI clients look for `vision`, `attachment`, `modalities`
+		//      directly on the model object;
+		//   2. The legacy `capabilities` field is a string array
+		//      ([\"text\",\"image\"]) maintained by sdk/api/handlers/openai/
+		//      openai_handlers.go and must not be overwritten.
+		if caps := resolveCapabilities(model); caps != nil {
+			result["attachment"] = caps.Attachment
+			result["tool_call"] = caps.ToolCall
+			result["reasoning"] = caps.Reasoning
+			result["modalities"] = caps.Modalities
+			if containsString(caps.Modalities.Input, "image") {
+				result["vision"] = true
+			}
+			if containsString(caps.Modalities.Input, "audio") {
+				result["audio"] = true
+			}
+		}
 		return result
 
 	case "claude":
@@ -1152,4 +1220,142 @@ func (mr *ModelRegistry) GetModelsWithMinContext(minContext int) []*ModelInfo {
 		return suitable[i].ContextLength < suitable[j].ContextLength
 	})
 	return suitable
+}
+
+// resolveCapabilities returns the model's explicit Capabilities if set, or
+// derives a default from the model ID. Always returns a non-nil pointer
+// when the model is known; nil when we have no signal at all (the caller
+// then omits the field rather than emit an empty stub).
+//
+// Used by /v1/models so that clients which auto-discover capabilities
+// (Vercel AI SDK / OpenCode / Continue.dev) get accurate metadata
+// without operators having to declare it per-model in config.
+func resolveCapabilities(model *ModelInfo) *ModelCapabilities {
+	if model == nil {
+		return nil
+	}
+	if model.Capabilities != nil {
+		return model.Capabilities
+	}
+	return InferCapabilities(model.ID)
+}
+
+// InferCapabilities returns a best-effort capability set derived from a
+// model identifier. Recognises common families across the providers we
+// route to. Returns nil only for IDs we have no signal about — caller
+// should treat nil as "unknown, don't surface in /v1/models".
+//
+// Maintenance: when a new vision/audio model lands, add a case here. The
+// alternative — declaring caps in config — works for operators who want
+// to override, but the inference path is what makes the gateway "just
+// work" for clients on day one.
+func InferCapabilities(id string) *ModelCapabilities {
+	if id == "" {
+		return nil
+	}
+	lower := strings.ToLower(id)
+
+	// Helpers — vocabularies kept in one place to avoid typos.
+	textIn := []string{"text"}
+	textOut := []string{"text"}
+	visionIn := []string{"text", "image"}
+	visionAudioIn := []string{"text", "image", "audio"}
+	audioOut := []string{"audio"}
+	imageOut := []string{"image"}
+
+	full := func(in, out []string, tools, reason bool) *ModelCapabilities {
+		return &ModelCapabilities{
+			Attachment: containsString(in, "image") || containsString(in, "pdf") || containsString(in, "audio"),
+			ToolCall:   tools,
+			Reasoning:  reason,
+			Modalities: ModelModalities{Input: in, Output: out},
+		}
+	}
+
+	// MiniMax family — M2.7 supports vision + audio input, text output.
+	// Music + TTS + image gen are separate model IDs.
+	if strings.Contains(lower, "minimax-m2") {
+		return full(visionAudioIn, textOut, true, false)
+	}
+	if strings.Contains(lower, ":music-") || strings.Contains(lower, "/music-") || strings.HasSuffix(lower, ":music-2.6") || strings.HasSuffix(lower, ":music-cover") {
+		return full(textIn, audioOut, false, false)
+	}
+	if strings.Contains(lower, ":speech-") || strings.HasSuffix(lower, "speech-02-hd") {
+		return full(textIn, audioOut, false, false)
+	}
+	if strings.Contains(lower, ":image-") || strings.HasSuffix(lower, "image-01") {
+		return full(textIn, imageOut, false, false)
+	}
+
+	// xiaomi mimo — omni handles vision+audio, others vary.
+	if strings.Contains(lower, "mimo-v2-omni") {
+		return full(visionAudioIn, textOut, true, false)
+	}
+	if strings.Contains(lower, "mimo-v2-tts") {
+		return full(textIn, audioOut, false, false)
+	}
+	if strings.Contains(lower, "mimo-v2") { // pro / flash — text + tools
+		return full(textIn, textOut, true, false)
+	}
+
+	// OpenAI family — modern GPTs are multimodal + tool-calling. The
+	// reasoning models (o1/o3) are text-only with reasoning chunks.
+	if strings.Contains(lower, "gpt-4o") || strings.Contains(lower, "gpt-5") || strings.Contains(lower, "gpt-4-vision") || strings.Contains(lower, "gpt-4-turbo") {
+		return full(visionIn, textOut, true, false)
+	}
+	if strings.HasPrefix(lower, "o1") || strings.HasPrefix(lower, "o3") || strings.Contains(lower, "deepseek-reason") || strings.Contains(lower, "deepseek-r") {
+		return full(textIn, textOut, false, true)
+	}
+	if strings.Contains(lower, "whisper") {
+		// Whisper is audio-in, text-out (transcription).
+		return full([]string{"audio"}, textOut, false, false)
+	}
+	if strings.Contains(lower, "tts") || strings.HasSuffix(lower, "speech") {
+		return full(textIn, audioOut, false, false)
+	}
+
+	// Claude family — sonnet/opus/haiku from Claude 3.5+ all do vision.
+	if strings.Contains(lower, "claude-3.5") || strings.Contains(lower, "claude-3-5") ||
+		strings.Contains(lower, "claude-3.7") || strings.Contains(lower, "claude-3-7") ||
+		strings.Contains(lower, "claude-4") || strings.Contains(lower, "claude-opus-4") ||
+		strings.Contains(lower, "claude-sonnet-4") || strings.Contains(lower, "claude-haiku-4") {
+		return full(visionIn, textOut, true, false)
+	}
+	if strings.Contains(lower, "claude-3-opus") || strings.Contains(lower, "claude-3-sonnet") || strings.Contains(lower, "claude-3-haiku") {
+		return full(visionIn, textOut, true, false)
+	}
+
+	// Gemini family — 1.5+ are multimodal incl. video; we conservatively
+	// claim image+audio (video plumbing isn't widely supported yet).
+	if strings.Contains(lower, "gemini-1.5") || strings.Contains(lower, "gemini-2") || strings.Contains(lower, "gemini-pro") {
+		return full(visionAudioIn, textOut, true, false)
+	}
+
+	// Embedding models — output a vector, not text. Surface that.
+	if strings.Contains(lower, "embed") {
+		return full(textIn, []string{"embedding"}, false, false)
+	}
+
+	// Qwen, llama, kimi, glm — broadly text+tools; vision variants opt-in.
+	if strings.Contains(lower, "vl") || strings.Contains(lower, "vision") {
+		return full(visionIn, textOut, true, false)
+	}
+	if strings.Contains(lower, "qwen") || strings.Contains(lower, "llama") || strings.Contains(lower, "kimi") || strings.Contains(lower, "glm") || strings.Contains(lower, "mistral") || strings.Contains(lower, "mercury") || strings.Contains(lower, "gpt-oss") {
+		return full(textIn, textOut, true, false)
+	}
+
+	// Unknown — return text-only defaults rather than nil. False would
+	// cause vision-aware clients to strip; an explicit text-only default
+	// is at least honest and makes the response shape predictable.
+	return full(textIn, textOut, false, false)
+}
+
+// containsString is a tiny helper to keep capability checks readable.
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-19
+
+Multimodal interop — capability discovery + request normalization across client formats.
+
+### Added
+- **Per-model capability metadata in `/v1/models`**: every model now advertises `attachment` (file uploads), `tool_call`, `reasoning`, and `modalities: {input, output}` plus flat-friendly `vision` / `audio` flags. Vercel AI SDK clients (OpenCode / Cursor / Continue.dev) auto-discover vision support and stop stripping image bytes client-side. Capability inference table in `internal/registry/model_registry.go` recognises MiniMax M2.x, Claude 3.5+/4.x, GPT-4o/5/o1/o3, Gemini 1.5+, Whisper, embedding/TTS/image-gen families. Operators can override per-model via the new `Capabilities` field on `ModelInfo`.
+- **Multimodal request normalizer** (`internal/runtime/executor/multimodal_normalizer.go`): rewrites non-canonical content blocks emitted by AI-SDK-v5 clients into the canonical OpenAI shape every upstream provider accepts.
+  - `{type:"image", image:"<url|data-uri>"}` → `{type:"image_url", image_url:{url:"..."}}`
+  - `{type:"image", image:"<base64>", mediaType:"image/png"}` → wrapped data URI
+  - `{type:"image", image:{url:"..."}}` → flat `image_url`
+  - `{type:"audio", audio:{data, mediaType}}` → `{type:"input_audio", input_audio:{data, format}}` with mediaType→format mapping (wav/mp3/opus/flac/ogg/webm)
+  - `{type:"file", data, mediaType}` → routed to `image_url` for image/* and `input_audio` for audio/*
+  - `{type:"file", url:"..."}` → forwarded as `image_url` URL
+- **Gemini fileData translator support**: `{fileData: {mimeType, fileUri}}` parts in incoming Gemini-format requests now translate to OpenAI `image_url` with the URL forwarded to upstream (was silently dropped before). Both `messages` and `contents` paths covered.
+- 16 new normalizer tests + 32 capability inference cases.
+
+### Why this matters
+The first multimodal failure of v0.3.x was OpenCode dropping screenshots silently — the model said "I can't see images" because the image bytes never left the client. Root cause: OpenCode's `attachment` flag defaults to false unless the model declares vision support. With capability metadata in `/v1/models` plus the request normalizer, any client format that arrives at the gateway gets translated to what the upstream expects, and any vision-capable model auto-advertises so clients don't strip preemptively.
+
+### Changed
+- `OpenAICompatExecutor.Execute` and `ExecuteStream` invoke `NormalizeMultimodalContent` immediately after `sdktranslator.TranslateRequest`. No-op on text-only or already-canonical payloads.
+- `sdk/api/handlers/openai/openai_handlers.go` `OpenAIModels` filter preserves the new capability fields (`attachment`, `tool_call`, `reasoning`, `modalities`, `vision`, `audio`) instead of stripping them. The legacy `capabilities` string-array stays for backward compat.
+
+### Verified live (2026-04-19)
+- AI-SDK-v5 image block POSTed to `/v1/chat/completions` → log shows `multimodal normalizer: rewrote non-canonical content blocks` → upstream MiniMax received canonical `{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}`.
+- `/v1/models` returns `vision:true, audio:true, attachment:true, tool_call:true` for `minimax:MiniMax-M2.7`; correct per-modality flags for music/speech/image-gen/embedding models.
+
 ## [0.3.1] - 2026-04-18
 
 CI pipeline fix — no runtime code changes.

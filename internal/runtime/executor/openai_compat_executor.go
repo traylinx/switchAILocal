@@ -169,6 +169,11 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		if errValidate := ValidateThinkingConfig(translated, upstreamModel); errValidate != nil {
 			return resp, errValidate
 		}
+		// Normalise non-canonical multimodal content blocks emitted by
+		// AI-SDK-v5 clients (OpenCode / Cursor / Continue.dev) into the
+		// canonical OpenAI shape every upstream provider accepts. No-op
+		// when the payload is already canonical or text-only.
+		translated = NormalizeMultimodalContent(translated)
 	}
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
@@ -294,6 +299,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	if errValidate := ValidateThinkingConfig(translated, upstreamModel); errValidate != nil {
 		return nil, errValidate
 	}
+	// Normalise non-canonical multimodal content blocks (see ExecuteSync
+	// path for rationale). Same call site for parity.
+	translated = NormalizeMultimodalContent(translated)
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))

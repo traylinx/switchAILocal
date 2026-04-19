@@ -134,6 +134,20 @@ func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 					msg, _ = sjson.SetRaw(msg, "content.-1", contentPart)
 					hasContent = true
 				}
+
+				// Handle file references (Gemini fileData with public URI).
+				// Forward URL as-is; channel through image_url for compat —
+				// see the analogous block in the contents-path below for
+				// rationale.
+				if fileData := part.Get("fileData"); fileData.Exists() {
+					uri := fileData.Get("fileUri").String()
+					if uri != "" {
+						contentPart := `{"type":"image_url","image_url":{"url":""}}`
+						contentPart, _ = sjson.Set(contentPart, "image_url.url", uri)
+						msg, _ = sjson.SetRaw(msg, "content.-1", contentPart)
+						hasContent = true
+					}
+				}
 				return true
 			})
 		}
@@ -190,6 +204,20 @@ func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 						contentPart, _ = sjson.Set(contentPart, "image_url.url", imageURL)
 						contentWrapper, _ = sjson.SetRaw(contentWrapper, "arr.-1", contentPart)
 						contentPartsCount++
+					}
+
+					// Handle file references (Gemini fileData with public URI).
+					// Same passthrough-as-image_url strategy as the contents-
+					// path above; comment there for rationale.
+					if fileData := part.Get("fileData"); fileData.Exists() {
+						uri := fileData.Get("fileUri").String()
+						if uri != "" {
+							onlyTextContent = false
+							contentPart := `{"type":"image_url","image_url":{"url":""}}`
+							contentPart, _ = sjson.Set(contentPart, "image_url.url", uri)
+							contentWrapper, _ = sjson.SetRaw(contentWrapper, "arr.-1", contentPart)
+							contentPartsCount++
+						}
 					}
 
 					// Handle function calls (Gemini) -> tool calls (OpenAI)
