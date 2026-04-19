@@ -126,6 +126,14 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			}
 		}
 
+		// Bridge: when the matrix-driven capabilities array declares
+		// vision/image/audio for an ID our inference table doesn't
+		// recognise (e.g. matrix-aliased "ail-compound"), upgrade the new
+		// structured fields too. Otherwise AI-SDK clients see vision in
+		// the legacy array but attachment:false in the new shape and end
+		// up stripping images. Operator's declared truth wins.
+		upgradeCapabilityFields(filteredModel, capabilities)
+
 		// Apply modality filter if specified
 		if modalityFilter != "" {
 			if !containsModality(capabilities, modalityFilter) {
@@ -177,6 +185,128 @@ func buildModalityMap(matrix map[string]string) map[string][]string {
 		}
 	}
 	return result
+}
+
+// upgradeCapabilityFields merges the matrix-derived legacy capability
+// strings into the structured capability fields the registry emitted.
+// The matrix is operator-authored truth — when it declares "vision" or
+// "audio" for a model, AI-SDK clients should see attachment:true and
+// the right input modalities even if our inference table doesn't
+// recognise the model ID (common for matrix-aliased names like
+// "ail-compound" / "ail-image" / per-tenant aliases).
+//
+// This is additive: only flips fields ON, never OFF. So an inferred
+// vision-capable model whose matrix entry only says "text" still keeps
+// vision (the inference is more specific than the matrix bucket).
+func upgradeCapabilityFields(model map[string]any, matrixCaps []string) {
+	hasVision := false
+	hasAudio := false
+	hasImageOut := false
+	for _, c := range matrixCaps {
+		switch c {
+		case "vision", "image":
+			// Matrix uses "image" for both image-IN (vision) and image-OUT
+			// (image generation). Disambiguate: presence of an explicit
+			// "vision" key means input. "image" without "vision" is
+			// generally output (e.g. ail-image), but to stay safe we treat
+			// "image" alone as input-image — image-output models rarely
+			// also need attachment=true.
+			if c == "vision" {
+				hasVision = true
+			}
+		case "audio":
+			hasAudio = true
+		}
+	}
+	// Detect image-OUT separately so we can surface output:["image"].
+	for _, c := range matrixCaps {
+		if c == "image" {
+			// Only treat as output if id name suggests gen (ail-image,
+			// image-01, etc.); otherwise treat as vision input.
+			if id, _ := model["id"].(string); strings.Contains(strings.ToLower(id), "image") {
+				hasImageOut = true
+			} else {
+				hasVision = true
+			}
+		}
+	}
+
+	if hasVision {
+		model["vision"] = true
+		model["attachment"] = true
+		// Upgrade modalities.input to include "image" if not already there.
+		mods, _ := model["modalities"].(map[string]any)
+		if mods == nil {
+			// modalities may be the typed struct from the registry; convert.
+			if typed, ok := model["modalities"].(registry.ModelModalities); ok {
+				mods = map[string]any{
+					"input":  appendUnique(stringsFromAny(typed.Input), "image"),
+					"output": stringsFromAny(typed.Output),
+				}
+			} else {
+				mods = map[string]any{"input": []string{"text", "image"}, "output": []string{"text"}}
+			}
+		} else {
+			mods["input"] = appendUnique(stringsFromAny(mods["input"]), "image")
+		}
+		model["modalities"] = mods
+	}
+	if hasAudio {
+		model["audio"] = true
+		model["attachment"] = true
+		mods, _ := model["modalities"].(map[string]any)
+		if mods == nil {
+			if typed, ok := model["modalities"].(registry.ModelModalities); ok {
+				mods = map[string]any{
+					"input":  appendUnique(stringsFromAny(typed.Input), "audio"),
+					"output": stringsFromAny(typed.Output),
+				}
+			} else {
+				mods = map[string]any{"input": []string{"text", "audio"}, "output": []string{"text"}}
+			}
+		} else {
+			mods["input"] = appendUnique(stringsFromAny(mods["input"]), "audio")
+		}
+		model["modalities"] = mods
+	}
+	if hasImageOut {
+		mods, _ := model["modalities"].(map[string]any)
+		if mods == nil {
+			mods = map[string]any{"input": []string{"text"}, "output": []string{"image"}}
+		} else {
+			mods["output"] = appendUnique(stringsFromAny(mods["output"]), "image")
+		}
+		model["modalities"] = mods
+	}
+}
+
+// stringsFromAny normalises an interface that might be []string or []any
+// (the latter happens after JSON round-trip) into a flat []string.
+func stringsFromAny(v any) []string {
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// appendUnique appends s to slice only if not already present. Cheap
+// since modality lists are tiny (1-5 entries).
+func appendUnique(slice []string, s string) []string {
+	for _, x := range slice {
+		if x == s {
+			return slice
+		}
+	}
+	return append(slice, s)
 }
 
 // containsModality checks if a modality string exists in a slice.

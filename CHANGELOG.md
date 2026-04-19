@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-19
+
+Capability bridge fix — matrix-aliased models now expose vision/audio in the structured fields.
+
+### Fixed
+- Models whose IDs are operator-aliased via `intelligence.matrix` (typical: `ail-compound`, `ail-image`, per-tenant aliases) showed `vision/audio: null, attachment: false` in the new structured fields even when the matrix declared `["text","vision","audio"]` in the legacy `capabilities` array. Result: AI-SDK clients still stripped images for those models because they read the new shape, not the legacy array. Now the handler bridges the matrix-derived strings into the structured fields (additive — never downgrades). Live-confirmed against `ail-compound` on prod.
+- Heuristic for image vs vision: matrix `["image"]` alone for an ID containing "image" is treated as image-OUT (generation, e.g. `ail-image`), not vision-IN — prevents clients from trying to send image bytes to a generation endpoint.
+
+### Added
+- 8 bridge tests covering vision-from-matrix, image-out-vs-vision-in, additive-only, typed-modalities, and the `stringsFromAny` helper.
+
+### Not changed
+- Capability inference for ID-recognised models (MiniMax M2.x, GPT-4o, Claude 4.x, Gemini 2.x) — already correct in v0.4.0.
+- Multimodal request normalizer — unchanged.
+
 ## [0.4.0] - 2026-04-19
 
 Multimodal interop — capability discovery + request normalization across client formats.
