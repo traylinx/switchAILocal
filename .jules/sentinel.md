@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-06-05 - Restrict OpenURL to http/https schemes
+**Vulnerability:** The browser handler did not validate the URL scheme before calling OS-level commands like `open` or `xdg-open`, potentially allowing command injection or local file access via malicious schemes (e.g., `file://`).
+**Learning:** System commands that open URLs must enforce a strict whitelist of allowed schemes (like `http://` and `https://`) to prevent unintended execution of arbitrary local files or injected command flags.
+**Prevention:** Explicitly check that `url` starts with `http://` or `https://` before passing it to the browser execution logic.
