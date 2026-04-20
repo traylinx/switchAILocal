@@ -27,6 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers"
 )
 
@@ -54,10 +55,28 @@ func NewHandler(base *handlers.BaseAPIHandler) *Handler {
 // parameters we accept from clients. We deliberately omit fields that could
 // be abused (e.g. inline_keyboard with arbitrary URLs) — operators who need
 // them can add them explicitly later.
+//
+// Token sourcing (highest priority first):
+//  1. X-Telegram-Bot-Token HTTP header
+//  2. bot_token field in the JSON body
+//  3. Named bot lookup in notifications.telegram.bots (via Bot field)
+//  4. Named bot "default" if Bot is empty
+//
+// In the wannolot/Tytus model each pod belongs to a different customer and
+// brings its OWN bot token — the droplet operator doesn't know or hold
+// customer tokens. So per-request token passing (header or body) is the
+// primary path; server-side config.bots is only for operator-shared bots
+// (e.g. platform-wide alerts).
 type telegramSendMessageRequest struct {
 	// Bot is the named bot to relay through (matches a Name in
-	// notifications.telegram.bots). Empty defaults to "default".
+	// notifications.telegram.bots). Only consulted when no token is supplied
+	// in the header or body. Empty defaults to "default".
 	Bot string `json:"bot,omitempty"`
+
+	// BotToken is the per-request bot token supplied by the client. Takes
+	// precedence over named-bot config lookup. Prefer the
+	// X-Telegram-Bot-Token header over putting the token in the body.
+	BotToken string `json:"bot_token,omitempty"`
 
 	// ChatID is the Telegram chat the message should be sent to. Required.
 	// Telegram chat_ids are 64-bit signed integers (channels and supergroups
@@ -80,6 +99,11 @@ type telegramSendMessageRequest struct {
 	// ReplyToMessageID makes this message a reply to an existing one.
 	ReplyToMessageID int64 `json:"reply_to_message_id,omitempty"`
 }
+
+// telegramHeaderToken is the header name clients use to pass per-request bot
+// tokens. Preferred over bot_token in the body because headers are not
+// normally captured by body-logging middleware.
+const telegramHeaderToken = "X-Telegram-Bot-Token"
 
 // errorResponse is the gateway's error envelope. It mirrors the shape the
 // rest of the OpenAI-compatible surface uses, so clients can parse uniformly.
@@ -117,9 +141,12 @@ func (h *Handler) TelegramSendMessage(c *gin.Context) {
 	}
 
 	tg := cfg.Notifications.Telegram
-	if !tg.Enabled || len(tg.Bots) == 0 {
+	// v0.5.1: endpoint is available whenever master switch is true — tokens
+	// come per-request from the caller. Server-side bots are only used as a
+	// fallback for operator-managed shared bots.
+	if !tg.Enabled {
 		writeError(c, http.StatusServiceUnavailable, "service_unavailable", "telegram_disabled",
-			"notifications.telegram is not configured on this gateway")
+			"notifications.telegram is disabled on this gateway")
 		return
 	}
 
@@ -157,20 +184,36 @@ func (h *Handler) TelegramSendMessage(c *gin.Context) {
 		return
 	}
 
-	bot, ok := cfg.Notifications.LookupTelegramBot(req.Bot)
-	if !ok {
-		writeError(c, http.StatusNotFound, "invalid_request_error", "unknown_bot",
-			fmt.Sprintf("no telegram bot configured with name %q", coalesceBot(req.Bot)))
-		return
-	}
-	if !bot.IsChatAllowed(req.ChatID) {
-		writeError(c, http.StatusForbidden, "permission_denied", "chat_not_allowed",
-			fmt.Sprintf("bot %q is not permitted to message chat_id %d", bot.Name, req.ChatID))
+	// Token resolution: header > body field > named bot > "default" bot
+	token, tokenSource, botName := resolveTelegramToken(c, req, &cfg.Notifications)
+	if token == "" {
+		// Distinguish "user asked for a named bot that doesn't exist" (404)
+		// from "no token supplied anywhere" (400). If the caller passed
+		// bot:"foo" explicitly and we got here, it's the former.
+		if strings.TrimSpace(req.Bot) != "" {
+			writeError(c, http.StatusNotFound, "invalid_request_error", "unknown_bot",
+				fmt.Sprintf("no telegram bot configured with name %q and no per-request token supplied", req.Bot))
+			return
+		}
+		writeError(c, http.StatusBadRequest, "invalid_request_error", "no_bot_token",
+			"no bot token provided: supply X-Telegram-Bot-Token header, bot_token body field, "+
+				"or configure a named bot on the gateway")
 		return
 	}
 
+	// Server-side named bots can declare an allowed-chat-ids list. Per-request
+	// tokens (header/body) bypass this — the caller owns the token so they
+	// own the allowlist concern themselves.
+	if tokenSource == "config" {
+		if bot, ok := cfg.Notifications.LookupTelegramBot(req.Bot); ok && !bot.IsChatAllowed(req.ChatID) {
+			writeError(c, http.StatusForbidden, "permission_denied", "chat_not_allowed",
+				fmt.Sprintf("bot %q is not permitted to message chat_id %d", bot.Name, req.ChatID))
+			return
+		}
+	}
+
 	principal := principalFromContext(c)
-	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", strings.TrimRight(telegramAPIBase, "/"), bot.Token)
+	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", strings.TrimRight(telegramAPIBase, "/"), token)
 
 	// Marshal the curated payload for upstream. Note we re-marshal rather than
 	// forward `body` verbatim: this drops any client-supplied fields we don't
@@ -209,7 +252,7 @@ func (h *Handler) TelegramSendMessage(c *gin.Context) {
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.WithFields(log.Fields{
-			"principal": principal, "bot": bot.Name, "chat_id": req.ChatID,
+			"principal": principal, "bot": botName, "token_source": tokenSource, "chat_id": req.ChatID,
 		}).WithError(err).Warn("notifications.telegram: upstream call failed")
 		writeError(c, http.StatusBadGateway, "upstream_error", "telegram_unreachable",
 			"telegram api unreachable: "+err.Error())
@@ -226,15 +269,41 @@ func (h *Handler) TelegramSendMessage(c *gin.Context) {
 	}
 
 	log.WithFields(log.Fields{
-		"principal":   principal,
-		"bot":         bot.Name,
-		"chat_id":     req.ChatID,
-		"text_len":    len(req.Text),
-		"upstream":    "telegram",
-		"http_status": resp.StatusCode,
+		"principal":    principal,
+		"bot":          botName,
+		"token_source": tokenSource,
+		"chat_id":      req.ChatID,
+		"text_len":     len(req.Text),
+		"upstream":     "telegram",
+		"http_status":  resp.StatusCode,
 	}).Info("notifications.telegram: relayed")
 
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", respBody)
+}
+
+// resolveTelegramToken picks the bot token + friendly identifier for this
+// call. Priority order:
+//  1. X-Telegram-Bot-Token header — takes precedence, preferred for clients
+//     that don't want tokens appearing in body logs
+//  2. bot_token field in the JSON body — fallback for clients that can't set
+//     custom headers (some HTTP clients strip non-standard ones)
+//  3. Named bot from notifications.telegram.bots (req.Bot, or "default" when
+//     empty) — for operator-managed shared bots
+//
+// Returns (token, source, displayName). source is "header" | "body" |
+// "config" | "" (none found). displayName is a log-safe identifier — never
+// the token itself.
+func resolveTelegramToken(c *gin.Context, req telegramSendMessageRequest, n *config.NotificationsConfig) (string, string, string) {
+	if h := strings.TrimSpace(c.GetHeader(telegramHeaderToken)); h != "" {
+		return h, "header", "client-supplied"
+	}
+	if b := strings.TrimSpace(req.BotToken); b != "" {
+		return b, "body", "client-supplied"
+	}
+	if bot, ok := n.LookupTelegramBot(req.Bot); ok {
+		return bot.Token, "config", bot.Name
+	}
+	return "", "", coalesceBot(req.Bot)
 }
 
 // principalFromContext returns the API key principal stored by AuthMiddleware,

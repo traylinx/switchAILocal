@@ -67,10 +67,18 @@ func newTestHandler(t *testing.T, fake *fakeTelegram, n config.NotificationsConf
 
 func doRequest(t *testing.T, h *Handler, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doRequestWithHeaders(t, h, body, nil)
+}
+
+func doRequestWithHeaders(t *testing.T, h *Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	req := httptest.NewRequest(http.MethodPost, "/v1/notifications/telegram/sendMessage", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	c.Request = req
 	c.Set("apiKey", "test-principal")
 	h.TelegramSendMessage(c)
@@ -221,6 +229,129 @@ func TestTelegramSendMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Per-request token path (v0.5.1): per-pod tokens supplied by the client via
+// header OR body. This is the primary real-world path — droplet operators
+// don't know customer bot tokens.
+func TestTelegramSendMessagePerRequestToken(t *testing.T) {
+	// enabled=true but zero bots configured — real wannolot case.
+	openConfig := config.NotificationsConfig{
+		Telegram: config.TelegramNotificationsConfig{Enabled: true},
+	}
+
+	t.Run("header token, no config", func(t *testing.T) {
+		fake := newFakeTelegram(http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
+		h, cleanup := newTestHandler(t, fake, openConfig)
+		defer cleanup()
+
+		rec := doRequestWithHeaders(t, h, `{"chat_id":123,"text":"hi"}`, map[string]string{
+			"X-Telegram-Bot-Token": "USER-TOKEN-123",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(fake.lastPath, "/botUSER-TOKEN-123/sendMessage") {
+			t.Fatalf("upstream path = %q, want header token in it", fake.lastPath)
+		}
+	})
+
+	t.Run("body token, no config", func(t *testing.T) {
+		fake := newFakeTelegram(http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
+		h, cleanup := newTestHandler(t, fake, openConfig)
+		defer cleanup()
+
+		rec := doRequest(t, h, `{"bot_token":"BODY-TOKEN-456","chat_id":123,"text":"hi"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(fake.lastPath, "/botBODY-TOKEN-456/sendMessage") {
+			t.Fatalf("upstream path = %q, want body token in it", fake.lastPath)
+		}
+		// bot_token must NOT be forwarded to Telegram in the outgoing body.
+		if strings.Contains(fake.lastBody, "bot_token") || strings.Contains(fake.lastBody, "BODY-TOKEN-456") {
+			t.Fatalf("upstream body leaked bot_token: %s", fake.lastBody)
+		}
+	})
+
+	t.Run("header wins over body", func(t *testing.T) {
+		fake := newFakeTelegram(http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
+		h, cleanup := newTestHandler(t, fake, openConfig)
+		defer cleanup()
+
+		rec := doRequestWithHeaders(t, h, `{"bot_token":"BODY","chat_id":123,"text":"hi"}`, map[string]string{
+			"X-Telegram-Bot-Token": "HEADER",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if !strings.Contains(fake.lastPath, "/botHEADER/sendMessage") {
+			t.Fatalf("upstream path = %q, header should have won", fake.lastPath)
+		}
+	})
+
+	t.Run("header wins over config bot", func(t *testing.T) {
+		fake := newFakeTelegram(http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
+		cfgWithBot := config.NotificationsConfig{
+			Telegram: config.TelegramNotificationsConfig{
+				Enabled: true,
+				Bots:    []config.TelegramBot{{Name: "default", Token: "CONFIG-TOKEN"}},
+			},
+		}
+		h, cleanup := newTestHandler(t, fake, cfgWithBot)
+		defer cleanup()
+
+		rec := doRequestWithHeaders(t, h, `{"chat_id":123,"text":"hi"}`, map[string]string{
+			"X-Telegram-Bot-Token": "HEADER-WINS",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if !strings.Contains(fake.lastPath, "/botHEADER-WINS/sendMessage") {
+			t.Fatalf("upstream path = %q, per-request token should override config", fake.lastPath)
+		}
+	})
+
+	t.Run("no token anywhere returns 400 no_bot_token", func(t *testing.T) {
+		fake := newFakeTelegram(http.StatusOK, ``)
+		h, cleanup := newTestHandler(t, fake, openConfig)
+		defer cleanup()
+
+		rec := doRequest(t, h, `{"chat_id":123,"text":"hi"}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d want 400, body = %s", rec.Code, rec.Body.String())
+		}
+		var env errorResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &env)
+		if env.Error.Code != "no_bot_token" {
+			t.Fatalf("code = %q want no_bot_token", env.Error.Code)
+		}
+		if atomic.LoadInt32(&fake.calls) != 0 {
+			t.Fatalf("upstream was called, should not have been")
+		}
+	})
+
+	t.Run("allowlist bypassed when using per-request token", func(t *testing.T) {
+		// Config has an allowlist for bot "ops" that restricts to chat 1.
+		// A caller passing their OWN header token can target any chat — the
+		// allowlist is a server-side policy only for server-managed bots.
+		fake := newFakeTelegram(http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
+		cfg := config.NotificationsConfig{
+			Telegram: config.TelegramNotificationsConfig{
+				Enabled: true,
+				Bots:    []config.TelegramBot{{Name: "ops", Token: "OPS", AllowedChatIDs: []int64{1}}},
+			},
+		}
+		h, cleanup := newTestHandler(t, fake, cfg)
+		defer cleanup()
+
+		rec := doRequestWithHeaders(t, h, `{"chat_id":9999,"text":"hi"}`, map[string]string{
+			"X-Telegram-Bot-Token": "MY-OWN-TOKEN",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestTelegramSendMessageStripsExtraFields(t *testing.T) {
