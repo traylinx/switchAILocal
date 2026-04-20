@@ -16,6 +16,7 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/traylinx/switchAILocal/internal/config"
+	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 )
 
@@ -25,7 +26,8 @@ import (
 func TestNormaliseMinimaxMusicRequest(t *testing.T) {
 	t.Run("empty body gets music-2.6 default", func(t *testing.T) {
 		req := switchailocalexecutor.Request{Payload: []byte(`{"lyrics":"la la la"}`)}
-		out := normaliseMinimaxMusicRequest(req)
+		e := &OpenAICompatExecutor{cfg: &config.Config{}}
+		out := e.normaliseMinimaxMusicRequest(req, nil)
 		if gjson.GetBytes(out, "model").String() != "music-2.6" {
 			t.Errorf("model=%q, want music-2.6 (default)", gjson.GetBytes(out, "model").String())
 		}
@@ -36,9 +38,37 @@ func TestNormaliseMinimaxMusicRequest(t *testing.T) {
 
 	t.Run("existing model preserved", func(t *testing.T) {
 		req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-cover","prompt":"jazz cover"}`)}
-		out := normaliseMinimaxMusicRequest(req)
+		e := &OpenAICompatExecutor{cfg: &config.Config{}}
+		out := e.normaliseMinimaxMusicRequest(req, nil)
 		if gjson.GetBytes(out, "model").String() != "music-cover" {
 			t.Errorf("model was overwritten: %s", gjson.GetBytes(out, "model").String())
+		}
+	})
+
+	// Regression for v0.5.4: operator-defined aliases in the openai-compat
+	// config (e.g. ail-music → music-2.6) must be resolved BEFORE the
+	// request is posted to MiniMax. Prior versions forwarded the alias
+	// verbatim and MiniMax rejected with "invalid model" (code 2013).
+	t.Run("alias resolves via auth model map", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenAICompatibility: []config.OpenAICompatibility{{
+				Name: "minimax",
+				Models: []config.OpenAICompatibilityModel{
+					{Name: "music-2.6", Alias: "ail-music"},
+					{Name: "music-cover", Alias: "ail-music-cover"},
+				},
+			}},
+		}
+		e := &OpenAICompatExecutor{provider: "minimax", cfg: cfg}
+		auth := &switchailocalauth.Auth{Provider: "minimax"}
+		req := switchailocalexecutor.Request{
+			Model:   "ail-music",
+			Payload: []byte(`{"model":"ail-music","lyrics":"test"}`),
+		}
+		out := e.normaliseMinimaxMusicRequest(req, auth)
+		got := gjson.GetBytes(out, "model").String()
+		if got != "music-2.6" {
+			t.Errorf("model=%q, want music-2.6 (alias must be resolved before upstream post)", got)
 		}
 	})
 }
@@ -483,7 +513,8 @@ func TestExecuteMinimaxMusicStream_HTTPError(t *testing.T) {
 // SSE bytes. The streaming path re-injects it explicitly.
 func TestNormaliseMinimaxMusicRequest_StripsStream(t *testing.T) {
 	req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-2.6","stream":true,"lyrics":"x"}`)}
-	out := normaliseMinimaxMusicRequest(req)
+	e := &OpenAICompatExecutor{cfg: &config.Config{}}
+		out := e.normaliseMinimaxMusicRequest(req, nil)
 	if gjson.GetBytes(out, "stream").Exists() {
 		t.Errorf("stream should be stripped for sync path: %s", out)
 	}

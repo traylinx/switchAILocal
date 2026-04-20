@@ -109,7 +109,7 @@ type minimaxLyricsResponse struct {
 // already knows how to pipe SSE, but music streaming sends hex chunks that
 // the client would have to concatenate + decode themselves.
 func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, baseURL, apiKey string) (switchailocalexecutor.Response, error) {
-	payload := normaliseMinimaxMusicRequest(req)
+	payload := e.normaliseMinimaxMusicRequest(req, auth)
 
 	body, err := e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, payload)
 	if err != nil {
@@ -213,17 +213,25 @@ func (e *OpenAICompatExecutor) executeMinimaxLyrics(ctx context.Context, auth *s
 // normaliseMinimaxMusicRequest injects the resolved upstream model name and
 // strips fields MiniMax would reject. Called before the POST so the request
 // body is what upstream actually expects regardless of what alias the client
-// used ("minimax:music-2.6", "music-2.6", etc).
+// used ("ail-music", "minimax:music-2.6", "music-2.6", etc).
 //
-// Resolution order, matching how resolveUpstreamModel resolves aliases
-// elsewhere in this package:
+// Resolution order, matching executeMinimaxTTS so alias handling is
+// consistent across all MiniMax-native paths:
 //  1. util.ResolveOriginalModel via metadata (production path; empty in tests).
-//  2. Strip "minimax:" prefix from the current model field (fallback for
-//     clients that sent the alias directly in the body).
-//  3. Default to "music-2.6" if the field is missing entirely.
-func normaliseMinimaxMusicRequest(req switchailocalexecutor.Request) []byte {
+//  2. e.resolveUpstreamModel(req.Model, auth) — the config-driven alias map
+//     (e.g. ail-music → music-2.6). Without this step, operator-defined
+//     aliases in openai-compatibility.models reach MiniMax verbatim and
+//     upstream rejects with "invalid model" (code 2013).
+//  3. Strip "minimax:" prefix from the current model field (fallback for
+//     clients that sent the raw name directly in the body).
+//  4. Default to "music-2.6" if the field is missing entirely.
+func (e *OpenAICompatExecutor) normaliseMinimaxMusicRequest(req switchailocalexecutor.Request, auth *switchailocalauth.Auth) []byte {
 	payload := req.Payload
-	if upstream := util.ResolveOriginalModel(req.Model, req.Metadata); upstream != "" {
+	upstream := util.ResolveOriginalModel(req.Model, req.Metadata)
+	if override := e.resolveUpstreamModel(req.Model, auth); override != "" {
+		upstream = override
+	}
+	if upstream != "" {
 		payload, _ = sjson.SetBytes(payload, "model", upstream)
 	}
 	currentModel := gjson.GetBytes(payload, "model").String()
@@ -282,7 +290,7 @@ func normaliseMinimaxLyricsRequest(req switchailocalexecutor.Request) []byte {
 // ID3v2 header), and it cuts client bandwidth by ~75% vs passing the hex
 // through (hex is 2× overhead, plus we drop the duplicated final frame).
 func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, baseURL, apiKey string) (<-chan switchailocalexecutor.StreamChunk, error) {
-	payload := normaliseMinimaxMusicRequest(req)
+	payload := e.normaliseMinimaxMusicRequest(req, auth)
 	payload, _ = sjson.SetBytes(payload, "stream", true)
 
 	url := strings.TrimSuffix(baseURL, "/") + minimaxMusicEndpoint
