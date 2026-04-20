@@ -84,6 +84,14 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 				contentType = ct
 			}
 		case "audio_transcriptions":
+			// MiniMax has no OpenAI-whisper-compatible transcription endpoint,
+			// and wire-tested: M2.7's openai-compat chat endpoint silently
+			// ignores input_audio / audio_url content blocks too. Short-circuit
+			// to a structured 501 that names working alternatives, so callers
+			// see an actionable error instead of an opaque upstream 404.
+			if isMinimaxTTSRequest(e.Identifier(), auth) {
+				return e.executeMinimaxTranscribe(ctx, auth, req, baseURL, apiKey)
+			}
 			endpoint = "/audio/transcriptions"
 			skipTranslation = true
 			if ct, ok := req.Metadata["content_type"].(string); ok && ct != "" {
