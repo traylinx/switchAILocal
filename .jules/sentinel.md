@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2025-05-18 - Fix CWE-276 Insecure File Permissions in Discovery Cache and Registry
+**Vulnerability:** The cache and intelligence discovery registries were being saved to disk with `0644` file permissions using `os.WriteFile`, making them world-readable.
+**Learning:** These files can contain internal state and metadata regarding the AI capabilities available to the application. `0644` breaks the principle of least privilege, exposing potentially sensitive configuration data to other users on the system.
+**Prevention:** When creating or writing to files containing application-specific state, configuration, caches, or credentials, always default to restricting file permissions to `0600` (readable/writable only by owner) when calling `os.WriteFile`.
