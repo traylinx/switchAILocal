@@ -1033,7 +1033,11 @@ func normalizeModelMetadata(modelName string) (string, map[string]any) {
 	norm, meta := util.NormalizeThinkingModel(modelName)
 	// OpenCode and Continue DEV force models to have `-vision` in their names to unlock the UI GUI for image upload.
 	// We strip it here so the actual provider backend gets the correct model name invisibly.
-	norm = strings.TrimSuffix(norm, "-vision")
+	// BUT: only strip when `norm` itself isn't a registered model — otherwise legitimate aliases
+	// ending in `-vision` (e.g. `ail-vision`) would be rewritten to non-existent names.
+	if strings.HasSuffix(norm, "-vision") && len(util.GetProviderName(norm)) == 0 {
+		norm = strings.TrimSuffix(norm, "-vision")
+	}
 	return norm, meta
 }
 
