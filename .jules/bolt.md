@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2025-03-05 - Optimize SSE and Data URI construction
+**Learning:** `fmt.Sprintf` uses reflection to parse formats and converts arguments, allocating objects heavily on the heap. In hot loops like Server-Sent Events (SSE) streaming builders and Data URIs where the content is primarily string, this creates massive Garbage Collection overhead and CPU cycles for no benefit.
+**Action:** Always prefer direct string concatenation (`+`) in streaming handlers for string-only operations (e.g., `output += "data: " + template + "\n\n"`) to bypass reflection and zero-allocation memory construction. Ensure imports like `"fmt"` are cleaned up to prevent `go build` failures.
