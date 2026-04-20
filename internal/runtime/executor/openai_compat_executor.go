@@ -84,6 +84,13 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 				contentType = ct
 			}
 		case "audio_transcriptions":
+			// Alibaba DashScope's qwen3-asr-flash is the one whisper-grade
+			// ASR provider we route to today. Its native API is
+			// chat-completions + input_audio, so bridge the whisper-shaped
+			// multipart request into that shape.
+			if isAlibabaASRRequest(e.Identifier(), auth) {
+				return e.executeAlibabaTranscribe(ctx, auth, req, baseURL, apiKey)
+			}
 			// MiniMax has no OpenAI-whisper-compatible transcription endpoint,
 			// and wire-tested: M2.7's openai-compat chat endpoint silently
 			// ignores input_audio / audio_url content blocks too. Short-circuit
