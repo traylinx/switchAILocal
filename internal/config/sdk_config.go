@@ -50,7 +50,15 @@ type SDKConfig struct {
 	// Notifications configures the outbound notifications relay subsystem
 	// (e.g. /v1/notifications/telegram/sendMessage). Lets sandboxed clients
 	// emit messages to external services without ever holding the credentials.
-	Notifications NotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	//
+	// The yaml tag intentionally omits "omitempty": SaveConfigPreserveComments
+	// round-trips the in-memory Config whenever legacy-migration fires, and
+	// a zero-value Notifications struct with omitempty would silently drop the
+	// block from disk — subsequent boots would then see telegram disabled even
+	// though the template had enabled: true. Always emitting the block keeps
+	// the on-disk state stable and makes "telegram_disabled" mean an operator
+	// explicitly turned it off, not a serialisation artefact.
+	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
 }
 
 // RoutingConfig configures how credentials are selected for requests.
