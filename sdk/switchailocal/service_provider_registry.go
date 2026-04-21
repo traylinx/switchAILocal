@@ -345,6 +345,7 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 							OwnedBy:     compat.Name,
 							Type:        "openai-compatibility",
 							DisplayName: modelID,
+							NativeTools: convertConfigNativeTools(m.NativeTools),
 						})
 					}
 
@@ -837,6 +838,34 @@ func buildGenericConfigModels(models []config.OpenAICompatibilityModel) []*Model
 			Type:        "generic",
 			DisplayName: display,
 		})
+	}
+	return out
+}
+
+// convertConfigNativeTools rehydrates the YAML-side NativeTool slice
+// into the registry shape so the /v1/models handler can emit it. Kept
+// local to this file since service_provider_registry is the only place
+// openai-compatibility models transit from config → registry today.
+func convertConfigNativeTools(in []config.NativeTool) []registry.NativeTool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]registry.NativeTool, 0, len(in))
+	for _, t := range in {
+		if strings.TrimSpace(t.Type) == "" {
+			continue
+		}
+		entry := registry.NativeTool{Type: t.Type, Description: t.Description}
+		if len(t.Params) > 0 {
+			entry.Params = make(map[string]any, len(t.Params))
+			for k, v := range t.Params {
+				entry.Params[k] = v
+			}
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

@@ -321,6 +321,18 @@ openai-compatibility:
     models:
       - name: "MiniMax-M2.7"
         alias: "minimax:MiniMax-M2.7"
+        # Provider-native tools advertised to agentic callers via the
+        # /v1/models discovery endpoint. Agent runtimes (OpenClaw,
+        # Hermes, custom SDKs) splice these entries into their own
+        # caller tools[] so the model picks them on recent-events /
+        # browsing queries without relying on server-side autoinject.
+        native_tools:
+          - type: "web_search"
+            description: "MiniMax native web search. Autonomous by default; set force_search:true to force when the question is clearly recent-events."
+            params:
+              force_search: { type: "boolean", default: false }
+              max_keyword:  { type: "integer", default: 3 }
+              limit:        { type: "integer", default: 3 }
       - name: "image-01"
         alias: "minimax:image-01"
       - name: "speech-02-hd"

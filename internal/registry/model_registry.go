@@ -61,6 +61,35 @@ type ModelInfo struct {
 	// auto-detect feature support without per-model client-side config. If
 	// nil, capabilities are inferred from the model ID at marshal time.
 	Capabilities *ModelCapabilities `json:"capabilities,omitempty"`
+
+	// NativeTools declares provider-native tools the upstream model
+	// supports without caller-side implementation (e.g. MiniMax M2.7's
+	// autonomous `{"type":"web_search"}`). Agent runtimes that discover
+	// `/v1/models` can merge these entries into their caller-declared
+	// `tools` array so the model picks them on recent-events / browsing
+	// queries without relying on server-side autoinject hacks. Empty /
+	// absent means the model exposes no provider-native tools.
+	NativeTools []NativeTool `json:"native_tools,omitempty"`
+}
+
+// NativeTool describes a provider-native tool a model supports out of
+// the box. The shape deliberately mirrors the OpenAI tools[] entry a
+// caller would declare (`{"type": "...", ...}`) so consumers can splice
+// it directly into their own tools array at chat-completion time without
+// translation. Params documents the tool's knobs for the operator; they
+// are optional hints, not enforced by switchAILocal.
+type NativeTool struct {
+	// Type is the tool type the upstream model recognises (e.g.
+	// "web_search"). Matches the "type" key of an OpenAI tools[] entry.
+	Type string `json:"type" yaml:"type"`
+	// Description is a short human-readable sentence for the operator /
+	// client UI. Not forwarded to the model.
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	// Params documents the per-tool knobs (e.g. force_search,
+	// max_keyword). Shape is intentionally loose (map[string]any) since
+	// each provider defines its own parameter surface. Callers that want
+	// to set a param append it alongside "type" on their tools[] entry.
+	Params map[string]any `json:"params,omitempty" yaml:"params,omitempty"`
 }
 
 // ModelCapabilities describes the feature surface of a model in a shape
@@ -450,7 +479,31 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	if len(model.SupportedParameters) > 0 {
 		copyModel.SupportedParameters = append([]string(nil), model.SupportedParameters...)
 	}
+	if len(model.NativeTools) > 0 {
+		copyModel.NativeTools = cloneNativeTools(model.NativeTools)
+	}
 	return &copyModel
+}
+
+// cloneNativeTools returns a deep copy of the native-tools slice, with
+// each NativeTool's Params map copied one level down. Values inside
+// Params are retained as-is; operator config values are immutable at
+// runtime so aliasing them is safe.
+func cloneNativeTools(in []NativeTool) []NativeTool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]NativeTool, len(in))
+	for i, t := range in {
+		out[i] = NativeTool{Type: t.Type, Description: t.Description}
+		if len(t.Params) > 0 {
+			out[i].Params = make(map[string]any, len(t.Params))
+			for k, v := range t.Params {
+				out[i].Params[k] = v
+			}
+		}
+	}
+	return out
 }
 
 // UnregisterClient removes a client and decrements counts for its models
@@ -878,6 +931,15 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 			if containsString(caps.Modalities.Input, "audio") {
 				result["audio"] = true
 			}
+		}
+		// native_tools: operator-declared provider-native tools the
+		// upstream model supports (e.g. MiniMax M2.7's web_search).
+		// Emitted only when non-empty so models that don't declare
+		// any keep a clean /v1/models shape. Agent runtimes (OpenClaw,
+		// Hermes, custom SDKs) discover these via /v1/models at
+		// session init and splice them into their caller tools array.
+		if len(model.NativeTools) > 0 {
+			result["native_tools"] = nativeToolsToMaps(model.NativeTools)
 		}
 		return result
 
@@ -1358,4 +1420,28 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// nativeToolsToMaps renders NativeTools as []map[string]any so gin's
+// JSON encoder emits the same lower_snake_case keys JSON tags declare
+// ("type", "description", "params") regardless of whether the caller
+// marshals the map via the explicit handler (convertModelToMap) or via
+// the /v1/models filter path (which rebuilds a fresh map per entry).
+// Keeps the shape deterministic across the two codepaths.
+func nativeToolsToMaps(in []NativeTool) []map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(in))
+	for _, t := range in {
+		entry := map[string]any{"type": t.Type}
+		if t.Description != "" {
+			entry["description"] = t.Description
+		}
+		if len(t.Params) > 0 {
+			entry["params"] = t.Params
+		}
+		out = append(out, entry)
+	}
+	return out
 }

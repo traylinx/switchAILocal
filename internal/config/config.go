@@ -552,6 +552,28 @@ type OpenAICompatibilityModel struct {
 
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
+
+	// NativeTools declares provider-native tools this model supports out
+	// of the box (e.g. MiniMax M2.7's `{"type":"web_search"}`). Surfaced
+	// unmodified through /v1/models so agentic callers can discover and
+	// splice them into their own caller tools[] at chat-completion time.
+	// Empty / absent = no native tools.
+	NativeTools []NativeTool `yaml:"native_tools,omitempty" json:"native_tools,omitempty"`
+}
+
+// NativeTool is the YAML-side mirror of registry.NativeTool. Kept in
+// this package to avoid a dependency cycle (registry imports from
+// config is fine; config importing registry would loop).
+type NativeTool struct {
+	// Type is the tool type the upstream model recognises (matches the
+	// "type" field of an OpenAI tools[] entry, e.g. "web_search").
+	Type string `yaml:"type" json:"type"`
+	// Description is a short human-readable sentence for the operator /
+	// client UI. Not forwarded to the model.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Params documents per-tool knobs (e.g. force_search, max_keyword).
+	// Shape is provider-specific — YAML values are passed through as-is.
+	Params map[string]any `yaml:"params,omitempty" json:"params,omitempty"`
 }
 
 // LoadConfig reads a YAML configuration file from the given path,

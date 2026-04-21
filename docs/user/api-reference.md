@@ -101,6 +101,32 @@ List all available models. Supports modality filtering.
 
 Response includes a `capabilities` array per model (e.g., `["text"]`, `["image"]`, `["audio"]`).
 
+#### Native tool discovery — `native_tools`
+
+Each model entry may carry a `native_tools` array describing the provider-native tools that upstream model supports out of the box (currently: MiniMax M2.7's autonomous `web_search`). Agentic runtimes like OpenClaw and Hermes are expected to query `/v1/models` at session init, parse `.data[*].native_tools`, and splice each entry into their own caller `tools[]` at chat-completion time. MiniMax then picks `web_search` as a first-class declared tool for recent-events queries — no server-side autoinject hack required.
+
+```jsonc
+{
+  "id": "ail-compound",
+  "object": "model",
+  "owned_by": "minimax",
+  "capabilities": ["text", "vision", "audio"],
+  "native_tools": [
+    {
+      "type": "web_search",
+      "description": "MiniMax native web search. Autonomous by default; set force_search:true to force when the question is clearly recent-events.",
+      "params": {
+        "force_search": { "type": "boolean", "default": false },
+        "max_keyword":  { "type": "integer", "default": 3 },
+        "limit":        { "type": "integer", "default": 3 }
+      }
+    }
+  ]
+}
+```
+
+The shape mirrors the OpenAI `tools[]` wire format so callers splice `{"type": "web_search"}` (plus any params they want to override) directly into their chat-completion request without translation. Models with no provider-native tools omit the key entirely rather than emitting `null` / `[]` — use key presence as your discovery signal. Operators declare the surface in `openai-compatibility.*.models[].native_tools` in `config.yaml`; see `config.example.yaml` for the full shape.
+
 ### Embeddings
 
 ```
