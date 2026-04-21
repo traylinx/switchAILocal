@@ -14,6 +14,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/traylinx/switchAILocal/internal/buildinfo"
+	"github.com/traylinx/switchAILocal/internal/registry"
 )
 
 // AIL_AUTOINJECT_WEBSEARCH        — master flag; when "true", web_search autoinjection runs.
@@ -75,15 +76,27 @@ func autoInjectWebSearch(rawJSON []byte, modelName string, optOut bool) []byte {
 	if optOut {
 		return rawJSON
 	}
-	if !isAutoinjectAllowlisted(modelName) {
-		return rawJSON
-	}
+
+	// Discovery-first path (Phase 2 of the 2026-04-22 native-tool-discovery
+	// sprint): when the target model declares native_tools in the registry
+	// (populated from config.yaml's openai-compatibility.*.models[].native_tools
+	// at startup), those are the authoritative surface — inject every entry,
+	// deduping against whatever the caller already declared. The legacy
+	// env-var allowlist path below only fires when discovery is empty, so
+	// an operator who populated native_tools gets rid of the env-var
+	// allowlist entirely without behavioral change.
+	discovered := resolveModelNativeTools(modelName)
 
 	hasWebSearch := false
+	callerTypes := make(map[string]struct{})
 	functionToolCount := 0
 	if tools := gjson.GetBytes(rawJSON, "tools"); tools.Exists() && tools.IsArray() {
 		tools.ForEach(func(_, tool gjson.Result) bool {
-			switch tool.Get("type").String() {
+			typ := tool.Get("type").String()
+			if typ != "" {
+				callerTypes[typ] = struct{}{}
+			}
+			switch typ {
 			case "web_search":
 				hasWebSearch = true
 			case "function":
@@ -94,25 +107,112 @@ func autoInjectWebSearch(rawJSON []byte, modelName string, optOut bool) []byte {
 	}
 
 	modified := rawJSON
-	if !hasWebSearch {
-		tools := gjson.GetBytes(modified, "tools")
-		idx := 0
-		if tools.Exists() && tools.IsArray() {
-			idx = len(tools.Array())
+	injectionFired := false
+
+	switch {
+	case len(discovered) > 0:
+		// Config-driven path. Inject each discovered native tool the caller
+		// didn't already declare. For web_search specifically, keep the
+		// force_search threshold behavior so agentic callers with crowded
+		// function-tool menus still get the deterministic search — operator's
+		// native_tools params are used as defaults, merged under the
+		// force_search override when the threshold trips.
+		for _, nt := range discovered {
+			if strings.TrimSpace(nt.Type) == "" {
+				continue
+			}
+			if _, already := callerTypes[nt.Type]; already {
+				continue
+			}
+			entry := buildDiscoveredNativeToolEntry(nt, functionToolCount)
+			tools := gjson.GetBytes(modified, "tools")
+			idx := 0
+			if tools.Exists() && tools.IsArray() {
+				idx = len(tools.Array())
+			}
+			if updated, err := sjson.SetBytes(modified, jsonArrayIndexPath("tools", idx), entry); err == nil {
+				modified = updated
+				injectionFired = true
+				callerTypes[nt.Type] = struct{}{}
+				if nt.Type == "web_search" {
+					hasWebSearch = true
+				}
+			}
 		}
-		newTool := buildInjectedWebSearchTool(functionToolCount)
-		if updated, err := sjson.SetBytes(modified, jsonArrayIndexPath("tools", idx), newTool); err == nil {
-			modified = updated
+	case isAutoinjectAllowlisted(modelName):
+		// Legacy env-var-driven fallback — preserved 1:1 so operators who
+		// haven't populated native_tools yet still get the 2026-04-21
+		// autoinject behavior. Deprecated: remove once every droplet ships
+		// a config with native_tools populated for MiniMax-M2.7.
+		if !hasWebSearch {
+			tools := gjson.GetBytes(modified, "tools")
+			idx := 0
+			if tools.Exists() && tools.IsArray() {
+				idx = len(tools.Array())
+			}
+			newTool := buildInjectedWebSearchTool(functionToolCount)
+			if updated, err := sjson.SetBytes(modified, jsonArrayIndexPath("tools", idx), newTool); err == nil {
+				modified = updated
+				injectionFired = true
+				hasWebSearch = true
+			}
+		} else {
+			// Caller already sent web_search — no mutation but we still
+			// want the max_tokens floor bump below since search will fire.
+			injectionFired = true
 		}
+	default:
+		return rawJSON
 	}
 
-	if mt := gjson.GetBytes(modified, "max_tokens"); !mt.Exists() || mt.Int() < webSearchMaxTokensFloor {
-		if updated, err := sjson.SetBytes(modified, "max_tokens", webSearchMaxTokensFloor); err == nil {
-			modified = updated
+	if injectionFired && hasWebSearch {
+		if mt := gjson.GetBytes(modified, "max_tokens"); !mt.Exists() || mt.Int() < webSearchMaxTokensFloor {
+			if updated, err := sjson.SetBytes(modified, "max_tokens", webSearchMaxTokensFloor); err == nil {
+				modified = updated
+			}
 		}
 	}
 
 	return modified
+}
+
+// resolveModelNativeTools looks up the native_tools declared for the given
+// model ID in the global registry. Returns an empty slice for unknown models
+// or models with no native_tools — autoInjectWebSearch then falls back to
+// the legacy env-var allowlist path. Deliberately tolerant of an uninitialised
+// registry (in unit tests the handler is exercised without the SDK bootstrap
+// step that would normally register models).
+func resolveModelNativeTools(modelName string) []registry.NativeTool {
+	if strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	reg := registry.GetGlobalRegistry()
+	if reg == nil {
+		return nil
+	}
+	info := reg.GetModelInfo(modelName)
+	if info == nil {
+		return nil
+	}
+	return info.NativeTools
+}
+
+// buildDiscoveredNativeToolEntry renders a registry.NativeTool as the JSON
+// shape MiniMax expects in the tools[] array. For web_search specifically,
+// stamps force_search:true when the caller's function-tool count meets the
+// force threshold (preserves the 2026-04-21 audit's findings about MiniMax's
+// tool-selection heuristic for agentic callers). For other native tool types,
+// passes Params through verbatim as the `tool.params` subobject would be
+// provider-specific.
+func buildDiscoveredNativeToolEntry(nt registry.NativeTool, callerFunctionToolCount int) map[string]any {
+	entry := map[string]any{"type": nt.Type}
+	if nt.Type == "web_search" {
+		threshold := forceSearchThreshold()
+		if threshold > 0 && callerFunctionToolCount >= threshold {
+			entry["force_search"] = true
+		}
+	}
+	return entry
 }
 
 // buildInjectedWebSearchTool picks between the bare {"type":"web_search"} form
