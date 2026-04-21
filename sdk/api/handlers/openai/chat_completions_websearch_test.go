@@ -5,6 +5,7 @@
 package openai
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -221,5 +222,133 @@ func TestBuildIdentity_NonEmpty(t *testing.T) {
 	// Minimum shape: "<something>-<something>".
 	if len(id) < 3 || id[0] == '-' || id[len(id)-1] == '-' {
 		t.Fatalf("buildIdentity malformed: %q", id)
+	}
+}
+
+// --- force_search-threshold tests ----------------------------------------
+
+// buildFunctionTools returns a JSON fragment with N entries of type:"function".
+func buildFunctionTools(n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += `{"type":"function","function":{"name":"tool_` + strconv.Itoa(i) + `"}}`
+	}
+	return "[" + out + "]"
+}
+
+func TestAutoInject_ManyFunctionTools_StampsForceSearch(t *testing.T) {
+	configureAllowlist(t)
+	// 26 function tools — OpenClaw-shaped caller.
+	body := []byte(`{"model":"ail-compound","tools":` + buildFunctionTools(26) + `}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	tools := gjson.GetBytes(out, "tools")
+	injected := tools.Array()[len(tools.Array())-1]
+	if injected.Get("type").String() != "web_search" {
+		t.Fatalf("expected last tool to be web_search, got %s", injected.Get("type").String())
+	}
+	if !injected.Get("force_search").Bool() {
+		t.Fatalf("expected injected web_search to carry force_search:true, got %s", injected.Raw)
+	}
+}
+
+func TestAutoInject_FewFunctionTools_UsesBareForm(t *testing.T) {
+	configureAllowlist(t)
+	// 4 function tools — below the default threshold of 5.
+	body := []byte(`{"model":"ail-compound","tools":` + buildFunctionTools(4) + `}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	tools := gjson.GetBytes(out, "tools")
+	injected := tools.Array()[len(tools.Array())-1]
+	if injected.Get("type").String() != "web_search" {
+		t.Fatalf("expected last tool to be web_search, got %s", injected.Get("type").String())
+	}
+	if injected.Get("force_search").Exists() {
+		t.Fatalf("4 function tools is below threshold — expected bare form, got %s", injected.Raw)
+	}
+}
+
+func TestAutoInject_ZeroFunctionTools_UsesBareForm(t *testing.T) {
+	configureAllowlist(t)
+	body := []byte(`{"model":"ail-compound","messages":[]}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	tools := gjson.GetBytes(out, "tools")
+	injected := tools.Array()[0]
+	if injected.Get("force_search").Exists() {
+		t.Fatalf("no function tools — expected bare form, got %s", injected.Raw)
+	}
+}
+
+func TestAutoInject_ThresholdRaisedByEnv_FallsBackToBare(t *testing.T) {
+	configureAllowlist(t)
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "50")
+	// 26 function tools is below the env-raised threshold of 50.
+	body := []byte(`{"model":"ail-compound","tools":` + buildFunctionTools(26) + `}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	tools := gjson.GetBytes(out, "tools")
+	injected := tools.Array()[len(tools.Array())-1]
+	if injected.Get("force_search").Exists() {
+		t.Fatalf("threshold raised to 50 — 26 should fall back to bare form, got %s", injected.Raw)
+	}
+}
+
+func TestAutoInject_ThresholdZero_DisablesForceSearch(t *testing.T) {
+	configureAllowlist(t)
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "0")
+	body := []byte(`{"model":"ail-compound","tools":` + buildFunctionTools(100) + `}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	tools := gjson.GetBytes(out, "tools")
+	injected := tools.Array()[len(tools.Array())-1]
+	if injected.Get("force_search").Exists() {
+		t.Fatalf("threshold=0 must disable force_search entirely, got %s", injected.Raw)
+	}
+}
+
+func TestAutoInject_CallerHasWebSearch_ManyFunctions_NoStamp(t *testing.T) {
+	configureAllowlist(t)
+	// Caller already sent web_search (bare). Dedupe wins — we do NOT stamp force_search
+	// retroactively onto the caller's entry.
+	body := []byte(`{"model":"ail-compound","tools":[{"type":"web_search"},` +
+		`{"type":"function","function":{"name":"a"}},{"type":"function","function":{"name":"b"}},` +
+		`{"type":"function","function":{"name":"c"}},{"type":"function","function":{"name":"d"}},` +
+		`{"type":"function","function":{"name":"e"}},{"type":"function","function":{"name":"f"}}]}`)
+	out := autoInjectWebSearch(body, allowlistModel, false)
+
+	if got := countWebSearchEntries(t, out); got != 1 {
+		t.Fatalf("expected exactly 1 web_search entry (dedupe), got %d", got)
+	}
+	// Caller's entry is at index 0 and must be unchanged (no force_search).
+	first := gjson.GetBytes(out, "tools.0")
+	if first.Get("force_search").Exists() {
+		t.Fatalf("caller's bare web_search must not be stamped with force_search: %s", first.Raw)
+	}
+}
+
+func TestForceSearchThreshold_DefaultsAndParsing(t *testing.T) {
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "")
+	if got := forceSearchThreshold(); got != defaultForceSearchThreshold {
+		t.Fatalf("empty env → default %d, got %d", defaultForceSearchThreshold, got)
+	}
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "12")
+	if got := forceSearchThreshold(); got != 12 {
+		t.Fatalf("parse int: got %d, want 12", got)
+	}
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "garbage")
+	if got := forceSearchThreshold(); got != defaultForceSearchThreshold {
+		t.Fatalf("unparseable → default %d, got %d", defaultForceSearchThreshold, got)
+	}
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "-3")
+	if got := forceSearchThreshold(); got != defaultForceSearchThreshold {
+		t.Fatalf("negative → default %d, got %d", defaultForceSearchThreshold, got)
+	}
+	t.Setenv("AIL_AUTOINJECT_FORCE_THRESHOLD", "0")
+	if got := forceSearchThreshold(); got != 0 {
+		t.Fatalf("zero must be respected (disables force_search), got %d", got)
 	}
 }

@@ -52,6 +52,7 @@ Operators running switchailocal in front of agents that don't themselves send `t
 |---|---|---|
 | `AIL_AUTOINJECT_WEBSEARCH` | `"true"` or anything else | master flag — `"true"` activates autoinject; any other value (incl. empty) = OFF |
 | `AIL_AUTOINJECT_MODELS` | `"ail-compound,minimax/ail-compound"` (example) | comma-separated model-name allowlist; whitespace trimmed; only these request-model names receive injection |
+| `AIL_AUTOINJECT_FORCE_THRESHOLD` | integer (default `5`, `0` disables) | when the caller's `tools` already has ≥ N entries with `type:"function"`, the injected web_search entry is stamped `force_search:true` — beats MiniMax's function-tool preference heuristic for agentic clients. Below the threshold the bare autonomous form is used. |
 | `AIL_DEBUG_DUMP` | `"true"` or empty | logs the raw request body at handler entry to `/app/logs/main.log` — useful for auditing what agents send |
 
 **Semantics (set-union + dedupe):**
