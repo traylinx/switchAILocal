@@ -114,3 +114,45 @@ jobs:
           files: |
             switchAILocal_*.tar.gz
             checksums.txt
+
+  publish-npm:
+    name: Publish npm package
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Sync package.json version to tag
+        working-directory: npx/switchailocal
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "Syncing package.json to ${TAG_VERSION}"
+          jq --arg v "${TAG_VERSION}" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          cat package.json
+
+      - name: Check if version already published
+        id: check
+        working-directory: npx/switchailocal
+        run: |
+          PKG_NAME=$(jq -r .name package.json)
+          PKG_VERSION=$(jq -r .version package.json)
+          if npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "${PKG_NAME}@${PKG_VERSION} already published — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Will publish ${PKG_NAME}@${PKG_VERSION}"
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip != 'true'
+        working-directory: npx/switchailocal
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
