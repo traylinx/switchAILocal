@@ -77,24 +77,6 @@ func autoInjectWebSearch(rawJSON []byte, modelName string, optOut bool) []byte {
 		return rawJSON
 	}
 
-	// Skip autoinject on streaming requests (stream: true). MiniMax M2.7's
-	// native web_search runs synchronously when force_search:true is
-	// stamped — it holds the open stream without emitting chunks while the
-	// search + synthesis completes (commonly 30-60s). Agent runtimes like
-	// OpenClaw have 60s mid-stream-stall detectors that fire during the
-	// silence and kill the request with an `upstream stall (mid_stream)`
-	// error. Non-streaming callers wait for the full response so search
-	// latency is absorbable; streaming callers cannot. When a streaming
-	// caller wants web_search on a specific request, they send the tool
-	// explicitly in their own `tools[]` — the handler passes it through
-	// unchanged, and the caller has accepted that streaming such a
-	// request will have long gaps. The autoinject path is only for the
-	// default case where we add search "invisibly" on the caller's
-	// behalf — silent invisibility stops being OK when it breaks streams.
-	if gjson.GetBytes(rawJSON, "stream").Bool() {
-		return rawJSON
-	}
-
 	// Two gates, independent:
 	//
 	//   - Discovery path: runs whenever the target model carries

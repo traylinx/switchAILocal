@@ -147,57 +147,6 @@ func TestAutoInject_Discovery_FiresWhenMasterFlagOff(t *testing.T) {
 	}
 }
 
-// TestAutoInject_Stream_NoOp pins the stream-stall fix: streaming
-// requests (stream: true) bypass autoinject on BOTH paths regardless
-// of env flags or native_tools. MiniMax M2.7 runs force_search
-// synchronously — it holds the stream open without chunks for 30-60s
-// while search + synthesis completes. Agent runtimes (OpenClaw) stall-
-// detect at 60s and kill the request. See the 2026-04-21 audit doc's
-// stream-stall incident (16:26–16:37 Telegram transcript) — that was
-// autoinject firing on an OpenClaw Telegram stream with 23 function
-// tools. Callers that explicitly want web_search on a stream still
-// pass through because autoinject is off entirely — their declared
-// web_search entry reaches MiniMax unchanged.
-func TestAutoInject_Stream_NoOp(t *testing.T) {
-	t.Setenv("AIL_AUTOINJECT_WEBSEARCH", "true")
-	t.Setenv("AIL_AUTOINJECT_MODELS", "stream-compound")
-
-	cleanup := registerNativeToolsOnRegistry(t, "stream-compound", []registry.NativeTool{
-		{Type: "web_search"},
-	})
-	defer cleanup()
-
-	body := []byte(`{"model":"stream-compound","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-	out := autoInjectWebSearch(body, "stream-compound", false)
-
-	if countWebSearchEntries(t, out) != 0 {
-		t.Fatalf("stream:true should bypass autoinject on both paths; got types=%v", toolTypes(t, out))
-	}
-}
-
-// TestAutoInject_StreamExplicitWebSearch_PassesThrough pins that a
-// caller who ASKED for web_search on a stream (by declaring it in
-// their own tools[]) still gets their entry forwarded untouched. We
-// skip autoinject — but dedupe is moot since autoinject is off — so
-// the caller's declared tool survives.
-func TestAutoInject_StreamExplicitWebSearch_PassesThrough(t *testing.T) {
-	t.Setenv("AIL_AUTOINJECT_WEBSEARCH", "true")
-	t.Setenv("AIL_AUTOINJECT_MODELS", "stream2-compound")
-
-	cleanup := registerNativeToolsOnRegistry(t, "stream2-compound", nil)
-	defer cleanup()
-
-	body := []byte(`{"model":"stream2-compound","stream":true,"messages":[],"tools":[{"type":"web_search","force_search":true}]}`)
-	out := autoInjectWebSearch(body, "stream2-compound", false)
-
-	if countWebSearchEntries(t, out) != 1 {
-		t.Fatalf("caller-declared web_search should survive; got types=%v", toolTypes(t, out))
-	}
-	if !gjson.GetBytes(out, "tools.0.force_search").Bool() {
-		t.Error("caller's force_search flag was not preserved")
-	}
-}
-
 // TestAutoInject_NoDiscoveryNoEnv_NoOp pins the "search does NOT fire"
 // quadrant of the Phase 5 matrix: model has no native_tools AND master
 // flag is false. Nothing happens — matches the pre-2026-04-21 baseline.
