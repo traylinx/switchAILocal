@@ -122,6 +122,50 @@ func TestAutoInject_Discovery_Dedupe(t *testing.T) {
 	}
 }
 
+// TestAutoInject_Discovery_FiresWhenMasterFlagOff pins the Phase 5 gate
+// split: discovery runs regardless of AIL_AUTOINJECT_WEBSEARCH. Operators
+// who declared native_tools in config don't need the env flag — the
+// config IS the operator's opt-in. Without this split, Phase 5's
+// acceptance matrix row 2 ("AIL_AUTOINJECT_WEBSEARCH=false, discovery
+// ON → search fires") would fail, and Phase 2's "autoinject is now
+// config-driven, demoted to fallback" narrative would be aspirational
+// rather than delivered.
+func TestAutoInject_Discovery_FiresWhenMasterFlagOff(t *testing.T) {
+	t.Setenv("AIL_AUTOINJECT_WEBSEARCH", "false")
+	t.Setenv("AIL_AUTOINJECT_MODELS", "")
+
+	cleanup := registerNativeToolsOnRegistry(t, "flagoff-compound", []registry.NativeTool{
+		{Type: "web_search"},
+	})
+	defer cleanup()
+
+	body := []byte(`{"model":"flagoff-compound","messages":[{"role":"user","content":"hi"}]}`)
+	out := autoInjectWebSearch(body, "flagoff-compound", false)
+
+	if countWebSearchEntries(t, out) != 1 {
+		t.Fatalf("discovery should fire even when AIL_AUTOINJECT_WEBSEARCH=false; got types=%v", toolTypes(t, out))
+	}
+}
+
+// TestAutoInject_NoDiscoveryNoEnv_NoOp pins the "search does NOT fire"
+// quadrant of the Phase 5 matrix: model has no native_tools AND master
+// flag is false. Nothing happens — matches the pre-2026-04-21 baseline.
+// Regression-guards against an accidental "inject by default" future edit.
+func TestAutoInject_NoDiscoveryNoEnv_NoOp(t *testing.T) {
+	t.Setenv("AIL_AUTOINJECT_WEBSEARCH", "false")
+	t.Setenv("AIL_AUTOINJECT_MODELS", "off-compound")
+
+	cleanup := registerNativeToolsOnRegistry(t, "off-compound", nil)
+	defer cleanup()
+
+	body := []byte(`{"model":"off-compound","messages":[{"role":"user","content":"hi"}]}`)
+	out := autoInjectWebSearch(body, "off-compound", false)
+
+	if countWebSearchEntries(t, out) != 0 {
+		t.Fatalf("no injection expected; got types=%v", toolTypes(t, out))
+	}
+}
+
 // TestAutoInject_Discovery_ForceSearchThresholdStillApplies pins that
 // the force_search stamping (2026-04-21 audit §4.2) continues to trigger
 // on the discovery-driven path when the caller has many function tools.

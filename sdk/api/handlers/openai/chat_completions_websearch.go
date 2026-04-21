@@ -70,22 +70,37 @@ const defaultForceSearchThreshold = 5
 // Returns the (possibly mutated) request body. Errors in sjson mutation are swallowed and the original body
 // is returned, matching the fail-open conventions used elsewhere in this package (see openai_openai_request.go:74).
 func autoInjectWebSearch(rawJSON []byte, modelName string, optOut bool) []byte {
-	if os.Getenv("AIL_AUTOINJECT_WEBSEARCH") != "true" {
-		return rawJSON
-	}
+	// Per-request opt-out short-circuits every autoinject path. Callers
+	// that want the raw body forward unchanged for cost / comparison /
+	// compliance reasons can always send `X-Ail-Autoinject: off`.
 	if optOut {
 		return rawJSON
 	}
 
-	// Discovery-first path (Phase 2 of the 2026-04-22 native-tool-discovery
-	// sprint): when the target model declares native_tools in the registry
-	// (populated from config.yaml's openai-compatibility.*.models[].native_tools
-	// at startup), those are the authoritative surface — inject every entry,
-	// deduping against whatever the caller already declared. The legacy
-	// env-var allowlist path below only fires when discovery is empty, so
-	// an operator who populated native_tools gets rid of the env-var
-	// allowlist entirely without behavioral change.
+	// Two gates, independent:
+	//
+	//   - Discovery path: runs whenever the target model carries
+	//     native_tools in the registry (populated from config.yaml at
+	//     startup). Not env-gated — operators opt into discovery by
+	//     declaring the tools in config. This is Phase 5's
+	//     "autoinject demoted to fallback" end state: the server
+	//     defers to operator-declared discovery regardless of
+	//     AIL_AUTOINJECT_WEBSEARCH.
+	//
+	//   - Legacy env path: runs only when the model has no native_tools
+	//     AND AIL_AUTOINJECT_WEBSEARCH=true AND the model is in
+	//     AIL_AUTOINJECT_MODELS. Preserves the 2026-04-21 behavior
+	//     for operators who haven't migrated their config yet.
+	//
+	// The split is deliberate: Phase 5's acceptance matrix row 2
+	// ("AIL_AUTOINJECT_WEBSEARCH=false, discovery ON → search fires")
+	// depends on the discovery path being independent of the master
+	// env flag. A single combined gate would fail that row.
 	discovered := resolveModelNativeTools(modelName)
+	envPathActive := os.Getenv("AIL_AUTOINJECT_WEBSEARCH") == "true"
+	if len(discovered) == 0 && !envPathActive {
+		return rawJSON
+	}
 
 	hasWebSearch := false
 	callerTypes := make(map[string]struct{})
@@ -139,7 +154,7 @@ func autoInjectWebSearch(rawJSON []byte, modelName string, optOut bool) []byte {
 				}
 			}
 		}
-	case isAutoinjectAllowlisted(modelName):
+	case envPathActive && isAutoinjectAllowlisted(modelName):
 		// Legacy env-var-driven fallback — preserved 1:1 so operators who
 		// haven't populated native_tools yet still get the 2026-04-21
 		// autoinject behavior. Deprecated: remove once every droplet ships
