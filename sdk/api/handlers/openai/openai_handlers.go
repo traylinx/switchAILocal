@@ -326,6 +326,11 @@ func containsModality(modalities []string, target string) bool {
 // Parameters:
 //   - c: The Gin context containing the HTTP request and response
 func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
+	// Emit build identity on every chat-completions response so the
+	// multi-instance LB coverage probe can verify each of the 5 switchailocal
+	// instances is running the expected sha.
+	c.Header("X-Ail-Build", buildIdentity())
+
 	rawJSON, err := c.GetRawData()
 	// If data retrieval fails, return a 400 Bad Request error.
 	if err != nil {
@@ -349,6 +354,12 @@ func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
 		rawJSON = responsesconverter.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
 		stream = gjson.GetBytes(rawJSON, "stream").Bool()
 	}
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	debugDumpRequest(modelName, rawJSON)
+
+	optOut := strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Ail-Autoinject")), "off")
+	rawJSON = autoInjectWebSearch(rawJSON, modelName, optOut)
 
 	if stream {
 		h.handleStreamingResponse(c, rawJSON)

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/v1/chat/completions` web_search auto-inject** (opt-in via env flag). When `AIL_AUTOINJECT_WEBSEARCH=true` and the request's model name is in `AIL_AUTOINJECT_MODELS` (comma-separated allowlist), the handler appends `{"type":"web_search"}` to the request's `tools` array before forwarding upstream. Motivation: OpenClaw agents on Tytus pods use `ail-compound` (→ `minimax:MiniMax-M2.7`) and the native web_search tool is autonomous by default, but OpenClaw's `openai` plugin never sends the `tools` field — so recent-events queries ("Who won Super Bowl LIX?") returned stale training-data answers. See `services/wannolot-infrastructure/docs/WEBSEARCH-AUDIT-2026-04-21.md` for the full audit.
+- **Set-union semantics with dedupe** — caller `tools` are preserved. A `web_search` entry is appended only if none exists. A caller's parameterized version (`{type:"web_search",max_keyword:5,force_search:true}`) is never clobbered by a bare append.
+- **Per-request opt-out** via `X-Ail-Autoinject: off` header.
+- **`max_tokens` safety floor** of 2000 when injection fires — MiniMax web_search inflates prompt context by 6–13k tokens; a low `max_tokens` would truncate the final answer. Only bumped when injection fires; never when the flag is off or the caller opted out.
+- **`X-Ail-Build: <commit-sha>-<hostname>` response header** on every `/v1/chat/completions` response, so multi-instance LB fleets can verify each of the N instances is running the expected sha before flipping autoinject on.
+- **`AIL_DEBUG_DUMP=true`** env flag — logs the raw chat-completions request body at handler entry. Off by default. Used in Phase 1 evidence capture for the 2026-04-21 sprint; kept as a permanent debug affordance.
+
+### Scope notes
+- Only the OpenAI handler (`/v1/chat/completions`) is covered. Anthropic (`/v1/messages`) and Gemini (`/v1beta/models/...`) adapters have the same structural gap and need a follow-up sprint — a proper Anthropic fix also needs tool-shape translation (`web_search_20250305` → `web_search`), not just injection.
+
 ## [0.4.1] - 2026-04-19
 
 Capability bridge fix — matrix-aliased models now expose vision/audio in the structured fields.
