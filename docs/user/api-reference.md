@@ -44,6 +44,40 @@ curl http://localhost:18080/v1/chat/completions \
 
 **Important:** web search inflates the prompt context with search results (often 6k–13k prompt tokens per query). Set `max_tokens >= 2000` to leave headroom for reasoning + final answer, otherwise the response will be truncated or empty. The response returns the final answer in `choices[0].message.content` — there are no separate `tool_calls` for the client to handle; the model calls search internally.
 
+#### Operator-side autoinject (optional, env-gated)
+
+Operators running switchailocal in front of agents that don't themselves send `tools: [{"type": "web_search"}]` (e.g. OpenClaw's `openai` plugin, the LangChain OpenAI client, naive SDKs) can have the handler append the entry on the way through:
+
+| env var | values | effect |
+|---|---|---|
+| `AIL_AUTOINJECT_WEBSEARCH` | `"true"` or anything else | master flag — `"true"` activates autoinject; any other value (incl. empty) = OFF |
+| `AIL_AUTOINJECT_MODELS` | `"ail-compound,minimax/ail-compound"` (example) | comma-separated model-name allowlist; whitespace trimmed; only these request-model names receive injection |
+| `AIL_DEBUG_DUMP` | `"true"` or empty | logs the raw request body at handler entry to `/app/logs/main.log` — useful for auditing what agents send |
+
+**Semantics (set-union + dedupe):**
+- Caller `tools` are preserved. A `{"type":"web_search"}` entry is appended only when no existing entry in `tools` has `type == "web_search"`.
+- Caller-parameterised `web_search` (e.g. `{"type":"web_search","force_search":true,"max_keyword":5}`) wins untouched — autoinject never overwrites it with a bare entry.
+- When injection fires, `max_tokens` is bumped to the 2000 floor documented above if the caller sent a lower value or none at all. Pre-existing `max_tokens >= 2000` is preserved.
+- Injection **does not fire** when: the master flag is off, the model is not in the allowlist, the caller sent `X-Ail-Autoinject: off`, or the caller already included a `web_search` tool.
+
+**Per-request opt-out header:**
+
+```
+X-Ail-Autoinject: off
+```
+
+suppresses injection for that single request (useful when a caller wants the raw no-tools path for comparison or cost reasons).
+
+**Response header for build verification:**
+
+Every `/v1/chat/completions` response carries:
+
+```
+X-Ail-Build: <commit-sha>-<hostname>
+```
+
+Operators running multiple switchailocal instances behind a load-balancer use this to verify each instance is on the expected build after a rolling restart — for example by issuing ~N×2 requests through the LB and asserting every instance-ID appears with the expected sha.
+
 ### Completions
 
 ```

@@ -129,6 +129,8 @@ curl http://localhost:18080/v1/chat/completions \
   }'
 ```
 
+> **Note for agents running on operator-configured gateways (e.g. Tytus pods):** Some deployments set `AIL_AUTOINJECT_WEBSEARCH=true` so the gateway appends `{"type": "web_search"}` on the agent's behalf for an allowlist of models (typically `ail-compound`). When that flag is on, the gateway also bumps `max_tokens` to 2000 if lower. Your explicit `tools` entry is always preserved (set-union semantics), and you can suppress injection per-request with header `X-Ail-Autoinject: off`. See `docs/user/api-reference.md` → *Operator-side autoinject*.
+
 ### Text-to-speech (agent recipe)
 
 ```bash
