@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2025-03-08 - Fix MITM vulnerability in management handlers
+**Vulnerability:** Management API handlers (discover models, test provider) were configured with `InsecureSkipVerify: true` in their `http.Transport`'s `TLSClientConfig` when routing traffic through a proxy. This bypassed standard TLS certificate validation.
+**Learning:** Hardcoding `InsecureSkipVerify: true` for "testing/local proxies" in production code leaves the application highly susceptible to Man-in-the-Middle (MitM) attacks, which is especially critical for an API gateway handling sensitive API keys and prompts.
+**Prevention:** Never use `InsecureSkipVerify: true` in `TLSClientConfig` within `http.Transport` for API communication in production code. Always enforce standard TLS certificate validation.
