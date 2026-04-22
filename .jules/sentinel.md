@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2024-05-24 - Restrict File Permissions on Cache and Registry Files
+**Vulnerability:** Discovery cache entries (`internal/discovery/cache.go`) and the intelligence discovery registry (`internal/intelligence/discovery/service.go`) were created using `os.WriteFile` with `0644` permissions, making sensitive provider configuration and capability data readable by other users on the host system (CWE-276).
+**Learning:** `os.WriteFile` defaults were overly permissive. Applications handling sensitive metadata locally must explicitly limit access.
+**Prevention:** Always use `0600` permissions (read/write for owner only) when writing localized cache or registry files via `os.WriteFile`. Use `gosec` scanning to identify CWE-276 issues automatically.
