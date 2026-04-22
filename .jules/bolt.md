@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - [Optimize JSON unmarshaling in parseMessages]
+**Learning:** `json.Unmarshal` is expensive and involves heavy reflection. Trying to unmarshal a JSON array as a string and failing back to array parsing incurs massive performance overhead due to type-mismatch reflection failures in hot loops like message parsing.
+**Action:** When handling `json.RawMessage` that can be either a string or an array, implement a fast-path by checking the first byte (e.g. `msg.Content[0] == '"'` or `msg.Content[0] == '['`) to avoid invoking `json.Unmarshal` for types that will definitely fail. Also pre-allocate `strings.Builder` using `.Grow()` when appending elements in a loop based on the known size.
