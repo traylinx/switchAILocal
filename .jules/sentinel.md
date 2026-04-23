@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2025-05-24 - CWE-276 File Permission Vulnerability in Model Discovery
+**Vulnerability:** Discovery registry caches were created with overly permissive `0644` file permissions.
+**Learning:** These files contain potentially sensitive or application-critical information. Insecure permissions on model definition cache files risk read access by unauthorized local users.
+**Prevention:** Always restrict cache and registry `os.WriteFile` permissions to `0600` at minimum to ensure files are only readable/writable by the owner.
