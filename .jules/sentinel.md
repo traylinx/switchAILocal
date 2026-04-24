@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-04-24 - Fix insecure file permissions (CWE-276)
+**Vulnerability:** Cached discovery entries and model registries were being saved to the file system with overly permissive `0644` permissions, making sensitive information readable by other users on the system.
+**Learning:** `os.WriteFile` defaults to `0644` in many examples, leading to accidental information exposure when persisting data containing configuration, API details, or internal structures.
+**Prevention:** When saving application cache or internal state data that other users should not access, always specify `0600` permissions for `os.WriteFile` to enforce read/write access for the owner exclusively.

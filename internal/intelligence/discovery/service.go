@@ -302,7 +302,7 @@ func (s *Service) WriteRegistry(path string) error {
 			return fmt.Errorf("failed to marshal registry: %w", err)
 		}
 
-		if err := os.WriteFile(path, data, 0644); err != nil {
+		if err := os.WriteFile(path, data, 0600); err != nil {
 			return fmt.Errorf("failed to write registry file: %w", err)
 		}
 	}
