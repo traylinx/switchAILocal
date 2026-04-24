@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-04-24 - Optimize SSE Event Generation
+**Learning:** Using `fmt.Sprintf` for high frequency SSE event creation (like "data: " and "event: " prefixes) or data URI generation ("data:image/png;base64,...") causes unnecessary reflection and heap allocations, hurting performance in the hot path.
+**Action:** Replace `fmt.Sprintf` with direct string concatenations (`+` and `strconv.Itoa`) in streaming translator handlers to reduce memory pressure and increase streaming throughput.
