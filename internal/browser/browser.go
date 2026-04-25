@@ -8,6 +8,7 @@ package browser
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 
@@ -20,15 +21,23 @@ import (
 // platform-specific commands if that fails.
 //
 // Parameters:
-//   - url: The URL to open.
+//   - rawurl: The URL to open.
 //
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
-func OpenURL(url string) error {
-	fmt.Printf("Attempting to open URL in browser: %s\n", url)
+func OpenURL(rawurl string) error {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("invalid URL scheme: must be http or https")
+	}
+
+	fmt.Printf("Attempting to open URL in browser: %s\n", rawurl)
 
 	// Try using the open-golang library first
-	err := open.Run(url)
+	err = open.Run(rawurl)
 	if err == nil {
 		log.Debug("Successfully opened URL using open-golang library")
 		return nil
@@ -37,7 +46,7 @@ func OpenURL(url string) error {
 	log.Debugf("open-golang failed: %v, trying platform-specific commands", err)
 
 	// Fallback to platform-specific commands
-	return openURLPlatformSpecific(url)
+	return openURLPlatformSpecific(rawurl)
 }
 
 // openURLPlatformSpecific is a helper function that opens a URL using OS-specific commands.

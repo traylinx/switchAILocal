@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2025-02-28 - Fix Command Injection and SSRF in Browser Opening
+**Vulnerability:** The `OpenURL` function in `internal/browser/browser.go` allowed any URL string to be passed to system execution commands (like `exec.Command("open", url)`). This allowed command injection or SSRF (e.g. `file://` schemes).
+**Learning:** System commands executing URLs need strict validation to prevent malicious local schemes or injected flags.
+**Prevention:** Explicitly validate that URLs strictly start with `http://` or `https://` before passing them to OS execution commands.
