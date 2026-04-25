@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-04-25 - Avoid fmt.Sprintf for streaming chunks
+**Learning:** Using `fmt.Sprintf` for constructing SSE stream chunks (which happen very frequently in hot paths) causes unnecessary allocations and reflection overhead.
+**Action:** Use byte slice appending with capacity pre-allocation and `strconv.AppendInt` to construct strings efficiently.
