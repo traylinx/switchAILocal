@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2025-05-18 - Fix Command Injection and SSRF in OpenURL
+**Vulnerability:** The `browser.OpenURL` and platform-specific fallback functions executed system commands (like `open`) directly with unvalidated URLs, creating command injection and SSRF risks if hostile input was provided (e.g., `file://` or `javascript:` schemes).
+**Learning:** Naive URL handling using raw strings instead of standard library parsing fails to ensure safe inputs for execution. Shadowing the standard `net/url` package name with the variable `url` discouraged proper validation.
+**Prevention:** Always parse URLs using `net/url.Parse`, rename parameters to avoid shadowing (e.g., `rawurl`), and strictly whitelist allowed schemes (e.g., `http`, `https`) before passing input to OS execution commands.
