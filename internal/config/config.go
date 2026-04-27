@@ -533,6 +533,36 @@ type OpenAICompatibility struct {
 
 	// ProxyURL overrides the global proxy setting for this provider.
 	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+
+	// KimiHistoryShim toggles a stateless body mutator that injects a
+	// non-empty placeholder into reasoning_content on assistant messages
+	// that carry tool_calls but lack reasoning_content. Required for Kimi
+	// K2.6 (api.kimi.com/coding/v1) with thinking-mode-on used as a
+	// failover candidate in heterogeneous aliases — Kimi 400s the
+	// multi-turn request "thinking is enabled but reasoning_content is
+	// missing in assistant tool call message" otherwise. DeepSeek-V4-Pro
+	// has the same failure shape; the shim is harmless on providers that
+	// don't require it (MiniMax/OpenAI ignore the field).
+	//
+	// Pointer semantics: nil → default (enabled), *true → enabled,
+	// *false → explicitly disabled. Default-on prevents future operators
+	// from recreating the 2026-04-27 outage by enabling Kimi without
+	// reading docs.
+	KimiHistoryShim *bool `yaml:"kimi-history-shim,omitempty" json:"kimi-history-shim,omitempty"`
+}
+
+// IsKimiHistoryShimEnabled reports whether the reasoning_content
+// placeholder shim should be applied to outbound requests for this
+// provider. Default is enabled (nil pointer); only an explicit *false
+// disables it.
+func (o *OpenAICompatibility) IsKimiHistoryShimEnabled() bool {
+	if o == nil {
+		return false
+	}
+	if o.KimiHistoryShim == nil {
+		return true
+	}
+	return *o.KimiHistoryShim
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.

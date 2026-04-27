@@ -189,6 +189,14 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		// canonical OpenAI shape every upstream provider accepts. No-op
 		// when the payload is already canonical or text-only.
 		translated = NormalizeMultimodalContent(translated)
+		// Inject a placeholder reasoning_content on assistant messages
+		// that carry tool_calls but lack the field. Required for Kimi
+		// K2.6 + DeepSeek to accept replayed history; harmless on
+		// providers that ignore the field. Toggleable per-provider via
+		// the kimi-history-shim YAML flag (default on).
+		if compat := e.resolveCompatConfig(auth); compat.IsKimiHistoryShimEnabled() {
+			translated = applyKimiHistoryShim(translated)
+		}
 	}
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
@@ -317,6 +325,10 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	// Normalise non-canonical multimodal content blocks (see ExecuteSync
 	// path for rationale). Same call site for parity.
 	translated = NormalizeMultimodalContent(translated)
+	// Reasoning_content placeholder shim (see Execute for rationale).
+	if compat := e.resolveCompatConfig(auth); compat.IsKimiHistoryShimEnabled() {
+		translated = applyKimiHistoryShim(translated)
+	}
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
