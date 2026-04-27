@@ -189,6 +189,12 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		// canonical OpenAI shape every upstream provider accepts. No-op
 		// when the payload is already canonical or text-only.
 		translated = NormalizeMultimodalContent(translated)
+		// Strip {type:text, text:""} content array elements from every
+		// message. OpenClaw 2026.4.25 emits these during history replay
+		// after a failed assistant turn; both Moonshot and MiniMax reject
+		// them with permanent 400. Always-on; empty text is universally
+		// invalid in chat completions.
+		translated = stripEmptyTextContent(translated)
 		// Inject a placeholder reasoning_content on assistant messages
 		// that carry tool_calls but lack the field. Required for Kimi
 		// K2.6 + DeepSeek to accept replayed history; harmless on
@@ -325,6 +331,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	// Normalise non-canonical multimodal content blocks (see ExecuteSync
 	// path for rationale). Same call site for parity.
 	translated = NormalizeMultimodalContent(translated)
+	// Empty-text content stripper (see Execute for rationale). Same call
+	// site for parity between sync and stream.
+	translated = stripEmptyTextContent(translated)
 	// Reasoning_content placeholder shim (see Execute for rationale).
 	if compat := e.resolveCompatConfig(auth); compat.IsKimiHistoryShimEnabled() {
 		translated = applyKimiHistoryShim(translated)
