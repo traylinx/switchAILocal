@@ -136,14 +136,14 @@ curl -s http://localhost:18080/v0/management/autoroute/status | python3 -m json.
 curl -s http://localhost:18080/v0/management/autoroute/journal | python3 -m json.tool
 ```
 
-## 10. Multi-Provider with Xiaomi (Thinking + Web Search)
+## 10. Multi-Provider with Xiaomi MiMo (Thinking + Web Search)
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "xiaomi:mimo-v2-flash",
+    "model": "xiaomi-tp:mimo-v2.5-pro",
     "messages": [{"role": "user", "content": "Write a LinkedIn post about https://2md.traylinx.com/"}],
     "thinking": {"type": "enabled"},
     "tools": [

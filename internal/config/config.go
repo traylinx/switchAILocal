@@ -583,6 +583,11 @@ type OpenAICompatibilityModel struct {
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
 
+	// ContextLength is the model's maximum context window in tokens. Surfaced
+	// through /v1/models so clients can reason about prompt size budgets
+	// (e.g. Kimi-K2.6 → 256000, MiniMax-M2.7 → 256000). Zero / absent → omitted.
+	ContextLength int `yaml:"context_length,omitempty" json:"context_length,omitempty"`
+
 	// NativeTools declares provider-native tools this model supports out
 	// of the box (e.g. MiniMax M2.7's `{"type":"web_search"}`). Surfaced
 	// unmodified through /v1/models so agentic callers can discover and

@@ -89,7 +89,7 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// based clients (OpenCode / Cursor / Continue.dev) auto-detect whether
 	// to forward image and audio content blocks; without them the client
 	// strips media client-side and the model never sees it.
-	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio", "native_tools"}
+	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio", "native_tools", "context_length", "max_completion_tokens"}
 	var filteredModels []map[string]any
 	for _, model := range allModels {
 		modelID, _ := model["id"].(string)

@@ -55,7 +55,7 @@ Use the ail-provider skill to configure my API provider
 ***Optional Fallback***: If Claude doesn't auto-detect the skill, you can paste this manual configuration prompt instead:
 
 ```text
-I want to use switchAILocal as my API provider. The proxy runs at http://localhost:18080. Please set ANTHROPIC_BASE_URL=http://localhost:18080/api/provider/anthropic and ANTHROPIC_API_KEY=sk-test-123 in my environment, then use /model to select xiaomi:mimo-v2-pro (or any model from http://localhost:18080/v1/models).
+I want to use switchAILocal as my API provider. The proxy runs at http://localhost:18080. Please set ANTHROPIC_BASE_URL=http://localhost:18080/api/provider/anthropic and ANTHROPIC_API_KEY=sk-test-123 in my environment, then use /model to select minimax:MiniMax-M2.7 (or any model from http://localhost:18080/v1/models).
 ```
 
 ### The Wizard Flow
@@ -69,8 +69,9 @@ I want to use switchAILocal as my API provider. The proxy runs at http://localho
 │                                                         │
 │  2. Model Selection                                     │
 │     → Groups models by provider:                        │
-│        GEMINICLI (5)  │ OLLAMA (15)  │ XIAOMI (4)       │
-│        SWITCHAI  (4)  │ GROQ   (9)  │ ALIBABA (8)      │
+│        DEEPSEEK (2,1M) │ KIMI (1,256k) │ MINIMAX (5,256k)│
+│        XIAOMI-TP (8,200k) │ OLLAMA (17) │ GROQ (1)      │
+│        ZAI (1) │ INCEPTION (1) │ SWITCHAI (4)           │
 │     → Asks: "Which model do you want to use?"           │
 │                                                         │
 │  3. Auto-Configuration                                  │
@@ -88,19 +89,43 @@ I want to use switchAILocal as my API provider. The proxy runs at http://localho
 
 ## Available Providers
 
-switchAILocal supports these providers (all discoverable by the wizard):
+switchAILocal supports these providers (all discoverable by the wizard).
+The table is grouped by purpose so consumer apps can pick a route based
+on prompt budget and capability:
+
+### Main API providers (the four chat routes)
+
+| Provider | Prefix | Flagship | **Context** | Use for |
+|----------|--------|----------|-------------|---------|
+| **DeepSeek** | `deepseek:` | `deepseek-v4-pro` / `-flash` | **1M** | **Long context (>256k)**, deep reasoning |
+| **Kimi** | `kimi:` | `kimi-k2.6` | 256k | Coding agents (Kimi-for-Coding) |
+| **MiniMax** | `minimax:` | `MiniMax-M2.7` | 256k | General chat, multimodal, web search, image / speech / music |
+| Xiaomi MiMo (Token Plan) | `xiaomi-tp:` | `mimo-v2.5-pro` (+ `mimo-v2.5`, `mimo-v2.5-tts`, `-voiceclone`, `-voicedesign`, `mimo-v2-omni` legacy) | 200k | Lite Monthly plan, 60M credits, 0.8x off-peak 16-24 UTC, TTS free for limited time |
+
+`/v1/models` exposes `context_length` for these. Pick by budget.
+
+### CLI providers (FREE — uses your subscriptions)
+
+| Prefix | CLI binary |
+|--------|------------|
+| `geminicli:` | `gemini` |
+| `claudecli:` | `claude` |
+| `codex:` | `codex` |
+| `vibe:` / `vibecli:` | `vibe` |
+| `qwencli:` | `qwen` |
+| `opencodecli:` | `opencode` |
+| `picli:` | `pi` (⚠ loop hazard if pi alias points back at switchAILocal) |
+| `kimicli:` | `kimi` |
+
+### Specialty / cloud
 
 | Provider | Prefix | Example Models |
 |----------|--------|----------------|
-| Gemini CLI | `geminicli:` | `gemini-2.5-pro`, `gemini-3-flash-preview` |
-| Claude CLI | `claudecli:` | `claude-sonnet-4` |
-| Ollama | `ollama:` | `qwen3.5:cloud`, `kimi-k2.5:cloud` |
-| Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile`, `whisper-large-v3` |
-| Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
-| Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
-| MiniMax | `minimax:` | `MiniMax-M2.7`, `image-01`, **`speech-02-hd`** |
-| switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast`, `switchai-embed` |
-| OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
+| Ollama (local) | `ollama:` | `qwen3-embedding:0.6b` (default embedding), `qwen3.5:cloud` |
+| Groq | `groq:` | `gpt-oss-20b`, `whisper-large-v3` (transcription) |
+| Z.ai | `zai:` | `glm-5.1` |
+| Inception Labs | `inception:` | `mercury-2` (diffusion LLM) |
+| switchAI Cloud | `switchai:` | `switchai-fast`, `switchai-chat`, `switchai-embed`, `switchai-reasoner` (legacy) |
 
 ## Capability Endpoints (for AI agents)
 
@@ -109,7 +134,7 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 | Endpoint | What it does | Default model | Notes |
 |----------|--------------|---------------|-------|
 | `POST /v1/chat/completions` | Chat / reasoning / vision | `minimax:MiniMax-M2.7` (via `model: "auto"`) | Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
-| `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallbacks: `switchai-embed`, alibaba `text-embedding-v3`. All return dim=1024. |
+| `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallback: `switchai-embed`. All return dim=1024. |
 | `POST /v1/images/generations` | Image generation | `minimax:image-01` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
 | `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |
 | `POST /v1/audio/speech` | Text → speech (TTS) | `minimax:speech-02-hd` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
@@ -204,7 +229,7 @@ Edit `~/.claude/settings.json`:
 {
   "providerSettings": {
     "anthropic": {
-      "model": "xiaomi:mimo-v2-pro"
+      "model": "minimax:MiniMax-M2.7"
     }
   }
 }
@@ -216,7 +241,7 @@ Edit `~/.claude/settings.json`:
 curl -s http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
-  -d '{"model":"xiaomi:mimo-v2-pro","messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"minimax:MiniMax-M2.7","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ---

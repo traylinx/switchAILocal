@@ -100,6 +100,59 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "--full-auto",
 		YoloFlag:            "--full-auto",
 	},
+	{
+		// Alibaba Qwen Code CLI — gemini-cli fork; same flag surface.
+		Name:                    "Alibaba Qwen Code CLI",
+		BinaryName:              "qwen",
+		ProviderKey:             constant.QwenCLI,
+		DefaultArgs:             []string{},
+		JSONFormatArgs:          []string{"--output-format=json"},
+		StreamFormatArgs:        []string{"--output-format=stream-json"},
+		SupportsJSON:            true,
+		SupportsStream:          true,
+		SupportsAttachments:     true,
+		AttachmentPrefix:        "@",
+		SandboxFlag:             "-s",
+		AutoApproveFlag:         "-y",
+		YoloFlag:                "--yolo",
+		SessionFlag:             "--resume=",
+		UseStdin:                true,
+		PositionalArgsSeparator: "--",
+	},
+	{
+		// SST OpenCode TUI/headless CLI.
+		Name:                "SST OpenCode CLI",
+		BinaryName:          "opencode",
+		ProviderKey:         constant.OpenCodeCLI,
+		DefaultArgs:         []string{"run"},
+		SupportsJSON:        false,
+		SupportsStream:      false,
+		SupportsAttachments: false,
+		AutoApproveFlag:     "--yolo",
+		YoloFlag:            "--yolo",
+	},
+	{
+		// Inflection Pi CLI.
+		Name:                "Inflection Pi CLI",
+		BinaryName:          "pi",
+		ProviderKey:         constant.PiCLI,
+		DefaultArgs:         []string{"-p"},
+		SupportsJSON:        false,
+		SupportsStream:      false,
+		SupportsAttachments: false,
+	},
+	{
+		// Moonshot Kimi CLI (Kimi-for-Coding).
+		Name:                "Moonshot Kimi CLI",
+		BinaryName:          "kimi",
+		ProviderKey:         constant.KimiCLI,
+		DefaultArgs:         []string{"-p"},
+		SupportsJSON:        false,
+		SupportsStream:      false,
+		SupportsAttachments: false,
+		AutoApproveFlag:     "--yolo",
+		YoloFlag:            "--yolo",
+	},
 }
 
 // DiscoverInstalledTools scans the system PATH for known CLI tools.

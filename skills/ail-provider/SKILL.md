@@ -72,3 +72,28 @@ If the verification ping succeeds, confirm to the user that their environment is
 2. **Always include the prefix.** `geminicli:gemini-2.5-pro` is correct. `gemini-2.5-pro` will fail if the user is expecting CLI-based access.
 3. **Shell Environment:** `set-provider.py` alters `~/.zshrc`. Remind the user they might need to restart their terminal if they intend to spawn new tabs, though Claude Code will pick up the `settings.json` changes immediately.
 4. **Use `auto` for Smart Routing:** If the user isn't sure which model to use, recommend the `auto` model ID to enable Cortex Auto-Routing.
+
+---
+
+## 🎯 Routing Cheatsheet (current main providers, 2026-04-26)
+
+When recommending a model, match the user's task to one of these:
+
+| Task | Model | Context | Why |
+|---|---|---|---|
+| General chat / multimodal / web search | `minimax:MiniMax-M2.7` | 256k | Multimodal flagship, native tools |
+| Coding agent | `kimi:kimi-k2.6` | 256k | Kimi-for-Coding tier |
+| **Long context (>256k) or deep reasoning** | `deepseek:deepseek-v4-pro` | **1M** | Only 1M model |
+| Faster long-context | `deepseek:deepseek-v4-flash` | 1M | Same window, cheaper |
+| Cheap chat / TTS | `xiaomi-tp:mimo-v2.5-pro` | 200k | Token Plan w/ free TTS |
+| Embeddings | `qwen3-embedding:0.6b` | — | Local Ollama, 1024-dim |
+| Transcription | `whisper-large-v3` | — | Groq |
+
+**Rule of thumb for the wizard:** ask the user what they're doing —
+"writing code" → kimi; "long doc / >256k prompt" → deepseek-v4-pro;
+"chat / agentic / multimedia" → minimax:MiniMax-M2.7. Or just set
+`model: "auto"` and let Cortex pick.
+
+For the always-current matrix, fetch `GET /v1/models` and read each
+entry's `context_length` field — the gateway exposes it for every
+declared model.

@@ -38,6 +38,18 @@ const (
 	// OpenCode represents the OpenCode provider identifier.
 	OpenCode = "opencode"
 
+	// QwenCLI represents the Alibaba Qwen Code CLI provider identifier.
+	QwenCLI = "qwencli"
+
+	// OpenCodeCLI represents the SST OpenCode CLI provider identifier.
+	OpenCodeCLI = "opencodecli"
+
+	// PiCLI represents the Inflection Pi CLI provider identifier.
+	PiCLI = "picli"
+
+	// KimiCLI represents the Moonshot Kimi CLI provider identifier.
+	KimiCLI = "kimicli"
+
 	// MaxStreamingScannerBuffer is the maximum buffer size for the streaming scanner (1MB).
 	MaxStreamingScannerBuffer = 1 * 1024 * 1024
 )

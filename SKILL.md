@@ -41,6 +41,31 @@ Unified LLM proxy and intelligent router for AI agents. Always use `http://local
 
 ---
 
+## 🎯 Quick Routing Cheatsheet (read this first)
+
+Pick the model by **prompt budget** and **capability**. The four mains:
+
+| Need | Model | Why |
+|---|---|---|
+| Chat / multimodal (image+audio) / web_search / image-gen / TTS / music | `minimax:MiniMax-M2.7` (256k) | Multimodal flagship, native web_search tool, all media endpoints |
+| Coding agent work | `kimi:kimi-k2.6` (256k) | Kimi-for-Coding tier, optimized for agentic code |
+| **Long context (>256k)** or **deep reasoning** | `deepseek:deepseek-v4-pro` (1M) / `deepseek-v4-flash` (1M) | Only 1M-context model in stack, 384k max output |
+| Cheap chat backup | `xiaomi-tp:mimo-v2.5-pro` (200k) | Lite Token Plan, 60M credits/mo, free TTS family |
+| Embeddings | `qwen3-embedding:0.6b` (local Ollama) | 1024-dim, free, private |
+| Audio transcription | `whisper-large-v3` (Groq) | Cheap + fast |
+
+**Auto-routing shortcut:** send `model: "auto"` for general chat; `model: "auto:coding"` → kimi; `model: "auto:long_ctx"` → deepseek-v4-pro. Or read `context_length` directly from `GET /v1/models` and pick.
+
+**Capability endpoints (all OpenAI-shape):**
+- `POST /v1/chat/completions` — chat, vision, web_search, tools
+- `POST /v1/embeddings` — qwen3-embedding:0.6b default
+- `POST /v1/images/generations` — minimax:image-01 default
+- `POST /v1/audio/transcriptions` — whisper-large-v3 default
+- `POST /v1/audio/speech` — minimax:speech-02-hd default
+- `POST /v1/music/generations` + `/v1/music/lyrics` — minimax:music-2.6
+
+---
+
 ## 🤖 Agent Auto-Setup (Zero-Config Bootstrap)
 
 Follow these steps IN ORDER to bootstrap switchAILocal from scratch on a user's machine.
@@ -145,31 +170,66 @@ You should see a JSON response listing all available models/providers.
 
 ## 🏗️ Provider Reference
 
-### 1. CLI Providers (FREE!)
-Uses your human's CLI subscriptions. Best for agents.
+### 1. CLI Providers (FREE — uses your subscriptions)
 
-| Prefix       | CLI      | Subscription Required |
-| ------------ | -------- | --------------------- |
-| `geminicli:` | `gemini` | Google AI Premium/Pro |
-| `claudecli:` | `claude` | Claude Pro/Max        |
-| `codex:`     | `codex`  | OpenAI Plus           |
-| `vibe:`      | `vibe`   | Mistral Le Chat       |
+| Prefix          | CLI        | Subscription          |
+| --------------- | ---------- | --------------------- |
+| `geminicli:`    | `gemini`   | Google AI Premium/Pro |
+| `claudecli:`    | `claude`   | Claude Pro/Max        |
+| `codex:`        | `codex`    | OpenAI Plus           |
+| `vibe:`         | `vibe`     | Mistral Le Chat       |
+| `qwencli:`      | `qwen`     | (free Alibaba CLI)    |
+| `opencodecli:`  | `opencode` | (open-source TUI)     |
+| `picli:`        | `pi`       | (caution: loop hazard if pi alias points back at switchAILocal) |
+| `kimicli:`      | `kimi`     | Kimi-for-Coding key   |
 
-### 2. Local & Cloud
+### 2. API Providers (the four "main" routes)
 
-| Prefix      | Source         | Cost                   |
-| ----------- | -------------- | ---------------------- |
-| `ollama:`   | Local Ollama   | FREE                   |
-| `auto`      | Cortex Router  | FREE (auto-selects)    |
-| `switchai:` | Traylinx Cloud | Per-token              |
+| Prefix      | Flagship Model            | Context | What it's for                                |
+| ----------- | ------------------------- | ------- | -------------------------------------------- |
+| `deepseek:` | `deepseek-v4-pro` / `-flash` | **1M**  | Long-context (>256k prompts), deep reasoning |
+| `kimi:`     | `kimi-k2.6`               | 256k    | Coding agents (Kimi-for-Coding tier)         |
+| `minimax:`  | `MiniMax-M2.7`            | 256k    | General chat, multimodal (text+image+audio), web search, image/speech/music gen |
+| `xiaomi-tp:`| `mimo-v2.5-pro` (+ v2.5 base, TTS family, v2-omni legacy) | 200k | Xiaomi MiMo Token Plan (60M credits/mo, 0.8x off-peak 16-24 UTC, TTS free for limited time) |
 
-### 3. switchAI Cloud Aliases
+### 3. Local & Cloud
 
-| Alias              | Upstream Model        | Best For      |
-| ------------------ | --------------------- | ------------- |
-| `switchai-fast`    | `openai/gpt-oss-20b`  | Fast tasks    |
-| `switchai-chat`    | `openai/gpt-oss-20b`  | Conversation  |
-| `switchai-reasoner`| `deepseek-reasoner`   | Deep thinking |
+| Prefix      | Source         | Cost                |
+| ----------- | -------------- | ------------------- |
+| `ollama:`   | Local Ollama   | FREE                |
+| `auto`      | Cortex Router  | FREE (auto-selects) |
+| `switchai:` | Traylinx Cloud | Per-token           |
+| `groq:`     | Groq Cloud     | Per-token           |
+| `zai:`      | Zhipu          | Per-token           |
+| `inception:`| InceptionLabs  | Per-token           |
+
+### 4. switchAI Cloud Aliases
+
+| Alias              | Upstream Model       | Best For      |
+| ------------------ | -------------------- | ------------- |
+| `switchai-fast`    | `openai/gpt-oss-20b` | Fast tasks    |
+| `switchai-chat`    | `openai/gpt-oss-20b` | Conversation  |
+| `switchai-reasoner`| `deepseek-reasoner`  | Deep thinking (legacy — use `deepseek:deepseek-v4-pro` instead) |
+| `switchai-embed`   | `mistral-embed`      | Embedding fallback |
+
+---
+
+## 🧮 Context-Window Tiers (consumer apps: read this)
+
+Pick the provider whose `context_length` ≥ your prompt token estimate. The
+gateway exposes `context_length` per model in `GET /v1/models` so callers
+can route deterministically:
+
+| Token budget | Route to                       | Why                          |
+| ------------ | ------------------------------ | ---------------------------- |
+| ≤ 200k       | `xiaomi-tp:mimo-v2.5-pro` (or any) | Cheapest available — uses 60M plan credits |
+| ≤ 256k       | `kimi:kimi-k2.6` (coding) or `minimax:MiniMax-M2.7` (everything else) | Multimodal/coding flagships  |
+| **> 256k, ≤ 1M** | `deepseek:deepseek-v4-pro` | **The only 1M-context model** in the stack |
+
+The intent matrix already wires this: `auto:long_ctx` and `auto:long_context`
+route to `deepseek:deepseek-v4-pro` automatically. Consumer apps can either
+read `context_length` from `/v1/models` and pick directly, or send
+`model: "auto:long_ctx"` and let the router decide.
 
 ---
 
@@ -422,6 +482,72 @@ curl http://localhost:18080/v1/audio/transcriptions \
 ```
 
 Returns `{text: "..."}`. Supports `whisper-large-v3` (accurate) and `whisper-large-v3-turbo` (fast).
+
+---
+
+## 🧠 DeepSeek-V4 (1M Context Tier)
+
+The only 1M-context model in the stack. Route here when your prompt ≥ 256k
+or when you need 384k of output budget. Two SKUs, both 1M context:
+
+- `deepseek:deepseek-v4-pro` — flagship, thinking mode default.
+- `deepseek:deepseek-v4-flash` — faster/cheaper.
+
+### Instant mode (answer in `content`)
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek:deepseek-v4-flash",
+    "messages": [{"role":"user","content":"Capital of France?"}],
+    "max_tokens": 4096,
+    "thinking": {"type":"disabled"}
+  }'
+```
+
+### Thinking mode (deep reasoning — answer in `content`, chain of thought in `reasoning_content`)
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek:deepseek-v4-pro",
+    "messages": [{"role":"user","content":"Solve 3x+5=20"}],
+    "thinking": {"type":"enabled"},
+    "reasoning_effort": "high",
+    "max_tokens": 4096
+  }'
+```
+
+> Direct upstream URL is `https://api.deepseek.com/v1` (Anthropic-compatible variant at `/anthropic`). Through the gateway, just use `deepseek:<model>` — the proxy attaches the right key.
+
+---
+
+## 🤖 Kimi-K2.6 (Coding Tier, 256k)
+
+Routed via `kimi:kimi-k2.6`. Same OpenAI-compatible shape. Defaults to
+thinking mode — disable for instant `content`:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "kimi:kimi-k2.6",
+    "messages": [{"role":"user","content":"Refactor this function: ..."}],
+    "max_tokens": 4096,
+    "thinking": {"type":"disabled"}
+  }'
+```
+
+Also supports: streaming (`stream:true`), vision via inline base64 PNG/JPG
+(remote URLs not supported on this tier), custom tool calling, and the
+built-in `$web_search` tool (2-step round-trip — see
+`references/examples.md`).
+
+> **Why no 401 from Kimi:** the Kimi-for-Coding endpoint gates by
+> User-Agent. The gateway forwards a `User-Agent: claude-cli/...` header
+> on your behalf, which the upstream allowlist accepts. Direct curl
+> against `api.kimi.com/coding/v1` from a generic UA returns 403
+> `access_terminated_error`. Always call through the gateway.
 
 ---
 

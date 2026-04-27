@@ -339,13 +339,14 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 							modelID = m.Name
 						}
 						ms = append(ms, &ModelInfo{
-							ID:          modelID,
-							Object:      "model",
-							Created:     time.Now().Unix(),
-							OwnedBy:     compat.Name,
-							Type:        "openai-compatibility",
-							DisplayName: modelID,
-							NativeTools: convertConfigNativeTools(m.NativeTools),
+							ID:            modelID,
+							Object:        "model",
+							Created:       time.Now().Unix(),
+							OwnedBy:       compat.Name,
+							Type:          "openai-compatibility",
+							DisplayName:   modelID,
+							ContextLength: m.ContextLength,
+							NativeTools:   convertConfigNativeTools(m.NativeTools),
 						})
 					}
 
