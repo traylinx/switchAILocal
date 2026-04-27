@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-04-27 - Path Traversal in auth_files.go Management Handlers
+**Vulnerability:** The `UploadAuthFile` and `DeleteAuthFile` management endpoints relied on `strings.Contains(name, string(os.PathSeparator))` to prevent path traversal when processing `name` query parameters.
+**Learning:** Using `os.PathSeparator` is insufficient for preventing path traversal as it only checks for the host OS separator (e.g., `/` on Linux), potentially allowing traversal using alternate separators (like `\` from Windows) if the underlying OS allows it or if `filepath.Clean` normalizes them.
+**Prevention:** Use `strings.ContainsAny(name, "/\\")` for input validation of paths/filenames from untrusted sources, ensuring all potential path separator characters are checked.
