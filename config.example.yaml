@@ -95,8 +95,8 @@ streaming:
 performance:
   circuit-breaker:
     enabled: true
-    failure-threshold: 5    # consecutive failures before circuit opens
-    reset-timeout: 30s      # time in OPEN state before HALF_OPEN probe
+    failure-threshold: 3    # consecutive failures before circuit opens (lower = faster failover)
+    reset-timeout: 5m       # time in OPEN state before HALF_OPEN probe
     half-open-max: 3        # probe requests allowed in HALF_OPEN
   provider-timeouts:
     # Fallback used when a provider has no explicit entry below.
@@ -146,17 +146,18 @@ auto-routing:
     latency: 0.20
     success-rate: 0.20
 
-  # Soft-steering logic to boost specific models
+  # Soft-steering logic to boost specific models. Prefer primary + backup
+  # pairs so the circuit breaker can failover gracefully.
   preferences:
-    - model: "gemini:gemini-2.5-flash"
+    - model: "minimax:MiniMax-M2.7"
+      preference: 1.0
+      reason: "primary reasoning model"
+    - model: "kimi:kimi-k2.6"
       preference: 0.8
-      reason: "Preferred fast model"
-    - model: "claude:claude-3-5-sonnet-20241022"
-      preference: 0.9
-      reason: "Preferred reasoning model"
-    - model: "switchai:switchai-fast"
+      reason: "backup reasoning model — mutual failover with minimax"
+    - model: "deepseek:deepseek-v4-flash"
       preference: 0.7
-      reason: "Fallback fast switchai model"
+      reason: "fallback fast model"
 
   # Tier and constraint definition overrides per provider
   providers:
@@ -346,6 +347,25 @@ openai-compatibility:
       - name: "music-cover"
         alias: "minimax:music-cover"
 
+  # Kimi K2.6 — mutual failover pair with MiniMax. See docs/fallback-strategy.md.
+  #
+  # Kimi K2.6 supports 256k context and coding-modal input. Used as backup
+  # for MiniMax in all intent categories (and vice versa). Both providers
+  # ride the circuit breaker so 3 consecutive failures on one routes to the
+  # other for 5 minutes before the probe retry.
+  - name: "kimi"
+    prefix: "kimi"
+    base-url: "https://api.kimi.com/coding/v1"
+    models-url: "https://api.kimi.com/coding/v1/models"
+    headers:
+      User-Agent: "switchAILocal/v0.5"
+    api-key-entries:
+      - api-key: "sk-kimi-..."
+    models:
+      - name: "kimi-k2.6"
+        alias: "kimi:kimi-k2.6"
+        context_length: 256000
+
 # -- VERTEX COMPATIBILITY --
 # For third-party providers using Vertex-style protocols
 # vertex-api-key:
@@ -374,34 +394,25 @@ intelligence:
   # model. Specialized slots (image_gen, transcription, speech, embedding,
   # web_search) are used by their dedicated endpoints — see below.
   matrix:
-    coding: "switchai-chat"
-    reasoning: "switchai-reasoner"
-    fast: "switchai-fast"
+    coding:
+      - "kimi:kimi-k2.6"
+      - "minimax:MiniMax-M2.7"
+    reasoning:
+      - "minimax:MiniMax-M2.7"
+      - "kimi:kimi-k2.6"
+    fast:
+      - "minimax:MiniMax-M2.7"
+      - "kimi:kimi-k2.6"
     secure: "ollama:llama3.2"
-    vision: "minimax:MiniMax-M2.7"              # MiniMax-M2.7 is multimodal
-    audio: "minimax:MiniMax-M2.7"
+    vision: "kimi:kimi-k2.6"                       # Kimi K2.6 is multimodal
+    audio: "kimi:kimi-k2.6"
     embedding: "switchai-embed"
-    image_gen: "minimax:image-01"               # POST /v1/images/generations
-    transcription: "whisper-large-v3"           # POST /v1/audio/transcriptions (via groq)
-    # speech: POST /v1/audio/speech — routed through the MiniMax T2A adapter
-    # when the upstream is MiniMax. Adapter translates OpenAI shape to MiniMax
-    # /v1/t2a_pro. Use MiniMax voice IDs (e.g. male-qn-qingse) — OpenAI voice
-    # names (alloy, echo, fable...) are NOT aliased. See docs/user/api-reference.md.
+    image_gen: "minimax:image-01"                  # POST /v1/images/generations
+    transcription: "whisper-large-v3"              # POST /v1/audio/transcriptions (via groq)
     speech: "minimax:speech-02-hd"
-    # web_search: MiniMax M2.7 supports built-in web_search via chat completion
-    # tools=[{"type":"web_search"}]. Requires max_tokens >= 2000 (search inflates
-    # prompt context to 6k–13k tokens). See docs/user/api-reference.md.
     web_search: "minimax:MiniMax-M2.7"
-    # music_generation: POST /v1/music/generations — MiniMax music-2.6 for
-    # text-to-music. Adapter translates response {data.audio: hex-encoded MP3}
-    # to {data.audio: base64, duration_ms, sample_rate, channels, bitrate}.
-    # See docs/user/api-reference.md § Music Generation.
     music_generation: "minimax:music-2.6"
-    # music_cover: same POST /v1/music/generations endpoint but with model set
-    # to minimax:music-cover and body carrying audio_url OR audio_base64.
     music_cover: "minimax:music-cover"
-    # lyrics_generation: POST /v1/music/lyrics — MiniMax-native lyrics writer.
-    # Accepts {mode: "write_full_song"|"edit", prompt, lyrics?, title?}.
     lyrics_generation: "minimax:music-2.6"
 
   # -- PHASE 2 FEATURES --
@@ -505,7 +516,7 @@ superbrain:
 
   fallback:
     enabled: true
-    providers: ["geminicli", "gemini", "ollama"]
+    providers: ["kimi", "deepseek", "geminicli"]
     min_success_rate: 0.5
 
 # =============================================================================
