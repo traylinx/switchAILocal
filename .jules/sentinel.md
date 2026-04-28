@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2024-03-22 - Prevent MITM via InsecureSkipVerify
+**Vulnerability:** Found `InsecureSkipVerify: true` in `http.Transport` for testing proxies and discovering models.
+**Learning:** Hardcoding insecure TLS validation for testing proxies bypasses certificate verification, introducing a severe risk of Man-in-the-Middle (MITM) attacks.
+**Prevention:** Never use `InsecureSkipVerify: true` in production code. Management handlers must enforce standard TLS certificate validation without any insecure overrides.
