@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - [Optimize json.Unmarshal failures]
+**Learning:** Relying on json.Unmarshal failure for type detection is slow due to reflection overhead. Using bytes.TrimSpace and checking the first byte (e.g., [ for array, " for string) prevents expensive unmarshaling errors.
+**Action:** Always check the first byte of json.RawMessage before calling json.Unmarshal when the type is ambiguous.

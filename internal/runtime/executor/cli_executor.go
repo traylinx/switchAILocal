@@ -58,7 +58,6 @@ func ensureCLISandbox() string {
 	return cliSandboxPath
 }
 
-
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
 type CLIExecutionError struct {
@@ -645,14 +644,16 @@ func parseMessages(data []byte) (string, error) {
 	for _, msg := range req.Messages {
 		var contentStr string
 
-		// Try string first
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			// Try array
+		contentBytes := bytes.TrimSpace(msg.Content)
+		// Optimize type detection by checking first byte to avoid slow json.Unmarshal failures
+		if len(contentBytes) > 0 && contentBytes[0] == '"' { // string
+			var simpleContent string
+			if err := json.Unmarshal(contentBytes, &simpleContent); err == nil {
+				contentStr = simpleContent
+			}
+		} else if len(contentBytes) > 0 && contentBytes[0] == '[' { // array
 			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+			if err := json.Unmarshal(contentBytes, &parts); err == nil {
 				for _, part := range parts {
 					if part.Type == "text" {
 						contentStr += part.Text

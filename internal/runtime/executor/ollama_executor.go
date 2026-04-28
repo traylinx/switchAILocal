@@ -119,14 +119,16 @@ func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor
 		var contentStr string
 		var images []string
 
-		// Try to unmarshal content as string first
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			// Try as array of parts
+		contentBytes := bytes.TrimSpace(msg.Content)
+		// Optimize type detection by checking first byte to avoid slow json.Unmarshal failures
+		if len(contentBytes) > 0 && contentBytes[0] == '"' { // string
+			var simpleContent string
+			if err := json.Unmarshal(contentBytes, &simpleContent); err == nil {
+				contentStr = simpleContent
+			}
+		} else if len(contentBytes) > 0 && contentBytes[0] == '[' { // array
 			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+			if err := json.Unmarshal(contentBytes, &parts); err == nil {
 				for _, part := range parts {
 					if part.Type == "text" {
 						contentStr += part.Text
@@ -285,12 +287,16 @@ func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req ex
 		var contentStr string
 		var images []string
 
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
+		contentBytes := bytes.TrimSpace(msg.Content)
+		// Optimize type detection by checking first byte to avoid slow json.Unmarshal failures
+		if len(contentBytes) > 0 && contentBytes[0] == '"' { // string
+			var simpleContent string
+			if err := json.Unmarshal(contentBytes, &simpleContent); err == nil {
+				contentStr = simpleContent
+			}
+		} else if len(contentBytes) > 0 && contentBytes[0] == '[' { // array
 			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
+			if err := json.Unmarshal(contentBytes, &parts); err == nil {
 				for _, part := range parts {
 					if part.Type == "text" {
 						contentStr += part.Text
