@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2024-05-18 - Avoid fmt.Sprintf in hot paths
+**Learning:** `fmt.Sprintf` uses reflection and allocations which degrades performance when repeatedly formatting simple strings like server-sent events (SSE) chunks.
+**Action:** Replace `fmt.Sprintf` with string concatenation (`+`) or `strconv` conversions in streaming and hot API translation paths for SSE and Data URIs to eliminate reflection overhead and minimize memory allocations per chunk.
