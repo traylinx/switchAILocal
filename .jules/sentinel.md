@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-05 - SSRF and Command Injection in OS URL Handlers
+**Vulnerability:** `exec.Command` in `browser.go` was susceptible to Command Injection and SSRF. Handlers opened untrusted URLs directly with `open` and `rundll32`. An attacker could provide paths like `file:///etc/passwd` or `javascript:...` to be evaluated.
+**Learning:** Naive prefix checks or trusting platform handlers is inadequate. The `net/url` standard library provides robust parsing. `url` shadows the standard package, so the parameter should be renamed to `rawurl`.
+**Prevention:** Explicitly use `net/url.Parse()` on `rawurl` and assert `parsedURL.Scheme` is either `http` or `https`. Deny all other schemes.
