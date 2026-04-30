@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-04-30 - Fix MITM Vulnerability in Management API
+**Vulnerability:** Management API handlers used `InsecureSkipVerify: true` in HTTP clients.
+**Learning:** Insecure proxy configurations bypass TLS validation, exposing sensitive requests (e.g. proxying to discover models, test credentials) to MITM attacks.
+**Prevention:** Never use `InsecureSkipVerify: true` in production HTTP clients, even for internal testing endpoints or proxy setups. Standard certificate validation must always be enforced.
