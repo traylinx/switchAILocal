@@ -12,7 +12,8 @@ package claude
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"strconv"
+
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -825,5 +826,5 @@ func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, origina
 }
 
 func ClaudeTokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"input_tokens":%d}`, count)
+	return `{"input_tokens":` + strconv.FormatInt(int64(count), 10) + `}`
 }
