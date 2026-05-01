@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-01 - URL Scheme Validation in OS Exec Commands
+**Vulnerability:** Unvalidated URL parameters passed to `exec.Command` in `browser.OpenURL` can lead to command injection or SSRF if malicious schemes (like `file://`) are used.
+**Learning:** Even without shell injection (`sh -c`), passing untrusted URLs to browser execution commands is unsafe because local protocols or unexpected arguments can be leveraged maliciously.
+**Prevention:** Safely validate URL schemes using `net/url.Parse()` and checking `.Scheme` against `http` and `https`, rather than using naive string prefix checks. Additionally, name the variable `rawurl` instead of `url` to avoid shadowing the `net/url` standard library package.
