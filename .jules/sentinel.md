@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-02 - Prevent Command Injection and SSRF in URL Handler
+**Vulnerability:** OS-specific URL handlers (e.g., exec.Command("open", url)) lacked validation of the URL scheme, allowing potential arbitrary command execution or file access via malicious schemes (e.g., file://).
+**Learning:** Naive string prefix checks are insufficient. The parameter url shadowed the net/url package, preventing proper standard library usage.
+**Prevention:** Rename url to rawurl, and validate URL schemes strictly using net/url.Parse() and checking .Scheme against "http" and "https". Focus tests exclusively on negative test cases to prevent launching physical browsers during tests.
