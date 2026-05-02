@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-05-02 - Optimize SSE chunk building in hot paths
+**Learning:** Using `fmt.Sprintf` to generate SSE JSON chunks and then converting to `[]byte` introduces unnecessary reflection overhead and allocates multiple times per chunk, making it a critical bottleneck in streaming hot paths.
+**Action:** Pre-allocate a `[]byte` using `make([]byte, 0, capacity)` and use `append` with `strconv.AppendInt` to construct strings efficiently. This reduces memory allocations and improves throughput per chunk drastically.
