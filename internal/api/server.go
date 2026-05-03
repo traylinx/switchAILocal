@@ -485,6 +485,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		autoResolver = autoroute.NewAutoResolver(cfg.AutoRouting, filepath.Dir(configFilePath))
 		autoResolver.SeedCandidates(candidates)
 		autoResolver.StartMonitor(context.Background())
+		autoResolver.StartLab(context.Background())
 		log.WithField("candidates", len(candidates)).Info("Intelligent Auto-Routing Ready")
 	}
 

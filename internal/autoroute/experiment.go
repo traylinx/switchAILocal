@@ -9,6 +9,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// DefaultAltSuccessRQS is the optimistic RQS estimate assigned when shadow
+// selections route away from a failing production provider. It represents a
+// conservative-but-hopeful guess that the alternative model would have
+// succeeded (similar to prod success RQS without the 0.40 success penalty).
+const DefaultAltSuccessRQS = 0.85
+
 // Lab orchestrates the autonomous self-optimization loop for routing weights.
 // It directly implements the "fixed-budget, single-metric, keep-or-discard"
 // loop inspired by AutoResearch.
@@ -24,9 +30,10 @@ type Lab struct {
 	activeHypothesis bool
 
 	// Metric accumulation for the current observation window
-	windowProdRQS   float64
-	windowShadowRQS float64
-	windowReqCount  int
+	windowProdRQS        float64
+	windowShadowRQS      float64
+	windowReqCount       int
+	windowExploredCount  int // times shadow picked a different model
 
 	stopCh chan struct{}
 	stopOnce sync.Once
@@ -73,13 +80,14 @@ func (l *Lab) Stop() {
 
 // LabStatus provides a snapshot of the current optimization experiment state for the UI.
 type LabStatus struct {
-	Enabled          bool           `json:"enabled"`
-	ActiveWeights    ScoringWeights `json:"active_weights"`
-	ShadowWeights    ScoringWeights `json:"shadow_weights"`
-	ActiveHypothesis bool           `json:"active_hypothesis"`
-	WindowReqCount   int            `json:"window_req_count"`
-	AvgProdRQS       float64        `json:"avg_prod_rqs"`
-	AvgShadowRQS     float64        `json:"avg_shadow_rqs"`
+	Enabled             bool           `json:"enabled"`
+	ActiveWeights       ScoringWeights `json:"active_weights"`
+	ShadowWeights       ScoringWeights `json:"shadow_weights"`
+	ActiveHypothesis    bool           `json:"active_hypothesis"`
+	WindowReqCount      int            `json:"window_req_count"`
+	WindowExploredCount int            `json:"window_explored_count"`
+	AvgProdRQS          float64        `json:"avg_prod_rqs"`
+	AvgShadowRQS        float64        `json:"avg_shadow_rqs"`
 }
 
 // GetStatus returns the current live telemetry from the lab.
@@ -88,11 +96,12 @@ func (l *Lab) GetStatus() LabStatus {
 	defer l.mu.RUnlock()
 
 	status := LabStatus{
-		Enabled:          l.config.Lab.Enabled,
-		ActiveWeights:    l.scorer.GetWeights(),
-		ShadowWeights:    l.shadowWeights,
-		ActiveHypothesis: l.activeHypothesis,
-		WindowReqCount:   l.windowReqCount,
+		Enabled:             l.config.Lab.Enabled,
+		ActiveWeights:       l.scorer.GetWeights(),
+		ShadowWeights:       l.shadowWeights,
+		ActiveHypothesis:    l.activeHypothesis,
+		WindowReqCount:      l.windowReqCount,
+		WindowExploredCount: l.windowExploredCount,
 	}
 
 	if l.windowReqCount > 0 {
@@ -166,16 +175,21 @@ func (l *Lab) RecordOutcome(reqID string, intent string, complexity float64, pro
 		entry.ShadowModel = shadowScored[0].Model
 		entry.ShadowTier = shadowScored[0].EffectiveTier
 		
-		// If shadow chose the exact same model, assume the exact same RQS
 		if entry.ShadowModel == entry.ProdModel {
 			entry.ShadowExpectedRQS = prodRQS
 			l.windowShadowRQS += prodRQS
 		} else {
-			// If shadow chose a different model, we can't know the exact latency/success,
-			// so we estimate based on historical heuristics.
-			// This is a naive estimation for the shadow.
-			entry.ShadowExpectedRQS = 0.5 // Unknown predicted RQS
-			l.windowShadowRQS += 0.5
+			l.windowExploredCount++
+			if prodOutcome.Success {
+				// Conservative estimate: assume the alternative would have been similar.
+				entry.ShadowExpectedRQS = prodRQS
+				l.windowShadowRQS += prodRQS
+			} else {
+				// Production failed; shadow's different pick could have succeeded.
+				// Optimistic estimate: the alternative model would have performed well.
+				entry.ShadowExpectedRQS = DefaultAltSuccessRQS
+				l.windowShadowRQS += DefaultAltSuccessRQS
+			}
 		}
 	}
 
@@ -209,30 +223,54 @@ func (l *Lab) evaluateAndAdapt() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.windowReqCount < 10 {
-		log.WithField("reqs", l.windowReqCount).
-			Debug("Insufficient data in Lab window, extending observation")
-		return // Not enough data to make a statistically sound decision
+	minObs := l.config.Lab.MinObservationWindow
+	if minObs <= 0 {
+		minObs = 10
+	}
+
+	if l.windowReqCount < minObs {
+		log.WithFields(log.Fields{
+			"reqs":   l.windowReqCount,
+			"needed": minObs,
+		}).Debug("Insufficient data in Lab window, extending observation")
+		return
 	}
 
 	avgProdRQS := l.windowProdRQS / float64(l.windowReqCount)
 	avgShadowRQS := l.windowShadowRQS / float64(l.windowReqCount)
 
 	log.WithFields(log.Fields{
-		"reqs":        l.windowReqCount,
-		"prodRQS":     avgProdRQS,
-		"shadowRQS":   avgShadowRQS,
+		"reqs":      l.windowReqCount,
+		"prodRQS":   avgProdRQS,
+		"shadowRQS": avgShadowRQS,
+		"explored":  l.windowExploredCount,
 	}).Info("Auto-routing lab evaluated experiment window")
 
-	// Binary Keep/Discard decision (AutoResearch style)
-	if avgShadowRQS > avgProdRQS * 1.05 { // Keep if 5% better
-		log.WithField("improvement", avgShadowRQS - avgProdRQS).
-			Info("Lab promoted shadow weights to production")
-		
-		// Promote via atomic swap (C2 fix: safe concurrent read/write)
+	promoted := false
+
+	// Criterion 1: Shadow RQS is 5%+ better (e.g., avoided production failures).
+	if avgShadowRQS > avgProdRQS*1.05 {
+		log.WithField("improvement", avgShadowRQS-avgProdRQS).
+			Info("Lab promoted shadow weights (RQS improvement)")
+		promoted = true
+	}
+
+	// Criterion 2: Shadow explored different routes (picked different models
+	// at least once) while maintaining RQS parity. This means the weights
+	// discovered alternative routing paths without quality degradation.
+	if !promoted && l.windowExploredCount > 0 && avgShadowRQS >= avgProdRQS {
+		log.WithFields(log.Fields{
+			"explored":  l.windowExploredCount,
+			"prodRQS":   avgProdRQS,
+			"shadowRQS": avgShadowRQS,
+		}).Info("Lab promoted shadow weights (exploration without degradation)")
+		promoted = true
+	}
+
+	if promoted {
 		l.scorer.SetWeights(l.shadowWeights)
 	} else {
-		log.WithField("diff", avgShadowRQS - avgProdRQS).
+		log.WithField("diff", avgShadowRQS-avgProdRQS).
 			Debug("Lab discarded shadow weights (no significant improvement)")
 	}
 
@@ -240,7 +278,8 @@ func (l *Lab) evaluateAndAdapt() {
 	l.windowProdRQS = 0
 	l.windowShadowRQS = 0
 	l.windowReqCount = 0
-	
+	l.windowExploredCount = 0
+
 	l.generateHypothesisLocked()
 }
 

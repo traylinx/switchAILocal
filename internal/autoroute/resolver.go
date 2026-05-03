@@ -95,10 +95,17 @@ func (r *AutoResolver) GetCandidates() []CandidateInput {
 	return r.candidates
 }
 
-// StartMonitor begins background health checks
+// StartMonitor begins background health checks.
 func (r *AutoResolver) StartMonitor(ctx context.Context) {
 	if r.monitor != nil {
 		r.monitor.Start(ctx)
+	}
+}
+
+// StartLab begins the autonomous self-optimization loop if enabled in config.
+func (r *AutoResolver) StartLab(ctx context.Context) {
+	if r.lab != nil {
+		r.lab.Start(ctx)
 	}
 }
 

@@ -107,9 +107,10 @@ type DiscoveryConfig struct {
 
 // LabConfig controls the autonomous self-optimization engine (autoresearch plugin equivalent).
 type LabConfig struct {
-	Enabled            bool          `yaml:"enabled" json:"enabled"`
-	AdaptationInterval time.Duration `yaml:"adaptation-interval" json:"adaptation_interval"`
-	MaxWeightDrift     float64       `yaml:"max-weight-drift" json:"max_weight_drift"`
+	Enabled             bool          `yaml:"enabled" json:"enabled"`
+	AdaptationInterval  time.Duration `yaml:"adaptation-interval" json:"adaptation_interval"`
+	MaxWeightDrift      float64       `yaml:"max-weight-drift" json:"max_weight_drift"`
+	MinObservationWindow int          `yaml:"min-observation-window" json:"min_observation_window"` // min requests before evaluating (default 10)
 }
 
 // ScoringWeights represent the importance of different health metrics.
