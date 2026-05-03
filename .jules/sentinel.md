@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-05-03 - Fix CWE-276 in file writes
+**Vulnerability:** Cached discovery entries and model registries were being written with 0644 permissions, allowing read access to other users.
+**Learning:** Using default 0644 permissions for sensitive data caching or registry files can expose sensitive system data to unauthorized local users.
+**Prevention:** Always restrict file creation permissions to 0600 or less for files that contain sensitive application data.
