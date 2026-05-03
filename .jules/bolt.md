@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE string concatenation in streaming handlers
+**Learning:** `fmt.Sprintf` incurs reflection overhead and unnecessary allocations which is expensive when used repeatedly in the hot path of streaming API responses.
+**Action:** Replaced `fmt.Sprintf` with direct string concatenation (+), `strconv.Itoa`, and string literal injection for SSE event/data building and data URI construction across translator response handlers to minimize per-chunk overhead.
