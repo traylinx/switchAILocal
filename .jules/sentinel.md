@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-04 - Enforce TLS Verification in Management Handlers
+**Vulnerability:** The management handlers (`test_provider.go` and `discover_models.go`) used `InsecureSkipVerify: true` in their HTTP transport's TLS configuration.
+**Learning:** Hardcoding `InsecureSkipVerify: true` bypasses TLS certificate validation, completely undermining HTTPS security and exposing API keys and provider configurations to Man-in-the-Middle (MITM) attacks. This is a severe security flaw, even if initially intended for testing or local proxies.
+**Prevention:** Never use `InsecureSkipVerify: true` in production HTTP clients, especially those handling sensitive credentials or making external API calls. Management handlers must strictly enforce standard TLS certificate validation.

@@ -5,7 +5,6 @@
 package management
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -157,7 +156,6 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 		} else {
 			client.Transport = &http.Transport{
 				Proxy:           http.ProxyURL(pURL),
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			}
 			tests["proxy"] = gin.H{"passed": true, "message": "Proxy configured"}
 		}
