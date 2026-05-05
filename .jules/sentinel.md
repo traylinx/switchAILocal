@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Prevent MITM in proxy transports
+**Vulnerability:** Management API handlers used `InsecureSkipVerify: true` in `http.Transport` configurations when proxy URLs were provided.
+**Learning:** Hardcoding insecure TLS bypasses, even for testing or developer convenience, exposes API gateways to trivial Man-in-the-Middle (MITM) attacks and triggers `gosec` G402 warnings.
+**Prevention:** Never use `InsecureSkipVerify: true` programmatically. Enforce standard TLS certificate validation. If testing against self-signed certs is required, modify the system trust store rather than bypassing validation in code.
