@@ -119,28 +119,28 @@ func (e *OllamaExecutor) Execute(ctx context.Context, _ *auth.Auth, req executor
 		var contentStr string
 		var images []string
 
-		// Try to unmarshal content as string first
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			// Try as array of parts
-			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
-				for _, part := range parts {
-					if part.Type == "text" {
-						contentStr += part.Text
-					} else if part.Type == "image_url" && part.ImageURL != nil {
-						// Extract base64 from data URL if present
-						// Format: data:image/png;base64,....
-						if strings.HasPrefix(part.ImageURL.URL, "data:") {
-							parts := strings.Split(part.ImageURL.URL, ",")
-							if len(parts) == 2 {
-								images = append(images, parts[1])
+		trimmedContent := bytes.TrimSpace(msg.Content)
+		if len(trimmedContent) > 0 {
+			if trimmedContent[0] == '"' {
+				var simpleContent string
+				if err := json.Unmarshal(trimmedContent, &simpleContent); err == nil {
+					contentStr = simpleContent
+				}
+			} else if trimmedContent[0] == '[' {
+				var parts []ContentPart
+				if err := json.Unmarshal(trimmedContent, &parts); err == nil {
+					for _, part := range parts {
+						if part.Type == "text" {
+							contentStr += part.Text
+						} else if part.Type == "image_url" && part.ImageURL != nil {
+							if strings.HasPrefix(part.ImageURL.URL, "data:") {
+								urlParts := strings.Split(part.ImageURL.URL, ",")
+								if len(urlParts) == 2 {
+									images = append(images, urlParts[1])
+								}
+							} else {
+								images = append(images, part.ImageURL.URL)
 							}
-						} else {
-							// Just pass the URL if it's not a data URL (Ollama might not support this for all backends, but it's best effort)
-							images = append(images, part.ImageURL.URL)
 						}
 					}
 				}
@@ -285,23 +285,28 @@ func (e *OllamaExecutor) ExecuteStream(ctx context.Context, _ *auth.Auth, req ex
 		var contentStr string
 		var images []string
 
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
-				for _, part := range parts {
-					if part.Type == "text" {
-						contentStr += part.Text
-					} else if part.Type == "image_url" && part.ImageURL != nil {
-						if strings.HasPrefix(part.ImageURL.URL, "data:") {
-							parts := strings.Split(part.ImageURL.URL, ",")
-							if len(parts) == 2 {
-								images = append(images, parts[1])
+		trimmedContent := bytes.TrimSpace(msg.Content)
+		if len(trimmedContent) > 0 {
+			if trimmedContent[0] == '"' {
+				var simpleContent string
+				if err := json.Unmarshal(trimmedContent, &simpleContent); err == nil {
+					contentStr = simpleContent
+				}
+			} else if trimmedContent[0] == '[' {
+				var parts []ContentPart
+				if err := json.Unmarshal(trimmedContent, &parts); err == nil {
+					for _, part := range parts {
+						if part.Type == "text" {
+							contentStr += part.Text
+						} else if part.Type == "image_url" && part.ImageURL != nil {
+							if strings.HasPrefix(part.ImageURL.URL, "data:") {
+								urlParts := strings.Split(part.ImageURL.URL, ",")
+								if len(urlParts) == 2 {
+									images = append(images, urlParts[1])
+								}
+							} else {
+								images = append(images, part.ImageURL.URL)
 							}
-						} else {
-							images = append(images, part.ImageURL.URL)
 						}
 					}
 				}
