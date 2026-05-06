@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - Fix Insecure TLS Config in Management Handlers
+**Vulnerability:** The `discover_models` and `test_provider` management handlers were explicitly overriding the HTTP transport to use `TLSClientConfig: &tls.Config{InsecureSkipVerify: true}` when a proxy was configured.
+**Learning:** Hardcoding insecure TLS overrides in API clients for developer convenience completely undermines HTTPS security. In a gateway managing sensitive API keys and provider metadata, this exposes the application to severe Man-in-the-Middle (MITM) attacks if traffic passes through an untrusted proxy or network.
+**Prevention:** Always enforce standard, secure TLS validation defaults in production code. If local debugging requires custom certificates, developers should install the proxy's CA into their system trust store rather than bypassing validation in the codebase.
