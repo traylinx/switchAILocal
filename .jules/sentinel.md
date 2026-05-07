@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Fix CWE-276 Insecure File Permissions for Model Discovery
+**Vulnerability:** The registry and cache writers in `internal/discovery/cache.go` and `internal/intelligence/discovery/service.go` were using `0644` file permissions when saving model metadata and system cache files to disk via `os.WriteFile`.
+**Learning:** Hardcoding standard `0644` permissions for files containing potentially sensitive system configurations (like locally discovered AI models, custom endpoints, or usage metadata) exposes that data to all other unprivileged users on the same host (CWE-276).
+**Prevention:** Always evaluate the sensitivity of the data being written. For backend system files, cache, and configuration, strictly use `0600` permissions for files and `0700` for directories to enforce the principle of least privilege.
