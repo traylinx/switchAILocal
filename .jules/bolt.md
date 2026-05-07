@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-07 - Replace fmt.Sprintf with direct string concatenation in SSE streams
+**Learning:** fmt.Sprintf incurs significant reflection overhead and allocations in hot paths like streaming handlers.
+**Action:** In streaming handlers, direct string concatenation and strconv should be used for SSE event building and data URI construction instead of fmt.Sprintf to eliminate reflection overhead and minimize per-chunk memory allocations.

@@ -625,7 +625,7 @@ func ConvertOpenAIResponseToGeminiNonStream(_ context.Context, _ string, origina
 }
 
 func GeminiTokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }
 
 func reasoningTokensFromUsage(usage gjson.Result) int64 {

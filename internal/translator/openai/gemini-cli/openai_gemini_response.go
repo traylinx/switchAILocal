@@ -11,7 +11,7 @@ package geminiCLI
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 
 	"github.com/tidwall/sjson"
 	. "github.com/traylinx/switchAILocal/internal/translator/openai/gemini"
@@ -58,5 +58,5 @@ func ConvertOpenAIResponseToGeminiCLINonStream(ctx context.Context, modelName st
 }
 
 func GeminiCLITokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }

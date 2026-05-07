@@ -10,7 +10,7 @@ package geminiCLI
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 
 	"github.com/tidwall/sjson"
 	. "github.com/traylinx/switchAILocal/internal/translator/codex/gemini"
@@ -61,5 +61,5 @@ func ConvertCodexResponseToGeminiCLINonStream(ctx context.Context, modelName str
 }
 
 func GeminiCLITokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }
