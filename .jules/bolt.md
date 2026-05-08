@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-08 - Pre-allocate byte slice in SSE stream builder
+**Learning:** Using fmt.Sprintf inside hot loops like SSE streaming creates significant CPU and allocation overhead due to reflection and repeated string concatenation.
+**Action:** Always prioritize using a pre-allocated byte slice (make([]byte, 0, capacity)) with append() and strconv for building SSE data chunks.
