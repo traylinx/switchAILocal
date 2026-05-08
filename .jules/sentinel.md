@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Fix Cross-Platform Path Traversal
+**Vulnerability:** Application logic checked for path traversal using only `os.PathSeparator`.
+**Learning:** Checking solely for `os.PathSeparator` fails when cross-platform path injections occur (e.g., using `\` in a payload targeting a Linux backend where the separator is `/`), allowing malicious actors to bypass input validation logic.
+**Prevention:** Always use `strings.ContainsAny(path, "/\\")` for validation checks to securely evaluate path traversal input across different platforms.
