@@ -223,9 +223,3 @@ func jsonEscapeStringToBuf(buf []byte, s string) []byte {
 	}
 	return buf
 }
-
-// jsonEscapeString is kept for backward compatibility if used elsewhere,
-// but now just delegates to jsonEscapeStringToBuf
-func jsonEscapeString(s string) string {
-	return string(jsonEscapeStringToBuf(make([]byte, 0, len(s)), s))
-}
