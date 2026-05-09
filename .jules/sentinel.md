@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - Command Injection in OS URL Handlers
+**Vulnerability:** The `OpenURL` function in `internal/browser/browser.go` passed user-supplied URLs directly to OS-level execution commands (like `open`, `rundll32`, or `xdg-open`) without validating the URL scheme, enabling command injection or unauthorized local file access (e.g. `file:///`).
+**Learning:** Naively passing untrusted string variables into subprocesses (`exec.Command`) is inherently dangerous, even for seemingly benign operations like opening a web browser.
+**Prevention:** Always parse and validate untrusted input before execution. Use `net/url.Parse` to explicitly whitelist safe protocols (`http`, `https`) before passing variables to OS handlers.
