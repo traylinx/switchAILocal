@@ -2,7 +2,6 @@ package management
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -67,8 +66,7 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 			return
 		}
 		client.Transport = &http.Transport{
-			Proxy:           http.ProxyURL(proxyURL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // Allow insecure for testing/local proxies? Maybe strictly verifying is better but for devs...
+			Proxy: http.ProxyURL(proxyURL),
 		}
 	}
 
