@@ -1,0 +1,46 @@
+.git
+.github
+.gitignore
+
+# Local credentials and runtime state. Never send these to Docker build context.
+.env
+.env.*
+!.env.example
+config.yaml
+config.yaml.bak*
+auths/
+.switchailocal/
+.ail/
+.context/
+.claude/
+billboard/
+logs/
+*.log
+*.jsonl
+
+# Local build/test artifacts.
+switchAILocal
+switchailocal
+switchAILocal*
+switchailocal*
+bridge-agent
+server
+bin/
+dist/
+tmp/
+coverage.out
+coverage.html
+*.prof
+*.mprof
+*.pprof
+
+# Editor / OS / dependency noise.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+node_modules/
+frontend/node_modules/
+__pycache__/
+*.py[cod]

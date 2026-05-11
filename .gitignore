@@ -33,7 +33,10 @@ go.work
 .env.*
 !.env.example
 config.yaml
+config.yaml.bak*
 !config.example.yaml
+.context/
+.claude/
 
 # ail.sh runtime state
 .ail/
