@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -37,6 +38,12 @@ import (
 const (
 	minimaxMusicFirstByteMin = 60 * time.Second  // ~3× observed TTFB
 	minimaxMusicStallMin     = 120 * time.Second // inter-chunk gap observed up to ~8s; generous headroom
+
+	// MiniMax cover preprocessing can return a cover_feature_id but no beat/DTW
+	// features for very short references (~14s generated snippets). Loop short
+	// PCM WAV references to a full cover-analysis window before upstream sees
+	// them; this is a safety net for stale JULI3TA tabs and short source songs.
+	minimaxMusicCoverReferenceMinSeconds = 60
 )
 
 // MiniMax exposes three subscription capabilities under a weird topology:
@@ -436,12 +443,22 @@ func normaliseMinimaxCoverAudioBase64(payload []byte) []byte {
 	if err != nil {
 		return payload
 	}
-	repaired, ok := repairUnknownSizeWAVHeader(decoded)
-	if !ok {
+	normalised := decoded
+	changed := false
+	if repaired, ok := repairUnknownSizeWAVHeader(normalised); ok {
+		normalised = repaired
+		changed = true
+		log.Infof("MINIMAX MUSIC: repaired non-seekable WAV header for music-cover reference bytes=%d", len(repaired))
+	}
+	if extended, fromSec, toSec, ok := loopShortPCM16WAVReference(normalised, minimaxMusicCoverReferenceMinSeconds); ok {
+		normalised = extended
+		changed = true
+		log.Infof("MINIMAX MUSIC: looped short WAV reference for music-cover duration=%.2fs->%.2fs bytes=%d", fromSec, toSec, len(extended))
+	}
+	if !changed {
 		return payload
 	}
-	log.Infof("MINIMAX MUSIC: repaired non-seekable WAV header for music-cover reference bytes=%d", len(repaired))
-	payload, _ = sjson.SetBytes(payload, "audio_base64", base64.StdEncoding.EncodeToString(repaired))
+	payload, _ = sjson.SetBytes(payload, "audio_base64", base64.StdEncoding.EncodeToString(normalised))
 	return payload
 }
 
@@ -486,6 +503,109 @@ func repairUnknownSizeWAVHeader(in []byte) ([]byte, bool) {
 		off = next
 	}
 	return out, repaired
+}
+
+type pcm16WAVReference struct {
+	fmtChunk      []byte
+	data          []byte
+	sampleRate    uint32
+	blockAlign    uint16
+	bitsPerSample uint16
+}
+
+func parsePCM16WAVReference(in []byte) (pcm16WAVReference, bool) {
+	if len(in) < 44 || string(in[0:4]) != "RIFF" || string(in[8:12]) != "WAVE" {
+		return pcm16WAVReference{}, false
+	}
+	var ref pcm16WAVReference
+	for off := 12; off+8 <= len(in); {
+		chunkID := string(in[off : off+4])
+		chunkSize := binary.LittleEndian.Uint32(in[off+4 : off+8])
+		dataStart := off + 8
+		if chunkSize == 0xffffffff || int64(chunkSize) > int64(len(in)-dataStart) {
+			chunkSize = uint32(len(in) - dataStart)
+		}
+		dataEnd := dataStart + int(chunkSize)
+		if dataEnd > len(in) || dataEnd < dataStart {
+			return pcm16WAVReference{}, false
+		}
+		switch chunkID {
+		case "fmt ":
+			fmtChunk := in[dataStart:dataEnd]
+			if len(fmtChunk) < 16 {
+				return pcm16WAVReference{}, false
+			}
+			audioFormat := binary.LittleEndian.Uint16(fmtChunk[0:2])
+			blockAlign := binary.LittleEndian.Uint16(fmtChunk[12:14])
+			bitsPerSample := binary.LittleEndian.Uint16(fmtChunk[14:16])
+			if audioFormat != 1 || blockAlign == 0 || bitsPerSample != 16 {
+				return pcm16WAVReference{}, false
+			}
+			ref.fmtChunk = append([]byte(nil), fmtChunk...)
+			ref.sampleRate = binary.LittleEndian.Uint32(fmtChunk[4:8])
+			ref.blockAlign = blockAlign
+			ref.bitsPerSample = bitsPerSample
+		case "data":
+			ref.data = append([]byte(nil), in[dataStart:dataEnd]...)
+		}
+		next := dataEnd
+		if chunkSize%2 == 1 {
+			next++
+		}
+		if next <= off || next > len(in) {
+			break
+		}
+		off = next
+	}
+	if len(ref.fmtChunk) == 0 || len(ref.data) == 0 || ref.sampleRate == 0 || ref.blockAlign == 0 {
+		return pcm16WAVReference{}, false
+	}
+	dataLen := len(ref.data) - (len(ref.data) % int(ref.blockAlign))
+	if dataLen <= 0 {
+		return pcm16WAVReference{}, false
+	}
+	ref.data = ref.data[:dataLen]
+	return ref, true
+}
+
+func loopShortPCM16WAVReference(in []byte, minSeconds float64) ([]byte, float64, float64, bool) {
+	ref, ok := parsePCM16WAVReference(in)
+	if !ok || minSeconds <= 0 {
+		return in, 0, 0, false
+	}
+	bytesPerSecond := float64(ref.sampleRate) * float64(ref.blockAlign)
+	if bytesPerSecond <= 0 {
+		return in, 0, 0, false
+	}
+	fromSec := float64(len(ref.data)) / bytesPerSecond
+	if fromSec >= minSeconds {
+		return in, fromSec, fromSec, false
+	}
+	framesNeeded := int(math.Ceil(minSeconds * float64(ref.sampleRate)))
+	dataLenNeeded := framesNeeded * int(ref.blockAlign)
+	if dataLenNeeded <= len(ref.data) || int64(dataLenNeeded) > int64(^uint32(0)) {
+		return in, fromSec, fromSec, false
+	}
+	outData := make([]byte, dataLenNeeded)
+	for written := 0; written < len(outData); {
+		written += copy(outData[written:], ref.data)
+	}
+
+	out := make([]byte, 0, 12+8+len(ref.fmtChunk)+8+len(outData))
+	out = append(out, 'R', 'I', 'F', 'F')
+	out = binary.LittleEndian.AppendUint32(out, uint32(4+8+len(ref.fmtChunk)+8+len(outData)))
+	out = append(out, 'W', 'A', 'V', 'E')
+	out = append(out, 'f', 'm', 't', ' ')
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(ref.fmtChunk)))
+	out = append(out, ref.fmtChunk...)
+	if len(ref.fmtChunk)%2 == 1 {
+		out = append(out, 0)
+	}
+	out = append(out, 'd', 'a', 't', 'a')
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(outData)))
+	out = append(out, outData...)
+	toSec := float64(len(outData)) / bytesPerSecond
+	return out, fromSec, toSec, true
 }
 
 // normaliseMinimaxLyricsRequest handles the mode-required schema. If the

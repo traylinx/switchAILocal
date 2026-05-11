@@ -7,6 +7,7 @@ package executor
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -94,9 +95,57 @@ func TestNormaliseMinimaxMusicRequest_RepairsNonSeekableCoverWav(t *testing.T) {
 	if got := repaired[40:44]; string(got) == "\xff\xff\xff\xff" {
 		t.Fatalf("data size was not repaired")
 	}
-	if repaired[4] != 40 || repaired[40] != 4 {
-		t.Fatalf("unexpected repaired sizes: riff=%v data=%v", repaired[4:8], repaired[40:44])
+	if got, want := binary.LittleEndian.Uint32(repaired[4:8]), uint32(len(repaired)-8); got != want {
+		t.Fatalf("unexpected RIFF size: got=%d want=%d", got, want)
 	}
+	if got, want := binary.LittleEndian.Uint32(repaired[40:44]), uint32(len(repaired)-44); got != want {
+		t.Fatalf("unexpected data size: got=%d want=%d", got, want)
+	}
+}
+
+func TestNormaliseMinimaxMusicRequest_LoopsShortCoverWav(t *testing.T) {
+	sampleRate := uint32(24_000)
+	blockAlign := uint16(2)
+	data := make([]byte, int(sampleRate)*int(blockAlign)*14)
+	for i := 0; i < len(data); i += 2 {
+		data[i] = byte(i / 2)
+		data[i+1] = byte((i / 2) >> 8)
+	}
+	wav := encodeTestPCM16WAV(sampleRate, blockAlign, data)
+	req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-cover","audio_base64":"` + base64.StdEncoding.EncodeToString(wav) + `"}`)}
+	e := &OpenAICompatExecutor{cfg: &config.Config{}}
+	out := e.normaliseMinimaxMusicRequest(req, nil)
+	looped, err := base64.StdEncoding.DecodeString(gjson.GetBytes(out, "audio_base64").String())
+	if err != nil {
+		t.Fatalf("audio_base64 not valid base64: %v", err)
+	}
+	ref, ok := parsePCM16WAVReference(looped)
+	if !ok {
+		t.Fatalf("looped wav should still be parseable PCM16 WAV")
+	}
+	gotSec := float64(len(ref.data)) / float64(ref.sampleRate*uint32(ref.blockAlign))
+	if gotSec < 59.9 {
+		t.Fatalf("looped duration=%.2fs, want about 60s", gotSec)
+	}
+}
+
+func encodeTestPCM16WAV(sampleRate uint32, blockAlign uint16, data []byte) []byte {
+	out := make([]byte, 0, 44+len(data))
+	out = append(out, 'R', 'I', 'F', 'F')
+	out = binary.LittleEndian.AppendUint32(out, uint32(36+len(data)))
+	out = append(out, 'W', 'A', 'V', 'E')
+	out = append(out, 'f', 'm', 't', ' ')
+	out = binary.LittleEndian.AppendUint32(out, 16)
+	out = binary.LittleEndian.AppendUint16(out, 1)
+	out = binary.LittleEndian.AppendUint16(out, 1)
+	out = binary.LittleEndian.AppendUint32(out, sampleRate)
+	out = binary.LittleEndian.AppendUint32(out, sampleRate*uint32(blockAlign))
+	out = binary.LittleEndian.AppendUint16(out, blockAlign)
+	out = binary.LittleEndian.AppendUint16(out, 16)
+	out = append(out, 'd', 'a', 't', 'a')
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(data)))
+	out = append(out, data...)
+	return out
 }
 
 // TestNormaliseMinimaxLyricsRequest pins the mode-defaulting and
