@@ -96,6 +96,7 @@
               "api/chat-completions",
               "api/models",
               "api/embeddings",
+              "api/music",
               "api/websocket"
             ]
           },
