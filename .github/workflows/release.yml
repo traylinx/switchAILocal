@@ -153,6 +153,10 @@ jobs:
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
         working-directory: npx/switchailocal
+        # npm scope permissions are not release-critical for the binary + GHCR
+        # artifacts Tytus uses. Do not mark the GitHub Release failed if npm
+        # rejects the scoped package publish.
+        continue-on-error: true
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
