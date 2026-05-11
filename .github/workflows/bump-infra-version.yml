@@ -1,24 +1,17 @@
 # Bump infra version on tag push
 #
-# When a release tag like v0.3.0 lands on this repo, open a PR against
-# the infrastructure repo (traylinx/wannolot-infrastructure) that bumps
-# switchailocal-version.txt to the new tag. Reviewing + merging that PR
-# is the action that triggers fleet-wide rollout via the gitops timer.
-#
-# Why a PR (not a direct push):
-#   - A broken release should never reach prod droplets unreviewed.
-#   - The PR body links to this release's notes, giving the reviewer
-#     context before they approve the rollout.
-#   - Closing the PR without merging = "skip this release", which is a
-#     first-class option.
+# When a release tag like v0.3.0 lands on this repo, update
+# traylinx/wannolot-infrastructure/switchailocal-version.txt on main.
+# That commit is the fleet rollout trigger: each Tytus droplet's GitOps
+# timer pulls infrastructure main, rewrites AIL_IMAGE, re-renders compose,
+# and rolls switchAILocal with per-instance health checks.
 #
 # Required secret: INFRA_REPO_PAT
-#   - Fine-grained PAT with contents:write and pull-requests:write on
-#     traylinx/wannolot-infrastructure. NOT the default GITHUB_TOKEN,
-#     which can't write to a different repo.
+#   - Fine-grained PAT with contents:write on traylinx/wannolot-infrastructure.
+#     NOT the default GITHUB_TOKEN, which cannot write to another repo.
 #
-# If the secret is missing the job is a no-op (logged + skipped) so the
-# release workflow itself never fails on a misconfigured cross-repo bump.
+# If the secret is missing the job fails. A published switchAILocal release
+# that does not update Tytus automatically is not a successful release.
 
 name: Bump infra version
 
@@ -32,7 +25,7 @@ permissions:
 
 jobs:
   bump:
-    name: Open PR in infrastructure repo
+    name: Auto-pin infrastructure repo
     runs-on: ubuntu-latest
     steps:
       - name: Extract tag
@@ -43,30 +36,25 @@ jobs:
           echo "version_no_prefix=${TAG#v}" >> "${GITHUB_OUTPUT}"
           echo "Released: ${TAG}"
 
-      - name: Check for infra PAT
-        id: gate
+      - name: Require infra PAT
         env:
           PAT: ${{ secrets.INFRA_REPO_PAT }}
         run: |
           if [ -z "${PAT:-}" ]; then
-            echo "INFRA_REPO_PAT secret not set — skipping infra PR."
-            echo "has_pat=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "has_pat=true" >> "${GITHUB_OUTPUT}"
+            echo "INFRA_REPO_PAT secret not set — cannot auto-update Tytus fleet pin." >&2
+            exit 1
           fi
 
       - name: Checkout infrastructure repo
-        if: steps.gate.outputs.has_pat == 'true'
         uses: actions/checkout@v4
         with:
           repository: traylinx/wannolot-infrastructure
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra
-          # Full history so we can see the prior pin in the PR body.
+          # Full history so we can see the prior pin in the commit log.
           fetch-depth: 0
 
       - name: Bump switchailocal-version.txt
-        if: steps.gate.outputs.has_pat == 'true'
         id: bump
         working-directory: infra
         run: |
@@ -92,48 +80,16 @@ jobs:
           echo "skip=false" >> "${GITHUB_OUTPUT}"
           echo "Bumped ${PIN_FILE}: ${OLD_TAG:-<unset>} → ${NEW_TAG}"
 
-      - name: Open PR
-        if: steps.gate.outputs.has_pat == 'true' && steps.bump.outputs.skip != 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          path: infra
-          token: ${{ secrets.INFRA_REPO_PAT }}
-          branch: bump-switchailocal-${{ steps.tag.outputs.tag }}
-          delete-branch: true
-          commit-message: |
-            chore(switchailocal): pin to ${{ steps.tag.outputs.tag }}
+      - name: Commit and push infrastructure pin
+        if: steps.bump.outputs.skip != 'true'
+        working-directory: infra
+        run: |
+          git config user.name "switchAILocal release bot"
+          git config user.email "actions@github.com"
+          git add switchailocal-version.txt
+          git commit -m "chore(switchailocal): pin to ${{ steps.tag.outputs.tag }}" \
+            -m "Released: https://github.com/traylinx/switchAILocal/releases/tag/${{ steps.tag.outputs.tag }}"
+          git push origin HEAD:main
 
-            Released: https://github.com/traylinx/switchAILocal/releases/tag/${{ steps.tag.outputs.tag }}
-          title: "Bump switchAILocal → ${{ steps.tag.outputs.tag }}"
-          body: |
-            ## Rollout
-
-            Merging this PR pins the fleet to `${{ steps.tag.outputs.tag }}`. The
-            `wannolot-gitops.timer` systemd unit on each droplet runs
-            `gitops/pull-and-apply.sh` every 10 minutes — within one tick of
-            merge, every droplet:
-
-            1. `git pull` this repo
-            2. Reads `switchailocal-version.txt` → sees `${{ steps.tag.outputs.tag }}`
-            3. Rewrites `AIL_IMAGE` in `.env.droplet`
-            4. Re-renders `docker-compose.switchailocal.yml`
-            5. Runs `scripts/update-switchailocal.sh` → zero-downtime rolling
-               restart with per-instance health-check + auto-rollback on failure
-
-            **Change:** `${{ steps.bump.outputs.old_tag }}` → `${{ steps.bump.outputs.new_tag }}`
-
-            **Release notes:**
-            https://github.com/traylinx/switchAILocal/releases/tag/${{ steps.tag.outputs.tag }}
-
-            ## Safety
-
-            - Health check during rolling restart reverts the instance if the new
-              image fails `/health` — a broken release is caught per-droplet.
-            - To pause the rollout during an incident: close this PR, or
-              `systemctl stop wannolot-gitops.timer` on affected droplets.
-            - To roll back after merge: `git revert` this commit and droplets
-              converge back within one tick.
-
-            🤖 Opened automatically by
-            [bump-infra-version.yml](https://github.com/traylinx/switchAILocal/blob/main/.github/workflows/bump-infra-version.yml)
-            on tag push.
+          echo "Pinned Tytus fleet switchAILocal image: ${{ steps.bump.outputs.old_tag }} → ${{ steps.bump.outputs.new_tag }}"
+          echo "Droplets converge via wannolot-gitops.timer within one tick."
