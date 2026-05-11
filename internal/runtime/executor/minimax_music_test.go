@@ -73,6 +73,32 @@ func TestNormaliseMinimaxMusicRequest(t *testing.T) {
 	})
 }
 
+func TestNormaliseMinimaxMusicRequest_RepairsNonSeekableCoverWav(t *testing.T) {
+	wav := []byte{
+		'R', 'I', 'F', 'F', 0xff, 0xff, 0xff, 0xff, 'W', 'A', 'V', 'E',
+		'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+		0x80, 0xbb, 0, 0, 0, 0x77, 1, 0, 2, 0, 16, 0,
+		'd', 'a', 't', 'a', 0xff, 0xff, 0xff, 0xff,
+		1, 2, 3, 4,
+	}
+	req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-cover","audio_base64":"` + base64.StdEncoding.EncodeToString(wav) + `"}`)}
+	e := &OpenAICompatExecutor{cfg: &config.Config{}}
+	out := e.normaliseMinimaxMusicRequest(req, nil)
+	repaired, err := base64.StdEncoding.DecodeString(gjson.GetBytes(out, "audio_base64").String())
+	if err != nil {
+		t.Fatalf("audio_base64 not valid base64: %v", err)
+	}
+	if got := repaired[4:8]; string(got) == "\xff\xff\xff\xff" {
+		t.Fatalf("RIFF size was not repaired")
+	}
+	if got := repaired[40:44]; string(got) == "\xff\xff\xff\xff" {
+		t.Fatalf("data size was not repaired")
+	}
+	if repaired[4] != 40 || repaired[40] != 4 {
+		t.Fatalf("unexpected repaired sizes: riff=%v data=%v", repaired[4:8], repaired[40:44])
+	}
+}
+
 // TestNormaliseMinimaxLyricsRequest pins the mode-defaulting and
 // model-stripping behaviour. Upstream rejects requests without `mode`, so
 // the adapter has to fill one in; and upstream ignores `model` but logs
@@ -195,6 +221,123 @@ func TestExecuteMinimaxMusic_HappyPath(t *testing.T) {
 	}
 	if got["trace_id"] != "music-trace-123" {
 		t.Errorf("trace_id = %v, want music-trace-123", got["trace_id"])
+	}
+}
+
+func TestExecuteMinimaxMusic_CoverFallsBackToPreprocessOnDtwError(t *testing.T) {
+	wantAudio := []byte{0x49, 0x44, 0x33, 0x04, 0x11, 0x22}
+	hexAudio := hex.EncodeToString(wantAudio)
+	var musicCalls int
+	var sawPreprocess bool
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/music_generation"):
+			musicCalls++
+			if musicCalls == 1 {
+				if reqBody["audio_base64"] != "UklGRg==" {
+					t.Errorf("first cover call audio_base64=%v, want UklGRg==", reqBody["audio_base64"])
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"trace_id": "cover-fail-trace",
+					"base_resp": map[string]any{
+						"status_code": 2013,
+						"status_msg":  "invalid params, biz error: code=400, msg=amadeus play err, ttm fail, err = Cover mode requires dtw_result, beat_result, and audio_duration in the request",
+					},
+				})
+				return
+			}
+			if reqBody["audio_base64"] != nil || reqBody["audio_url"] != nil {
+				t.Errorf("retry should use cover_feature_id instead of raw audio: %v", reqBody)
+			}
+			if reqBody["cover_feature_id"] != "feature_123" {
+				t.Errorf("retry cover_feature_id=%v, want feature_123", reqBody["cover_feature_id"])
+			}
+			if reqBody["audio_duration"] != float64(14) {
+				t.Errorf("retry audio_duration=%v, want 14", reqBody["audio_duration"])
+			}
+			if reqBody["dtw_result"] == nil || reqBody["beat_result"] == nil {
+				t.Errorf("retry missing dtw_result/beat_result: %v", reqBody)
+			}
+			if reqBody["lyrics"] != "[Verse]\nextracted words\n[Chorus]\nextracted hook" {
+				t.Errorf("retry lyrics=%q, want extracted preprocess lyrics", reqBody["lyrics"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"audio":  hexAudio,
+					"status": 2,
+				},
+				"trace_id": "cover-retry-trace",
+				"extra_info": map[string]any{
+					"music_duration":    14000,
+					"music_sample_rate": 44100,
+					"music_channel":     2,
+					"bitrate":           256000,
+				},
+				"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+			})
+		case strings.HasSuffix(r.URL.Path, "/music_cover_preprocess"):
+			sawPreprocess = true
+			if reqBody["model"] != "music-cover" {
+				t.Errorf("preprocess model=%v, want music-cover", reqBody["model"])
+			}
+			if reqBody["audio_base64"] != "UklGRg==" {
+				t.Errorf("preprocess audio_base64=%v, want UklGRg==", reqBody["audio_base64"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cover_feature_id": "feature_123",
+				"formatted_lyrics": "[Verse]\nextracted words\n[Chorus]\nextracted hook",
+				"structure_result": "{}",
+				"audio_duration":   14,
+				"dtw_result":       map[string]any{"path": []int{1, 2, 3}},
+				"beat_result":      map[string]any{"beats": []float64{0.1, 0.5}},
+				"trace_id":         "preprocess-trace",
+				"base_resp":        map[string]any{"status_code": 0, "status_msg": ""},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-cover",
+		Payload:  []byte(`{"model":"minimax:music-cover","prompt":"lofi cover style","audio_base64":"UklGRg=="}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+
+	resp, err := exec.executeMinimaxMusic(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("executeMinimaxMusic failed: %v", err)
+	}
+	if !sawPreprocess {
+		t.Fatalf("expected fallback to /music_cover_preprocess")
+	}
+	if musicCalls != 2 {
+		t.Fatalf("music calls=%d, want 2", musicCalls)
+	}
+	audioB64 := gjson.GetBytes(resp.Payload, "data.audio").String()
+	decoded, err := base64.StdEncoding.DecodeString(audioB64)
+	if err != nil {
+		t.Fatalf("audio not valid base64: %v", err)
+	}
+	if string(decoded) != string(wantAudio) {
+		t.Errorf("audio mismatch: got %x, want %x", decoded, wantAudio)
+	}
+}
+
+func TestNormaliseMinimaxCoverLyrics_BlankTagsFallback(t *testing.T) {
+	got := normaliseMinimaxCoverLyrics("[Verse]\n\n[Inst]")
+	want := "[Verse]\nLa la la la\n[Chorus]\nLa la la la"
+	if got != want {
+		t.Fatalf("normaliseMinimaxCoverLyrics()=%q, want %q", got, want)
 	}
 }
 
@@ -328,21 +471,21 @@ func TestExecuteMinimaxMusicStream_HappyPath(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		sseWriter(t, w, map[string]any{
-			"data": map[string]any{"audio": hex.EncodeToString(chunk1), "status": 1},
+			"data":      map[string]any{"audio": hex.EncodeToString(chunk1), "status": 1},
 			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
 		})
 		sseWriter(t, w, map[string]any{
-			"data": map[string]any{"audio": hex.EncodeToString(chunk2), "status": 1},
+			"data":      map[string]any{"audio": hex.EncodeToString(chunk2), "status": 1},
 			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
 		})
 		sseWriter(t, w, map[string]any{
-			"data": map[string]any{"audio": hex.EncodeToString(chunk3), "status": 1},
+			"data":      map[string]any{"audio": hex.EncodeToString(chunk3), "status": 1},
 			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
 		})
 		// Terminal frame: status=2, duplicated audio (full concat), extra_info.
 		// Adapter MUST drop the audio and keep the metadata for logging only.
 		sseWriter(t, w, map[string]any{
-			"data": map[string]any{"audio": hex.EncodeToString(append(append(append([]byte{}, chunk1...), chunk2...), chunk3...)), "status": 2},
+			"data":       map[string]any{"audio": hex.EncodeToString(append(append(append([]byte{}, chunk1...), chunk2...), chunk3...)), "status": 2},
 			"trace_id":   "stream-trace-abc",
 			"extra_info": map[string]any{"music_duration": 45000, "music_sample_rate": 44100, "music_channel": 2, "bitrate": 256000},
 			"base_resp":  map[string]any{"status_code": 0, "status_msg": "success"},
@@ -514,7 +657,7 @@ func TestExecuteMinimaxMusicStream_HTTPError(t *testing.T) {
 func TestNormaliseMinimaxMusicRequest_StripsStream(t *testing.T) {
 	req := switchailocalexecutor.Request{Payload: []byte(`{"model":"music-2.6","stream":true,"lyrics":"x"}`)}
 	e := &OpenAICompatExecutor{cfg: &config.Config{}}
-		out := e.normaliseMinimaxMusicRequest(req, nil)
+	out := e.normaliseMinimaxMusicRequest(req, nil)
 	if gjson.GetBytes(out, "stream").Exists() {
 		t.Errorf("stream should be stripped for sync path: %s", out)
 	}

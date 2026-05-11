@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -67,8 +69,9 @@ const (
 // call hex → this → base64.StdEncoding.DecodeString.
 
 const (
-	minimaxMusicEndpoint  = "/music_generation"
-	minimaxLyricsEndpoint = "/lyrics_generation"
+	minimaxMusicEndpoint                = "/music_generation"
+	minimaxMusicCoverPreprocessEndpoint = "/music_cover_preprocess"
+	minimaxLyricsEndpoint               = "/lyrics_generation"
 )
 
 // minimaxMusicResponse mirrors the upstream /v1/music_generation shape. Only
@@ -82,6 +85,26 @@ type minimaxMusicResponse struct {
 	TraceID   string          `json:"trace_id"`
 	ExtraInfo json.RawMessage `json:"extra_info"` // passthrough — duration_ms, sample_rate, etc.
 	BaseResp  struct {
+		StatusCode int    `json:"status_code"`
+		StatusMsg  string `json:"status_msg"`
+	} `json:"base_resp"`
+}
+
+// minimaxMusicCoverPreprocessResponse mirrors /v1/music_cover_preprocess.
+// MiniMax added this two-step cover workflow after the original music adapter
+// shipped. Some one-step cover calls now fail internally with
+// "Cover mode requires dtw_result, beat_result, and audio_duration"; when that
+// happens we preprocess the same reference audio, then retry /music_generation
+// with cover_feature_id.
+type minimaxMusicCoverPreprocessResponse struct {
+	CoverFeatureID  string          `json:"cover_feature_id"`
+	FormattedLyrics string          `json:"formatted_lyrics"`
+	StructureResult string          `json:"structure_result"`
+	AudioDuration   float64         `json:"audio_duration"`
+	TraceID         string          `json:"trace_id"`
+	DTWResult       json.RawMessage `json:"dtw_result"`
+	BeatResult      json.RawMessage `json:"beat_result"`
+	BaseResp        struct {
 		StatusCode int    `json:"status_code"`
 		StatusMsg  string `json:"status_msg"`
 	} `json:"base_resp"`
@@ -113,12 +136,41 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 
 	body, err := e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, payload)
 	if err != nil {
-		return switchailocalexecutor.Response{}, err
+		var errResp minimaxMusicResponse
+		if len(body) == 0 || json.Unmarshal(body, &errResp) != nil ||
+			!shouldRetryMinimaxCoverWithPreprocess(payload, errResp.BaseResp.StatusCode, errResp.BaseResp.StatusMsg) {
+			return switchailocalexecutor.Response{}, err
+		}
+		retryPayload, retryErr := e.prepareMinimaxCoverFeatureRetry(ctx, auth, baseURL, apiKey, payload)
+		if retryErr != nil {
+			return switchailocalexecutor.Response{}, retryErr
+		}
+		body, err = e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, retryPayload)
+		if err != nil {
+			return switchailocalexecutor.Response{}, err
+		}
+		payload = retryPayload
 	}
 
 	var mr minimaxMusicResponse
 	if err := json.Unmarshal(body, &mr); err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("minimax-music: parse response: %w (body=%s)", err, truncate(string(body), 200))
+	}
+
+	if shouldRetryMinimaxCoverWithPreprocess(payload, mr.BaseResp.StatusCode, mr.BaseResp.StatusMsg) {
+		retryPayload, err := e.prepareMinimaxCoverFeatureRetry(ctx, auth, baseURL, apiKey, payload)
+		if err != nil {
+			return switchailocalexecutor.Response{}, err
+		}
+		body, err = e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, retryPayload)
+		if err != nil {
+			return switchailocalexecutor.Response{}, err
+		}
+		mr = minimaxMusicResponse{}
+		if err := json.Unmarshal(body, &mr); err != nil {
+			return switchailocalexecutor.Response{}, fmt.Errorf("minimax-music: parse cover retry response: %w (body=%s)", err, truncate(string(body), 200))
+		}
+		payload = retryPayload
 	}
 
 	if mr.BaseResp.StatusCode != 0 {
@@ -178,6 +230,127 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 	}
 	log.Infof("MINIMAX MUSIC: success trace=%s bytes=%d (hex_len=%d)", mr.TraceID, len(audioBytes), len(mr.Data.Audio))
 	return switchailocalexecutor.Response{Payload: respBody}, nil
+}
+
+func shouldRetryMinimaxCoverWithPreprocess(payload []byte, statusCode int, statusMsg string) bool {
+	if statusCode != 2013 {
+		return false
+	}
+	model := strings.ToLower(gjson.GetBytes(payload, "model").String())
+	if !strings.Contains(model, "music-cover") {
+		return false
+	}
+	if gjson.GetBytes(payload, "cover_feature_id").Exists() {
+		return false
+	}
+	if !gjson.GetBytes(payload, "audio_base64").Exists() && !gjson.GetBytes(payload, "audio_url").Exists() {
+		return false
+	}
+	msg := strings.ToLower(statusMsg)
+	return strings.Contains(msg, "dtw_result") ||
+		strings.Contains(msg, "beat_result") ||
+		(strings.Contains(msg, "cover mode") && strings.Contains(msg, "requires"))
+}
+
+func (e *OpenAICompatExecutor) prepareMinimaxCoverFeatureRetry(ctx context.Context, auth *switchailocalauth.Auth, baseURL, apiKey string, payload []byte) ([]byte, error) {
+	preprocessPayload := []byte(`{"model":"music-cover"}`)
+	if audioBase64 := gjson.GetBytes(payload, "audio_base64"); audioBase64.Exists() && audioBase64.String() != "" {
+		preprocessPayload, _ = sjson.SetBytes(preprocessPayload, "audio_base64", audioBase64.String())
+	} else if audioURL := gjson.GetBytes(payload, "audio_url"); audioURL.Exists() && audioURL.String() != "" {
+		preprocessPayload, _ = sjson.SetBytes(preprocessPayload, "audio_url", audioURL.String())
+	} else {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "minimax music-cover retry: missing audio_base64 or audio_url"}
+	}
+
+	log.Infof("MINIMAX MUSIC: one-step cover failed; retrying via music_cover_preprocess")
+	body, err := e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicCoverPreprocessEndpoint, apiKey, preprocessPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	var pr minimaxMusicCoverPreprocessResponse
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return nil, fmt.Errorf("minimax-music-cover-preprocess: parse response: %w (body=%s)", err, truncate(string(body), 200))
+	}
+	if pr.BaseResp.StatusCode != 0 {
+		httpCode, _ := minimaxStatusToHTTP(pr.BaseResp.StatusCode)
+		return nil, statusErr{
+			code: httpCode,
+			msg:  fmt.Sprintf("minimax music-cover-preprocess: code=%d msg=%q trace=%s", pr.BaseResp.StatusCode, pr.BaseResp.StatusMsg, pr.TraceID),
+		}
+	}
+	if pr.CoverFeatureID == "" {
+		return nil, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("minimax music-cover-preprocess: empty cover_feature_id (trace=%s)", pr.TraceID)}
+	}
+	log.Infof(
+		"MINIMAX MUSIC: cover preprocess ok trace=%s feature=%s duration=%.2f has_dtw=%t has_beat=%t lyrics_len=%d",
+		pr.TraceID,
+		pr.CoverFeatureID,
+		pr.AudioDuration,
+		len(pr.DTWResult) > 0 && string(pr.DTWResult) != "null",
+		len(pr.BeatResult) > 0 && string(pr.BeatResult) != "null",
+		len(strings.TrimSpace(pr.FormattedLyrics)),
+	)
+
+	retry := payload
+	retry, _ = sjson.DeleteBytes(retry, "audio_base64")
+	retry, _ = sjson.DeleteBytes(retry, "audio_url")
+	retry, _ = sjson.SetBytes(retry, "cover_feature_id", pr.CoverFeatureID)
+	if len(pr.DTWResult) > 0 && string(pr.DTWResult) != "null" {
+		retry, _ = sjson.SetRawBytes(retry, "dtw_result", pr.DTWResult)
+	}
+	if len(pr.BeatResult) > 0 && string(pr.BeatResult) != "null" {
+		retry, _ = sjson.SetRawBytes(retry, "beat_result", pr.BeatResult)
+	}
+	if pr.AudioDuration > 0 {
+		retry, _ = sjson.SetBytes(retry, "audio_duration", pr.AudioDuration)
+	}
+
+	lyrics := strings.TrimSpace(gjson.GetBytes(retry, "lyrics").String())
+	if len(lyrics) < 10 {
+		retry, _ = sjson.SetBytes(retry, "lyrics", normaliseMinimaxCoverLyrics(pr.FormattedLyrics))
+	}
+	return retry, nil
+}
+
+func normaliseMinimaxCoverLyrics(lyrics string) string {
+	clean := strings.TrimSpace(lyrics)
+	if len(clean) < 10 || !hasMeaningfulLyrics(clean) {
+		return "[Verse]\nLa la la la\n[Chorus]\nLa la la la"
+	}
+	if len(clean) <= 1000 {
+		return clean
+	}
+	trimmed := strings.TrimSpace(clean[:1000])
+	if idx := strings.LastIndex(trimmed, "\n["); idx >= 200 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+	if len(trimmed) < 10 {
+		return strings.TrimSpace(clean[:1000])
+	}
+	return trimmed
+}
+
+func hasMeaningfulLyrics(lyrics string) bool {
+	withoutTags := make([]rune, 0, len(lyrics))
+	inTag := false
+	for _, r := range lyrics {
+		switch r {
+		case '[':
+			inTag = true
+			continue
+		case ']':
+			inTag = false
+			continue
+		}
+		if inTag {
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			withoutTags = append(withoutTags, r)
+		}
+	}
+	return len(withoutTags) >= 4
 }
 
 // executeMinimaxLyrics posts to /v1/lyrics_generation. This path is the
@@ -246,7 +419,73 @@ func (e *OpenAICompatExecutor) normaliseMinimaxMusicRequest(req switchailocalexe
 	// The streaming path injects stream:true itself; everyone else gets it
 	// stripped here.
 	payload, _ = sjson.DeleteBytes(payload, "stream")
+	payload = normaliseMinimaxCoverAudioBase64(payload)
 	return payload
+}
+
+func normaliseMinimaxCoverAudioBase64(payload []byte) []byte {
+	model := strings.ToLower(gjson.GetBytes(payload, "model").String())
+	if !strings.Contains(model, "music-cover") {
+		return payload
+	}
+	audio := gjson.GetBytes(payload, "audio_base64")
+	if !audio.Exists() || strings.TrimSpace(audio.String()) == "" {
+		return payload
+	}
+	decoded, err := base64.StdEncoding.DecodeString(audio.String())
+	if err != nil {
+		return payload
+	}
+	repaired, ok := repairUnknownSizeWAVHeader(decoded)
+	if !ok {
+		return payload
+	}
+	log.Infof("MINIMAX MUSIC: repaired non-seekable WAV header for music-cover reference bytes=%d", len(repaired))
+	payload, _ = sjson.SetBytes(payload, "audio_base64", base64.StdEncoding.EncodeToString(repaired))
+	return payload
+}
+
+func repairUnknownSizeWAVHeader(in []byte) ([]byte, bool) {
+	if len(in) < 44 || string(in[0:4]) != "RIFF" || string(in[8:12]) != "WAVE" {
+		return in, false
+	}
+	out := append([]byte(nil), in...)
+	repaired := false
+	riffSize := binary.LittleEndian.Uint32(out[4:8])
+	actualRiffSize := uint32(len(out) - 8)
+	if riffSize == 0xffffffff || riffSize == 0 || int64(riffSize) > int64(len(out)) {
+		binary.LittleEndian.PutUint32(out[4:8], actualRiffSize)
+		repaired = true
+	}
+
+	for off := 12; off+8 <= len(out); {
+		chunkID := string(out[off : off+4])
+		chunkSize := binary.LittleEndian.Uint32(out[off+4 : off+8])
+		dataStart := off + 8
+		if chunkID == "data" {
+			actualDataSize := len(out) - dataStart
+			if actualDataSize < 0 {
+				return out, repaired
+			}
+			if chunkSize == 0xffffffff || chunkSize == 0 || int64(chunkSize) > int64(actualDataSize) {
+				binary.LittleEndian.PutUint32(out[off+4:off+8], uint32(actualDataSize))
+				repaired = true
+			}
+			return out, repaired
+		}
+		if chunkSize == 0xffffffff || chunkSize == 0 {
+			return out, repaired
+		}
+		next := dataStart + int(chunkSize)
+		if chunkSize%2 == 1 {
+			next++
+		}
+		if next <= off || next > len(out) {
+			return out, repaired
+		}
+		off = next
+	}
+	return out, repaired
 }
 
 // normaliseMinimaxLyricsRequest handles the mode-required schema. If the
