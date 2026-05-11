@@ -10,8 +10,9 @@
 #   - Fine-grained PAT with contents:write on traylinx/wannolot-infrastructure.
 #     NOT the default GITHUB_TOKEN, which cannot write to another repo.
 #
-# If the secret is missing the job fails. A published switchAILocal release
-# that does not update Tytus automatically is not a successful release.
+# If the secret is missing, this job exits cleanly because current Tytus
+# infrastructure also polls latest switchAILocal releases fleet-side. The PAT
+# path remains a fast explicit pin when available.
 
 name: Bump infra version
 
@@ -36,16 +37,21 @@ jobs:
           echo "version_no_prefix=${TAG#v}" >> "${GITHUB_OUTPUT}"
           echo "Released: ${TAG}"
 
-      - name: Require infra PAT
+      - name: Check infra PAT
+        id: gate
         env:
           PAT: ${{ secrets.INFRA_REPO_PAT }}
         run: |
           if [ -z "${PAT:-}" ]; then
-            echo "INFRA_REPO_PAT secret not set — cannot auto-update Tytus fleet pin." >&2
-            exit 1
+            echo "INFRA_REPO_PAT secret not set — skipping cross-repo pin push."
+            echo "Tytus droplets still auto-update from the public latest release via wannolot-infrastructure GitOps."
+            echo "has_pat=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pat=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout infrastructure repo
+        if: steps.gate.outputs.has_pat == 'true'
         uses: actions/checkout@v4
         with:
           repository: traylinx/wannolot-infrastructure
@@ -55,6 +61,7 @@ jobs:
           fetch-depth: 0
 
       - name: Bump switchailocal-version.txt
+        if: steps.gate.outputs.has_pat == 'true'
         id: bump
         working-directory: infra
         run: |
@@ -81,7 +88,7 @@ jobs:
           echo "Bumped ${PIN_FILE}: ${OLD_TAG:-<unset>} → ${NEW_TAG}"
 
       - name: Commit and push infrastructure pin
-        if: steps.bump.outputs.skip != 'true'
+        if: steps.gate.outputs.has_pat == 'true' && steps.bump.outputs.skip != 'true'
         working-directory: infra
         run: |
           git config user.name "switchAILocal release bot"
