@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -39,11 +38,14 @@ const (
 	minimaxMusicFirstByteMin = 60 * time.Second  // ~3× observed TTFB
 	minimaxMusicStallMin     = 120 * time.Second // inter-chunk gap observed up to ~8s; generous headroom
 
-	// MiniMax cover preprocessing can return a cover_feature_id but no beat/DTW
-	// features for very short references (~14s generated snippets). Loop short
-	// PCM WAV references to a full cover-analysis window before upstream sees
-	// them; this is a safety net for stale JULI3TA tabs and short source songs.
-	minimaxMusicCoverReferenceMinSeconds = 60
+	// Wire-tested 2026-05-11: MiniMax documents 6s as the minimum cover
+	// reference length, but real music-cover generation can still fail with
+	// "Cover mode requires dtw_result, beat_result, and audio_duration" for
+	// short ~14s references. Do not loop short snippets: repeated audio
+	// preprocesses successfully but generation still fails. Reject short WAV
+	// references before burning cover quota and tell the caller to send a real
+	// representative window (JULI3TA targets ~60s).
+	minimaxMusicCoverReferenceMinSeconds = 30
 )
 
 // MiniMax exposes three subscription capabilities under a weird topology:
@@ -140,14 +142,17 @@ type minimaxLyricsResponse struct {
 // the client would have to concatenate + decode themselves.
 func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, baseURL, apiKey string) (switchailocalexecutor.Response, error) {
 	payload := e.normaliseMinimaxMusicRequest(req, auth)
+	if err := validateMinimaxCoverReference(payload); err != nil {
+		return switchailocalexecutor.Response{}, err
+	}
 
-	body, err := e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, payload)
-	if err != nil {
-		var errResp minimaxMusicResponse
-		if len(body) == 0 || json.Unmarshal(body, &errResp) != nil ||
-			!shouldRetryMinimaxCoverWithPreprocess(payload, errResp.BaseResp.StatusCode, errResp.BaseResp.StatusMsg) {
-			return switchailocalexecutor.Response{}, err
-		}
+	var body []byte
+	var err error
+	if shouldPreprocessMinimaxCover(payload) {
+		// MiniMax's one-step cover path is now unreliable for references that
+		// need feature analysis; it can fail with an internal DTW/beat error.
+		// Follow the documented two-step flow up front: preprocess the reference
+		// audio, then call /music_generation with cover_feature_id + lyrics.
 		retryPayload, retryErr := e.prepareMinimaxCoverFeatureRetry(ctx, auth, baseURL, apiKey, payload)
 		if retryErr != nil {
 			return switchailocalexecutor.Response{}, retryErr
@@ -157,6 +162,11 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 			return switchailocalexecutor.Response{}, err
 		}
 		payload = retryPayload
+	} else {
+		body, err = e.postMinimaxJSON(ctx, auth, baseURL, minimaxMusicEndpoint, apiKey, payload)
+		if err != nil {
+			return switchailocalexecutor.Response{}, err
+		}
 	}
 
 	var mr minimaxMusicResponse
@@ -239,10 +249,7 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 	return switchailocalexecutor.Response{Payload: respBody}, nil
 }
 
-func shouldRetryMinimaxCoverWithPreprocess(payload []byte, statusCode int, statusMsg string) bool {
-	if statusCode != 2013 {
-		return false
-	}
+func shouldPreprocessMinimaxCover(payload []byte) bool {
 	model := strings.ToLower(gjson.GetBytes(payload, "model").String())
 	if !strings.Contains(model, "music-cover") {
 		return false
@@ -250,13 +257,56 @@ func shouldRetryMinimaxCoverWithPreprocess(payload []byte, statusCode int, statu
 	if gjson.GetBytes(payload, "cover_feature_id").Exists() {
 		return false
 	}
-	if !gjson.GetBytes(payload, "audio_base64").Exists() && !gjson.GetBytes(payload, "audio_url").Exists() {
+	return gjson.GetBytes(payload, "audio_base64").Exists() || gjson.GetBytes(payload, "audio_url").Exists()
+}
+
+func shouldRetryMinimaxCoverWithPreprocess(payload []byte, statusCode int, statusMsg string) bool {
+	if statusCode != 2013 || !shouldPreprocessMinimaxCover(payload) {
 		return false
 	}
 	msg := strings.ToLower(statusMsg)
 	return strings.Contains(msg, "dtw_result") ||
 		strings.Contains(msg, "beat_result") ||
 		(strings.Contains(msg, "cover mode") && strings.Contains(msg, "requires"))
+}
+
+func validateMinimaxCoverReference(payload []byte) error {
+	if !shouldPreprocessMinimaxCover(payload) {
+		return nil
+	}
+	durationSec, ok := minimaxCoverReferenceDurationSeconds(payload)
+	if !ok || durationSec >= minimaxMusicCoverReferenceMinSeconds {
+		return nil
+	}
+	return statusErr{
+		code: http.StatusBadRequest,
+		msg: fmt.Sprintf(
+			"minimax music-cover: reference audio is %.1fs; MiniMax cover generation fails on short references. Send at least %ds, ideally a representative ~60s sample.",
+			durationSec,
+			minimaxMusicCoverReferenceMinSeconds,
+		),
+	}
+}
+
+func minimaxCoverReferenceDurationSeconds(payload []byte) (float64, bool) {
+	audio := gjson.GetBytes(payload, "audio_base64")
+	if !audio.Exists() || strings.TrimSpace(audio.String()) == "" {
+		return 0, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(audio.String())
+	if err != nil {
+		return 0, false
+	}
+	decoded, _ = repairUnknownSizeWAVHeader(decoded)
+	ref, ok := parsePCM16WAVReference(decoded)
+	if !ok {
+		return 0, false
+	}
+	bytesPerSecond := float64(ref.sampleRate) * float64(ref.blockAlign)
+	if bytesPerSecond <= 0 {
+		return 0, false
+	}
+	return float64(len(ref.data)) / bytesPerSecond, true
 }
 
 func (e *OpenAICompatExecutor) prepareMinimaxCoverFeatureRetry(ctx context.Context, auth *switchailocalauth.Auth, baseURL, apiKey string, payload []byte) ([]byte, error) {
@@ -450,11 +500,6 @@ func normaliseMinimaxCoverAudioBase64(payload []byte) []byte {
 		changed = true
 		log.Infof("MINIMAX MUSIC: repaired non-seekable WAV header for music-cover reference bytes=%d", len(repaired))
 	}
-	if extended, fromSec, toSec, ok := loopShortPCM16WAVReference(normalised, minimaxMusicCoverReferenceMinSeconds); ok {
-		normalised = extended
-		changed = true
-		log.Infof("MINIMAX MUSIC: looped short WAV reference for music-cover duration=%.2fs->%.2fs bytes=%d", fromSec, toSec, len(extended))
-	}
 	if !changed {
 		return payload
 	}
@@ -566,46 +611,6 @@ func parsePCM16WAVReference(in []byte) (pcm16WAVReference, bool) {
 	}
 	ref.data = ref.data[:dataLen]
 	return ref, true
-}
-
-func loopShortPCM16WAVReference(in []byte, minSeconds float64) ([]byte, float64, float64, bool) {
-	ref, ok := parsePCM16WAVReference(in)
-	if !ok || minSeconds <= 0 {
-		return in, 0, 0, false
-	}
-	bytesPerSecond := float64(ref.sampleRate) * float64(ref.blockAlign)
-	if bytesPerSecond <= 0 {
-		return in, 0, 0, false
-	}
-	fromSec := float64(len(ref.data)) / bytesPerSecond
-	if fromSec >= minSeconds {
-		return in, fromSec, fromSec, false
-	}
-	framesNeeded := int(math.Ceil(minSeconds * float64(ref.sampleRate)))
-	dataLenNeeded := framesNeeded * int(ref.blockAlign)
-	if dataLenNeeded <= len(ref.data) || int64(dataLenNeeded) > int64(^uint32(0)) {
-		return in, fromSec, fromSec, false
-	}
-	outData := make([]byte, dataLenNeeded)
-	for written := 0; written < len(outData); {
-		written += copy(outData[written:], ref.data)
-	}
-
-	out := make([]byte, 0, 12+8+len(ref.fmtChunk)+8+len(outData))
-	out = append(out, 'R', 'I', 'F', 'F')
-	out = binary.LittleEndian.AppendUint32(out, uint32(4+8+len(ref.fmtChunk)+8+len(outData)))
-	out = append(out, 'W', 'A', 'V', 'E')
-	out = append(out, 'f', 'm', 't', ' ')
-	out = binary.LittleEndian.AppendUint32(out, uint32(len(ref.fmtChunk)))
-	out = append(out, ref.fmtChunk...)
-	if len(ref.fmtChunk)%2 == 1 {
-		out = append(out, 0)
-	}
-	out = append(out, 'd', 'a', 't', 'a')
-	out = binary.LittleEndian.AppendUint32(out, uint32(len(outData)))
-	out = append(out, outData...)
-	toSec := float64(len(outData)) / bytesPerSecond
-	return out, fromSec, toSec, true
 }
 
 // normaliseMinimaxLyricsRequest handles the mode-required schema. If the
