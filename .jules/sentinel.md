@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-12 - Prevent CWE-276 in Cache and Registry File Creation
+**Vulnerability:** `os.WriteFile` was used with `0644` permissions when writing sensitive discovery cache entries and AI model configuration registries to disk.
+**Learning:** Hardcoding standard `0644` file permissions without considering the sensitivity of the data being written exposes the application to CWE-276 (Incorrect Default Permissions), allowing any local user to read the files.
+**Prevention:** Always restrict file creation permissions to `0600` (read/write only for the owner) when writing any sensitive application state, cache, or configuration files.
