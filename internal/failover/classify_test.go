@@ -7,6 +7,7 @@ package failover
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"syscall"
 	"testing"
@@ -19,7 +20,7 @@ type statusErr struct {
 	msg  string
 }
 
-func (e *statusErr) Error() string  { return e.msg }
+func (e *statusErr) Error() string   { return e.msg }
 func (e *statusErr) StatusCode() int { return e.code }
 
 // netTimeout implements net.Error with Timeout()=true.
@@ -99,6 +100,8 @@ func TestClassify_NetworkErrors(t *testing.T) {
 		want ErrorClass
 	}{
 		{"deadline", context.DeadlineExceeded, ClassTransient},
+		{"unexpected EOF", io.ErrUnexpectedEOF, ClassTransient},
+		{"unexpected EOF string", errors.New("Post \"https://api.minimax.io/v1/music_generation\": unexpected EOF"), ClassTransient},
 		{"conn refused", syscall.ECONNREFUSED, ClassTransient},
 		{"conn reset", syscall.ECONNRESET, ClassTransient},
 		{"epipe", syscall.EPIPE, ClassTransient},
@@ -203,5 +206,5 @@ func TestClassify_RegressionNetTimeout(t *testing.T) {
 
 type wrappedNetErr struct{ inner net.Error }
 
-func (e *wrappedNetErr) Error() string  { return e.inner.Error() }
-func (e *wrappedNetErr) Unwrap() error  { return e.inner }
+func (e *wrappedNetErr) Error() string { return e.inner.Error() }
+func (e *wrappedNetErr) Unwrap() error { return e.inner }

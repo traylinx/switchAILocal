@@ -412,6 +412,116 @@ func TestNormaliseMinimaxCoverLyrics_BlankTagsFallback(t *testing.T) {
 	}
 }
 
+func TestExecuteMinimaxMusic_RetriesUnexpectedEOF(t *testing.T) {
+	wantAudio := []byte{0x49, 0x44, 0x33, 0x04, 0x55}
+	hexAudio := hex.EncodeToString(wantAudio)
+	calls := 0
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", "128")
+			_, _ = w.Write([]byte(`{"partial":`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":      map[string]any{"audio": hexAudio, "status": 2},
+			"trace_id":  "retry-trace",
+			"base_resp": map[string]any{"status_code": 0, "status_msg": "success"},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"lyrics":"la la la la la la la la la la la la"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+	resp, err := exec.executeMinimaxMusic(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("executeMinimaxMusic failed after retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("upstream calls=%d, want 2", calls)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(gjson.GetBytes(resp.Payload, "data.audio").String())
+	if err != nil {
+		t.Fatalf("audio not valid base64: %v", err)
+	}
+	if string(decoded) != string(wantAudio) {
+		t.Fatalf("audio mismatch got=%x want=%x", decoded, wantAudio)
+	}
+}
+
+func TestExecuteMinimaxLyrics_RetriesUnexpectedEOF(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", "128")
+			_, _ = w.Write([]byte(`{"song_title":`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"song_title": "Recovered Song",
+			"style_tags": "synthwave",
+			"lyrics":     "[Verse]\nhello\n[Chorus]\nworld",
+			"base_resp":  map[string]any{"status_code": 0, "status_msg": "success"},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"prompt":"a synthwave song"}`),
+		Metadata: map[string]any{"operation": "lyrics_generation"},
+	}
+	resp, err := exec.executeMinimaxLyrics(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("executeMinimaxLyrics failed after retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("upstream calls=%d, want 2", calls)
+	}
+	if got := gjson.GetBytes(resp.Payload, "song_title").String(); got != "Recovered Song" {
+		t.Fatalf("song_title=%q, want Recovered Song", got)
+	}
+}
+
+func TestPostMinimaxJSON_UnexpectedEOFExhaustedReturns502(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "128")
+		_, _ = w.Write([]byte(`{"partial":`))
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	_, err := exec.postMinimaxJSON(context.Background(), nil, upstream.URL+"/v1", minimaxMusicEndpoint, "test-key", []byte(`{"model":"music-2.6","lyrics":"la"}`))
+	if err == nil {
+		t.Fatalf("expected exhausted retry error")
+	}
+	se, ok := err.(statusErr)
+	if !ok {
+		t.Fatalf("err type=%T, want statusErr", err)
+	}
+	if se.StatusCode() != http.StatusBadGateway {
+		t.Fatalf("status=%d, want 502", se.StatusCode())
+	}
+	if calls != minimaxJSONMaxAttempts {
+		t.Fatalf("calls=%d, want %d", calls, minimaxJSONMaxAttempts)
+	}
+	if !strings.Contains(se.Error(), "unexpected EOF") {
+		t.Fatalf("error should expose unexpected EOF, got %v", se)
+	}
+}
+
 // TestExecuteMinimaxMusic_ErrorCodes verifies MiniMax application-level
 // error codes get translated onto HTTP status so the failover taxonomy can
 // classify them correctly (reuses the TTS mapping table).

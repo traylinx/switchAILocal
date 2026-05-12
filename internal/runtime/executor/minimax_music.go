@@ -15,8 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -46,6 +48,14 @@ const (
 	// references before burning cover quota and tell the caller to send a real
 	// representative window (JULI3TA targets ~60s).
 	minimaxMusicCoverReferenceMinSeconds = 30
+
+	// MiniMax occasionally closes long-running JSON music connections with
+	// a bare `unexpected EOF` after accepting the request. The generic
+	// conductor sees that as status=0 and cannot retry a single-provider
+	// chain, so the MiniMax adapter owns a small transport retry around the
+	// actual POST. Keep this low: music requests are expensive and can take
+	// minutes, but one retry is better than surfacing a raw gateway 500.
+	minimaxJSONMaxAttempts = 2
 )
 
 // MiniMax exposes three subscription capabilities under a weird topology:
@@ -834,44 +844,107 @@ func (e *OpenAICompatExecutor) handleMinimaxMusicFrame(jsonPart []byte, out chan
 // MiniMax-native JSON endpoints. Factored out of the individual adapters so
 // the auth/timeout/proxy wiring lives in one place.
 func (e *OpenAICompatExecutor) postMinimaxJSON(ctx context.Context, auth *switchailocalauth.Auth, baseURL, endpointPath, apiKey string, body []byte) ([]byte, error) {
+	endpoint := strings.TrimPrefix(endpointPath, "/")
 	url := strings.TrimSuffix(baseURL, "/") + endpointPath
-	log.Infof("MINIMAX %s: posting to %s with body=%s", strings.TrimPrefix(endpointPath, "/"), url, truncate(string(body), 400))
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	if auth != nil {
-		util.ApplyCustomHeadersFromAttrs(httpReq, auth.Attributes)
-	}
-
-	httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
-	defer cancel()
-
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	httpResp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if cerr := httpResp.Body.Close(); cerr != nil {
-			log.Errorf("minimax-%s: close response body: %v", strings.TrimPrefix(endpointPath, "/"), cerr)
+
+	var lastErr error
+	var lastBody []byte
+	for attempt := 1; attempt <= minimaxJSONMaxAttempts; attempt++ {
+		log.Infof("MINIMAX %s: posting to %s attempt=%d/%d with body=%s", endpoint, url, attempt, minimaxJSONMaxAttempts, truncate(string(body), 400))
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
 		}
-	}()
+		httpReq.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		if auth != nil {
+			util.ApplyCustomHeadersFromAttrs(httpReq, auth.Attributes)
+		}
 
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, err
+		httpReq, cancel := applyProviderTimeout(ctx, e.cfg, e.Identifier(), httpReq)
+		httpResp, err := httpClient.Do(httpReq)
+		if err != nil {
+			cancel()
+			lastErr = err
+			if attempt < minimaxJSONMaxAttempts && minimaxRetryableTransportError(ctx, err) {
+				log.Warnf("MINIMAX %s: transient transport error attempt=%d/%d: %v; retrying", endpoint, attempt, minimaxJSONMaxAttempts, err)
+				continue
+			}
+			return nil, minimaxTransportStatusErr(endpoint, attempt, err)
+		}
+
+		respBody, readErr := io.ReadAll(httpResp.Body)
+		closeErr := httpResp.Body.Close()
+		cancel()
+		if closeErr != nil {
+			log.Errorf("minimax-%s: close response body: %v", endpoint, closeErr)
+		}
+		lastBody = respBody
+		if readErr != nil {
+			lastErr = readErr
+			if attempt < minimaxJSONMaxAttempts && minimaxRetryableTransportError(ctx, readErr) {
+				log.Warnf("MINIMAX %s: transient response read error attempt=%d/%d: %v; retrying", endpoint, attempt, minimaxJSONMaxAttempts, readErr)
+				continue
+			}
+			return respBody, minimaxTransportStatusErr(endpoint, attempt, readErr)
+		}
+
+		// Transport-level non-2xx (MiniMax usually returns 200 + base_resp error,
+		// but some endpoints like lyrics return real 4xx on schema violation).
+		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+			err := statusErr{code: httpResp.StatusCode, msg: truncate(string(respBody), 300)}
+			lastErr = err
+			if attempt < minimaxJSONMaxAttempts && minimaxRetryableHTTPStatus(httpResp.StatusCode) {
+				log.Warnf("MINIMAX %s: retryable HTTP status=%d attempt=%d/%d body=%s; retrying", endpoint, httpResp.StatusCode, attempt, minimaxJSONMaxAttempts, truncate(string(respBody), 180))
+				continue
+			}
+			return respBody, err
+		}
+		return respBody, nil
 	}
 
-	// Transport-level non-2xx (MiniMax usually returns 200 + base_resp error,
-	// but some endpoints like lyrics return real 4xx on schema violation).
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return respBody, statusErr{code: httpResp.StatusCode, msg: truncate(string(respBody), 300)}
+	if lastErr != nil {
+		return lastBody, minimaxTransportStatusErr(endpoint, minimaxJSONMaxAttempts, lastErr)
 	}
-	return respBody, nil
+	return lastBody, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("minimax %s: request failed without response", endpoint)}
+}
+
+func minimaxRetryableHTTPStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func minimaxRetryableTransportError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe")
+}
+
+func minimaxTransportStatusErr(endpoint string, attempts int, err error) statusErr {
+	return statusErr{
+		code: http.StatusBadGateway,
+		msg:  fmt.Sprintf("minimax %s: transient transport failed after %d attempt(s): %v", endpoint, attempts, err),
+	}
 }

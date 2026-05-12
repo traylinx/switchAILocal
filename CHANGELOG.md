@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.5.15 - 2026-05-12
+
+- Fix MiniMax music/lyrics/cover transport flaps: retry one `unexpected EOF`/connection reset inside the MiniMax JSON adapter before surfacing an error.
+- Map exhausted MiniMax transport failures to HTTP 502 instead of raw status=0/500 so clients see a retryable gateway failure.
+- Classify `unexpected EOF` as transient in the failover taxonomy for any future path that sees it outside the MiniMax adapter.
+
 ## [Unreleased]
 
 ### Fixed

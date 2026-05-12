@@ -21,6 +21,7 @@ package failover
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"syscall"
@@ -169,6 +170,9 @@ func Classify(ctx context.Context, err error, body []byte) ErrorClass {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return ClassTransient
 	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return ClassTransient
+	}
 	if errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.EPIPE) {
@@ -176,6 +180,9 @@ func Classify(ctx context.Context, err error, body []byte) ErrorClass {
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
+		return ClassTransient
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "unexpected eof") {
 		return ClassTransient
 	}
 
