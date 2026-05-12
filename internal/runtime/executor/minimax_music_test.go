@@ -312,6 +312,53 @@ func TestExecuteMinimaxMusic_HappyPath(t *testing.T) {
 	}
 }
 
+func TestExecuteMinimaxMusic_OutputFormatURL(t *testing.T) {
+	const audioURL = "https://minimax.example/song.mp3"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		if reqBody["output_format"] != "url" {
+			t.Errorf("output_format=%v, want url", reqBody["output_format"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"audio":  audioURL,
+				"status": 2,
+			},
+			"trace_id":  "music-url-trace",
+			"base_resp": map[string]any{"status_code": 0, "status_msg": ""},
+		})
+	}))
+	defer upstream.Close()
+
+	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
+	req := switchailocalexecutor.Request{
+		Model:    "minimax:music-2.6",
+		Payload:  []byte(`{"model":"minimax:music-2.6","lyrics":"la la la la la la la la la la la la","prompt":"synthwave hopeful","output_format":"url"}`),
+		Metadata: map[string]any{"operation": "music_generation"},
+	}
+
+	resp, err := exec.executeMinimaxMusic(context.Background(), nil, req, upstream.URL+"/v1", "test-key")
+	if err != nil {
+		t.Fatalf("executeMinimaxMusic failed: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(resp.Payload, &got); err != nil {
+		t.Fatalf("response not valid JSON: %v (raw=%s)", err, resp.Payload)
+	}
+	data := got["data"].(map[string]any)
+	if data["audio"] != audioURL || data["audio_url"] != audioURL {
+		t.Fatalf("url audio not preserved: %v", data)
+	}
+	if data["format"] != "url" {
+		t.Fatalf("format=%v, want url", data["format"])
+	}
+	if _, ok := data["size_bytes"]; ok {
+		t.Fatalf("size_bytes should be omitted for URL payload: %v", data)
+	}
+}
+
 func TestExecuteMinimaxMusic_CoverUsesPreprocessBeforeGeneration(t *testing.T) {
 	wantAudio := []byte{0x49, 0x44, 0x33, 0x04, 0x11, 0x22}
 	hexAudio := hex.EncodeToString(wantAudio)

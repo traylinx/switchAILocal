@@ -212,21 +212,38 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 		return switchailocalexecutor.Response{}, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("minimax music: empty audio payload (trace=%s)", mr.TraceID)}
 	}
 
-	audioBytes, err := hex.DecodeString(mr.Data.Audio)
-	if err != nil {
-		return switchailocalexecutor.Response{}, fmt.Errorf("minimax-music: hex decode audio: %w", err)
+	audioValue := mr.Data.Audio
+	audioFormat := "mp3"
+	sizeBytes := 0
+	if strings.HasPrefix(strings.ToLower(audioValue), "http://") || strings.HasPrefix(strings.ToLower(audioValue), "https://") {
+		audioFormat = "url"
+	} else {
+		audioBytes, err := hex.DecodeString(audioValue)
+		if err != nil {
+			return switchailocalexecutor.Response{}, fmt.Errorf("minimax-music: hex decode audio: %w", err)
+		}
+		audioValue = base64.StdEncoding.EncodeToString(audioBytes)
+		sizeBytes = len(audioBytes)
 	}
 
 	// Shape the response for clients. Base64 is friendlier than hex for
-	// JSON transport and OpenAI clients already parse it.
+	// JSON transport and OpenAI clients already parse it. If the caller
+	// explicitly asks MiniMax for output_format:"url", preserve that URL
+	// instead of trying to hex-decode it.
 	// Report the upstream model name (post-normalisation) so clients see what
 	// MiniMax actually ran, not the alias they sent in.
+	data := map[string]any{
+		"audio":  audioValue,
+		"format": audioFormat,
+	}
+	if sizeBytes > 0 {
+		data["size_bytes"] = sizeBytes
+	}
+	if audioFormat == "url" {
+		data["audio_url"] = audioValue
+	}
 	out := map[string]any{
-		"data": map[string]any{
-			"audio":      base64.StdEncoding.EncodeToString(audioBytes),
-			"format":     "mp3",
-			"size_bytes": len(audioBytes),
-		},
+		"data":     data,
 		"model":    gjson.GetBytes(payload, "model").String(),
 		"trace_id": mr.TraceID,
 	}
@@ -255,7 +272,7 @@ func (e *OpenAICompatExecutor) executeMinimaxMusic(ctx context.Context, auth *sw
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("minimax-music: encode response: %w", err)
 	}
-	log.Infof("MINIMAX MUSIC: success trace=%s bytes=%d (hex_len=%d)", mr.TraceID, len(audioBytes), len(mr.Data.Audio))
+	log.Infof("MINIMAX MUSIC: success trace=%s format=%s size=%d upstream_audio_len=%d", mr.TraceID, audioFormat, sizeBytes, len(mr.Data.Audio))
 	return switchailocalexecutor.Response{Payload: respBody}, nil
 }
 
