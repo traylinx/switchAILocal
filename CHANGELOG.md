@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.5.16 - 2026-05-12
+
+- Fix `/v1/music/generations` routing for documented MiniMax music model names (`minimax:music-2.6`, `music-2.6`, `minimax:music-cover`, `music-cover`). These now route through the configured `ail-music` / `ail-music-cover` aliases before the adapter normalizes the upstream payload.
+- Keep operator switching intact: clients may still send `ail-music`, `ail-music-cover`, or the documented MiniMax names; no JULI3TA hardcoding required.
+
 ## v0.5.15 - 2026-05-12
 
 - Fix MiniMax music/lyrics/cover transport flaps: retry one `unexpected EOF`/connection reset inside the MiniMax JSON adapter before surfacing an error.

@@ -1171,14 +1171,15 @@ func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
 			return
 		}
 	}
+	routeModelName := musicGenerationRouteModel(modelName)
 
 	if gjson.GetBytes(rawJSON, "stream").Bool() {
-		h.musicGenerationsStream(c, modelName, rawJSON)
+		h.musicGenerationsStream(c, routeModelName, rawJSON)
 		return
 	}
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "music_generation", "application/json")
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), routeModelName, rawJSON, "", "music_generation", "application/json")
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
@@ -1186,6 +1187,25 @@ func (h *OpenAIAPIHandler) MusicGenerations(c *gin.Context) {
 	}
 	c.Data(http.StatusOK, "application/json", resp)
 	cliCancel()
+}
+
+func musicGenerationRouteModel(modelName string) string {
+	normalized := strings.TrimSpace(modelName)
+	lower := strings.ToLower(normalized)
+	switch lower {
+	case "music-cover", "music-cover-free", "minimax:music-cover", "minimax:music-cover-free", "ail-music-cover", "minimax/ail-music-cover":
+		return "ail-music-cover"
+	case "music-2.6", "music-2.6-free", "minimax:music-2.6", "minimax:music-2.6-free", "ail-music", "minimax/ail-music":
+		return "ail-music"
+	default:
+		if strings.HasPrefix(lower, "minimax:music-cover") || strings.HasPrefix(lower, "minimax/music-cover") {
+			return "ail-music-cover"
+		}
+		if strings.HasPrefix(lower, "minimax:music-2.") || strings.HasPrefix(lower, "minimax/music-2.") {
+			return "ail-music"
+		}
+		return normalized
+	}
 }
 
 // musicGenerationsStream runs the streaming variant of /v1/music/generations.
@@ -1356,8 +1376,6 @@ func extractModelFromMultipart(body []byte, contentType string) string {
 
 	return string(bytesClean(valueStart[:endIdx]))
 }
-
-
 
 // bytesClean trims whitespace and control characters from a byte slice.
 func bytesClean(b []byte) []byte {
