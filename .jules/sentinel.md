@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Fix Cross-Platform Path Traversal Bypass
+**Vulnerability:** Used `strings.Contains(name, string(os.PathSeparator))` to prevent path traversal in auth file management and storage operations.
+**Learning:** `os.PathSeparator` check is insufficient on Windows because underlying Windows APIs accept both `/` and `\` as directory separators. Checking only for `os.PathSeparator` (which is `\` on Windows) allows an attacker to bypass the filter using forward slashes (e.g. `../`).
+**Prevention:** Use `strings.ContainsAny(name, "/\\")` for robust, cross-platform validation against both forward and backward slashes.
