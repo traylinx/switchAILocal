@@ -624,7 +624,7 @@ func (s *PostgresStore) resolveAuthPath(auth *switchailocalauth.Auth) (string, e
 }
 
 func (s *PostgresStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
+	if strings.ContainsAny(id, "/\\") || filepath.IsAbs(id) {
 		return id, nil
 	}
 	return filepath.Join(s.authDir, filepath.FromSlash(id)), nil

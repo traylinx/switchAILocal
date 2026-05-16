@@ -399,7 +399,7 @@ func (s *GitTokenStore) PersistAuthFiles(_ context.Context, message string, path
 }
 
 func (s *GitTokenStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
+	if strings.ContainsAny(id, "/\\") || filepath.IsAbs(id) {
 		return id, nil
 	}
 	dir := s.baseDirSnapshot()

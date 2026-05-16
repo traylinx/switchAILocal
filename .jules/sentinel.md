@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Path Traversal bypass via Windows Separator
+**Vulnerability:** `auth_files.go`, `gitstore.go`, and `postgresstore.go` used `os.PathSeparator` to validate file paths and IDs. This allowed path traversal bypass on Windows using `/`.
+**Learning:** `os.PathSeparator` is OS-specific (e.g. `\` on Windows). Attackers can use the alternative separator (like `/` on Windows) which Windows APIs still recognize as traversal, bypassing the check.
+**Prevention:** Use `strings.ContainsAny(name, "/\\")` for universal, cross-platform validation of untrusted path inputs.
