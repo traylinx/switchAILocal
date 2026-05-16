@@ -219,3 +219,9 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE Formatting Allocations
+**Learning:** In streaming endpoints (specifically the Claude translation for Gemini), using `fmt.Sprintf` for constructing standard Server-Sent Events (like `data: {"type":...}\n\n\n`) causes unnecessary allocations because of interface conversions and string formatting reflection overhead.
+**Action:** Replace `fmt.Sprintf` with string concatenation combined with `strconv.Itoa` (e.g. `"data: " + data + "\n\n\n"`) to bypass reflection and reduce heap allocations in hot loop streaming paths.
+## 2026-05-16 - Optimize SSE Formatting Allocations
+**Learning:** In streaming endpoints (specifically the Claude translation for Gemini), using `fmt.Sprintf` for constructing standard Server-Sent Events (like `data: {"type":...}\n\n\n`) causes unnecessary allocations because of interface conversions and string formatting reflection overhead.
+**Action:** Replace `fmt.Sprintf` with string concatenation combined with `strconv.Itoa` (e.g. `"data: " + data + "\n\n\n"`) to bypass reflection and reduce heap allocations in hot loop streaming paths.
