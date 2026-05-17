@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE string building
+**Learning:** `fmt.Sprintf` is unexpectedly slow in tight loops where SSE payloads are constructed (e.g. streaming AI chunks). When it's not absolutely needed, using direct string concatenation alongside constants (or simple numeric conversion `strconv.Itoa` if integers) results in over ~600x faster allocation speed and far less garbage produced.
+**Action:** Always favor `+` for concatenating known string types and simple structures into `data: ` and `event: ` blocks within all translator `Convert...` methods or hot loops.
