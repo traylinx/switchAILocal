@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-05-17 - Prevent Command Injection and SSRF in OS URL Handlers
+**Vulnerability:** OS-level URL handlers like `exec.Command("open", rawurl)` or `rundll32` could be exploited for Command Injection or SSRF if the URL scheme is not properly validated (e.g., `file://`, `ftp://`, or `javascript:` schemes).
+**Learning:** Naive string prefix checks are insufficient to validate URLs. OS commands can interpret paths or other schemes maliciously. Furthermore, naming the variable `url` shadows the `net/url` standard library package, making it difficult to use `url.Parse`.
+**Prevention:** Always rename the variable to `rawurl` to avoid shadowing. Safely validate URL schemes using `net/url.Parse()` and strictly verify that the `.Scheme` is either `http` or `https` before passing it to any OS command.
