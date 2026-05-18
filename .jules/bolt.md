@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - [Replace fmt.Sprintf with string concatenation in SSE events]
+**Learning:** `fmt.Sprintf` incurs reflection and allocation overhead. In hot paths like SSE event streaming, string concatenation is much faster.
+**Action:** Use direct string concatenation for constructing simple JSON payloads and SSE events instead of `fmt.Sprintf`.
