@@ -44,7 +44,8 @@ func NewCache(dir string) (*Cache, error) {
 		dir = filepath.Join(home, dir[1:])
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// Use 0750 (owner-only access) to prevent local information disclosure (CWE-276)
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -201,7 +202,8 @@ func (c *Cache) saveToDisk(entry *CacheEntry) error {
 	}
 
 	path := c.filePath(entry.ProviderID)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Use 0600 (owner-only access) to prevent local information disclosure (CWE-276)
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

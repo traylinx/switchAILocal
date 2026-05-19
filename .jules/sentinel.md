@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Prevent Local Information Disclosure via Permissions
+**Vulnerability:** G306/G301 (CWE-276) overly permissive file and directory creation permissions (`0644`/`0755`) for sensitive model registries and cached discovery entries.
+**Learning:** Default world-readable permissions allow other users on the host system to read sensitive application data, including internal service metadata.
+**Prevention:** When creating directories or files that store sensitive data or caching structures, explicitly use restricted permissions like `0750` for `os.MkdirAll` and `0600` for `os.WriteFile`.
