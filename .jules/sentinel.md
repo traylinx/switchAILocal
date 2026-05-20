@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-20 - Secure File Permissions for Cached Discovery Entries
+**Vulnerability:** Cached discovery entries and model registries were being written to disk with overly permissive `0644` permissions, allowing potential read access by unauthorized local users.
+**Learning:** Hardcoded `0644` permissions in `os.WriteFile` can inadvertently expose sensitive configuration or cached data, especially in API gateways handling potentially sensitive model endpoints.
+**Prevention:** Always restrict file creation permissions to `0600` (read/write only for the owner) when persisting any internal or cached application state.
