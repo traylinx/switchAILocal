@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-20 - Optimize SSE Chunk Creation by Eliminating fmt.Sprintf
+**Learning:** In hot paths (like SSE event building in `BuildOpenAIStreamChunkFast`) that return `[]byte`, `fmt.Sprintf` introduces reflection overhead and intermediate string-to-byte slice conversion allocations.
+**Action:** Use pre-allocated byte slices with calculated capacity (`make([]byte, 0, capacity)`) and `append()` along with `strconv.AppendInt()` to build strings/byte slices directly, eliminating reflection and reducing allocations.
