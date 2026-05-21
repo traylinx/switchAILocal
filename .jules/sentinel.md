@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-05-21 - [G301/G306] Overly Permissive File/Directory Permissions in Discovery Cache
+**Vulnerability:** Discovery cache directories and registry files were being created with overly permissive permissions (0755 and 0644, respectively).
+**Learning:** When creating directories and files for sensitive application data like cached discovery entries or model registries, they should use explicitly restricted permissions to prevent CWE-276 file permission vulnerabilities.
+**Prevention:** Use 0750 or less for directory creation (`os.MkdirAll`) and 0600 or less for file creation (`os.WriteFile`) when dealing with sensitive data.

@@ -94,7 +94,7 @@ func NewService(cacheDir string, stateBox *util.StateBox) (*Service, error) {
 		}
 
 		// Create cache directory if it doesn't exist
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		if err := os.MkdirAll(cacheDir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create cache directory: %w", err)
 		}
 	}
@@ -302,7 +302,7 @@ func (s *Service) WriteRegistry(path string) error {
 			return fmt.Errorf("failed to marshal registry: %w", err)
 		}
 
-		if err := os.WriteFile(path, data, 0644); err != nil {
+		if err := os.WriteFile(path, data, 0600); err != nil {
 			return fmt.Errorf("failed to write registry file: %w", err)
 		}
 	}
