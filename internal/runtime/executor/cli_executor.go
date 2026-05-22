@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -514,9 +515,18 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	url := strings.TrimSuffix(remoteHost, "/") + "/run"
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	parsedURL, err := url.Parse(remoteHost)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host scheme: %s", parsedURL.Scheme)
+	}
+
+	reqURL := strings.TrimSuffix(remoteHost, "/") + "/run"
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}

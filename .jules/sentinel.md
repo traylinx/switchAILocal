@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-22 - Prevent SSRF in CLI Executor remote bridging
+**Vulnerability:** The `executeRemote` function in `LocalCLIExecutor` was directly using the `REMOTE_COMMAND_HOST` environment variable as the base URL to construct an outbound HTTP request, appending `/run` via string concatenation. This created a Server-Side Request Forgery (SSRF) vulnerability.
+**Learning:** Naive string manipulation for URL construction bypasses Go's standard URL validation, allowing unintended schemes or invalid host structures.
+**Prevention:** Always use `net/url.Parse` to validate user-supplied or environment-supplied base URLs and explicitly enforce allowed schemes (e.g., checking `.Scheme` against `http` and `https`) before issuing HTTP requests.
