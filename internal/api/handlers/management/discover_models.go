@@ -52,6 +52,12 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 		}
 	}
 
+	// Validate ModelsURL scheme to prevent SSRF
+	if parsedURL, err := url.Parse(req.ModelsURL); err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": "Models URL must use http or https scheme"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 

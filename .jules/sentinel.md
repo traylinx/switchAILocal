@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-24 - Prevent SSRF via URL scheme validation
+**Vulnerability:** The `DiscoverModels` management endpoint allowed user-provided URLs to be requested directly via `http.NewRequestWithContext` without validating the URL scheme, potentially leading to Server-Side Request Forgery (SSRF) and file disclosure (e.g., `file://`).
+**Learning:** External or user-provided URLs must always be parsed and validated before being passed to an HTTP client to ensure only permitted schemes (like `http` and `https`) are executed.
+**Prevention:** Always use `net/url.Parse` to extract and strictly check the `.Scheme` of dynamic URLs before initiating network requests.
