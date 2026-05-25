@@ -8,6 +8,7 @@ package browser
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 
@@ -24,11 +25,19 @@ import (
 //
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
-func OpenURL(url string) error {
-	fmt.Printf("Attempting to open URL in browser: %s\n", url)
+func OpenURL(rawurl string) error {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("invalid URL scheme: %s. Only http and https are allowed", u.Scheme)
+	}
+
+	fmt.Printf("Attempting to open URL in browser: %s\n", rawurl)
 
 	// Try using the open-golang library first
-	err := open.Run(url)
+	err = open.Run(rawurl)
 	if err == nil {
 		log.Debug("Successfully opened URL using open-golang library")
 		return nil
@@ -37,7 +46,7 @@ func OpenURL(url string) error {
 	log.Debugf("open-golang failed: %v, trying platform-specific commands", err)
 
 	// Fallback to platform-specific commands
-	return openURLPlatformSpecific(url)
+	return openURLPlatformSpecific(rawurl)
 }
 
 // openURLPlatformSpecific is a helper function that opens a URL using OS-specific commands.
@@ -48,20 +57,20 @@ func OpenURL(url string) error {
 //
 // Returns:
 //   - An error if the URL cannot be opened, otherwise nil.
-func openURLPlatformSpecific(url string) error {
+func openURLPlatformSpecific(rawurl string) error {
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "darwin": // macOS
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", rawurl)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawurl)
 	case "linux":
 		// Try common Linux browsers in order of preference
 		browsers := []string{"xdg-open", "x-www-browser", "www-browser", "firefox", "chromium", "google-chrome"}
 		for _, browser := range browsers {
 			if _, err := exec.LookPath(browser); err == nil {
-				cmd = exec.Command(browser, url)
+				cmd = exec.Command(browser, rawurl)
 				break
 			}
 		}

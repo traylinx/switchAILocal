@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-05-25 - Prevent SSRF and Command Injection via URL Scheme Validation
+**Vulnerability:** Unvalidated URLs passed to `exec.Command` (e.g., `open`, `rundll32`) and `http.NewRequestWithContext` caused G204 (Command Injection) and G704 (SSRF) vulnerabilities.
+**Learning:** Naively passing dynamic/user-provided URLs into subprocesses or HTTP clients without verifying their scheme allows attackers to execute arbitrary local files (e.g. `file://`) or inject commands depending on the OS handler.
+**Prevention:** Always parse dynamic URLs using `net/url.Parse()` and strictly validate the `.Scheme` against `http` and `https` before passing them to OS execution handlers or HTTP clients.
