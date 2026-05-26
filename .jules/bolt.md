@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-05-26 - String Concatenation vs fmt.Sprintf in SSE Event Building
+**Learning:** In hot paths for SSE event building that return `string`, using direct string concatenation (`+`) instead of `fmt.Sprintf` eliminates reflection overhead and minimizes per-chunk memory allocations, yielding significant performance improvements (e.g. ~46% reduction in ns/op).
+**Action:** Always prefer direct string concatenation when dynamically building SSE event string payloads (e.g., `event: <type>\ndata: <json>`), rather than using `fmt.Sprintf`.
