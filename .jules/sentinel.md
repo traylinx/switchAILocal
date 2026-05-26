@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-26 - Secure permissions for caches and registries
+**Vulnerability:** Directory and file permissions for discovery caches and registries were too permissive (`0755` and `0644`).
+**Learning:** Even internal cache and registry files should follow the principle of least privilege, restricting directory access to the owner/group (`0750`) and file write access to the owner (`0600`).
+**Prevention:** Use `0750` for `os.MkdirAll` and `0600` for `os.WriteFile` when handling local state or cache files.
