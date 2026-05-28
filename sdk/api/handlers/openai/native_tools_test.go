@@ -167,3 +167,66 @@ func TestOpenAIModels_OmitsNativeToolsWhenEmpty(t *testing.T) {
 		t.Errorf("native_tools should be absent; got %#v", target["native_tools"])
 	}
 }
+
+// TestOpenAIModels_AILCatalogHidesProviderNativeModels pins the public catalog
+// contract for Tytus/JULI3TA: once stable ail-* aliases exist, /v1/models must
+// not leak raw provider/model IDs. Clients should discover stable capabilities,
+// not bind themselves to today's provider prices or backend names.
+func TestOpenAIModels_AILCatalogHidesProviderNativeModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-ail-catalog-filter-client"
+	reg.RegisterClient(clientID, "minimax", []*registry.ModelInfo{
+		{
+			ID:      "ail-music",
+			Object:  "model",
+			OwnedBy: "switchai",
+			Type:    "openai-compatibility",
+		},
+		{
+			ID:      "minimax:music-2.6",
+			Object:  "model",
+			OwnedBy: "switchai",
+			Type:    "openai-compatibility",
+		},
+		{
+			ID:      "deepseek:deepseek-v4-pro",
+			Object:  "model",
+			OwnedBy: "switchai",
+			Type:    "openai-compatibility",
+		},
+	})
+	defer reg.UnregisterClient(clientID)
+
+	h := newTestOpenAIHandler()
+	r := gin.New()
+	r.GET("/v1/models", h.OpenAIModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 (body=%s)", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, w.Body.String())
+	}
+	seenAILMusic := false
+	for _, m := range body.Data {
+		id, _ := m["id"].(string)
+		switch id {
+		case "ail-music":
+			seenAILMusic = true
+		case "minimax:music-2.6", "deepseek:deepseek-v4-pro":
+			t.Fatalf("raw provider model leaked into AIL catalog: %s (body=%s)", id, w.Body.String())
+		}
+	}
+	if !seenAILMusic {
+		t.Fatalf("ail-music missing from filtered catalog: body=%s", w.Body.String())
+	}
+}

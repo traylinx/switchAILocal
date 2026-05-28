@@ -583,6 +583,23 @@ type OpenAICompatibilityModel struct {
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
 
+	// Expose controls whether this concrete alias appears in normal public
+	// model catalog responses. nil/true keeps legacy public behavior;
+	// false keeps the alias routable internally while hiding it from /v1/models.
+	Expose *bool `yaml:"expose,omitempty" json:"expose,omitempty"`
+
+	// Visibility is a human-readable catalog visibility hint. "private" hides
+	// the concrete alias from normal public model lists.
+	Visibility string `yaml:"visibility,omitempty" json:"visibility,omitempty"`
+
+	// ContextLength optionally declares the upstream context window.
+	ContextLength int `yaml:"context_length,omitempty" json:"context_length,omitempty"`
+
+	// Capabilities optionally declares explicit model capabilities for
+	// /v1/models discovery. Virtual-pool routing uses its own member
+	// capabilities; this field is for direct/provider aliases.
+	Capabilities VirtualModelCapabilitiesConfig `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+
 	// NativeTools declares provider-native tools this model supports out
 	// of the box (e.g. MiniMax M2.7's `{"type":"web_search"}`). Surfaced
 	// unmodified through /v1/models so agentic callers can discover and
@@ -819,6 +836,13 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Performance configuration
 	cfg.Performance.SanitizePerformance()
 
+	if err := cfg.ValidateVirtualModels(); err != nil {
+		if optional {
+			return &Config{}, nil
+		}
+		return nil, err
+	}
+
 	// Normalize OAuth provider model exclusion map.
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 
@@ -925,6 +949,127 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		out = append(out, e)
 	}
 	cfg.OpenAICompatibility = out
+}
+
+// ValidateVirtualModels normalizes and validates the virtual-models block.
+func (cfg *Config) ValidateVirtualModels() error {
+	if cfg == nil || len(cfg.SDKConfig.VirtualModels) == 0 {
+		return nil
+	}
+
+	knownProviders := make(map[string]struct{})
+	for i := range cfg.OpenAICompatibility {
+		name := strings.ToLower(strings.TrimSpace(cfg.OpenAICompatibility[i].Name))
+		if name != "" {
+			knownProviders[name] = struct{}{}
+		}
+	}
+	if len(cfg.SwitchAIKey) > 0 {
+		knownProviders["switchai"] = struct{}{}
+	}
+	if len(cfg.GeminiKey) > 0 {
+		knownProviders["gemini"] = struct{}{}
+	}
+	if len(cfg.ClaudeKey) > 0 {
+		knownProviders["claude"] = struct{}{}
+	}
+	if len(cfg.CodexKey) > 0 {
+		knownProviders["codex"] = struct{}{}
+	}
+	if len(cfg.VertexCompatAPIKey) > 0 {
+		knownProviders["vertex"] = struct{}{}
+		knownProviders["vertex-compat"] = struct{}{}
+	}
+	if cfg.Ollama.Enabled {
+		knownProviders["ollama"] = struct{}{}
+	}
+	if cfg.LMStudio.Enabled {
+		knownProviders["lmstudio"] = struct{}{}
+	}
+
+	normalized := make(map[string]VirtualModelConfig, len(cfg.SDKConfig.VirtualModels))
+	for rawID, pool := range cfg.SDKConfig.VirtualModels {
+		poolID := strings.TrimSpace(rawID)
+		if poolID == "" {
+			return fmt.Errorf("virtual-models contains empty model id")
+		}
+		if pool.Strategy == "" {
+			pool.Strategy = "weighted-round-robin"
+		}
+		if pool.ResponseModel == "" {
+			pool.ResponseModel = "requested"
+		}
+		strategy := strings.ToLower(strings.TrimSpace(pool.Strategy))
+		if strategy != "weighted-round-robin" && strategy != "round-robin" {
+			return fmt.Errorf("virtual-models.%s has unsupported strategy %q", poolID, pool.Strategy)
+		}
+		pool.Strategy = strategy
+		seenMembers := make(map[string]struct{}, len(pool.Members))
+		enabledCount := 0
+		for i := range pool.Members {
+			member := &pool.Members[i]
+			member.ID = strings.TrimSpace(member.ID)
+			member.Provider = strings.ToLower(strings.TrimSpace(member.Provider))
+			member.Model = strings.TrimSpace(member.Model)
+			member.Visibility = strings.ToLower(strings.TrimSpace(member.Visibility))
+			if member.ID == "" {
+				return fmt.Errorf("virtual-models.%s member at index %d missing id", poolID, i)
+			}
+			memberKey := strings.ToLower(member.ID)
+			if _, exists := seenMembers[memberKey]; exists {
+				return fmt.Errorf("virtual-models.%s duplicate member id %q", poolID, member.ID)
+			}
+			seenMembers[memberKey] = struct{}{}
+			if member.Provider == "" {
+				return fmt.Errorf("virtual-models.%s member %s missing provider", poolID, member.ID)
+			}
+			if _, ok := knownProviders[member.Provider]; !ok && len(knownProviders) > 0 {
+				return fmt.Errorf("virtual-models.%s member %s references unknown provider %q", poolID, member.ID, member.Provider)
+			}
+			if member.Model == "" {
+				return fmt.Errorf("virtual-models.%s member %s missing model", poolID, member.ID)
+			}
+			if member.Weight < 0 {
+				return fmt.Errorf("virtual-models.%s member %s has invalid negative weight", poolID, member.ID)
+			}
+			if member.Weight == 0 {
+				member.Weight = 1
+			}
+			if member.Enabled == nil || *member.Enabled {
+				enabledCount++
+			}
+			member.Capabilities.Operations = normalizeStringList(member.Capabilities.Operations)
+			member.Capabilities.Input = normalizeStringList(member.Capabilities.Input)
+			member.Capabilities.Output = normalizeStringList(member.Capabilities.Output)
+			member.Capabilities.ProofRequiredFor = normalizeStringList(member.Capabilities.ProofRequiredFor)
+		}
+		if pool.Expose && enabledCount == 0 {
+			return fmt.Errorf("virtual-models.%s is exposed but has zero enabled members", poolID)
+		}
+		normalized[poolID] = pool
+	}
+	cfg.SDKConfig.VirtualModels = normalized
+	return nil
+}
+
+func normalizeStringList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, s := range in {
+		v := strings.ToLower(strings.TrimSpace(s))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // SanitizeSwitchAIKeys normalizes SwitchAI API key entries.
@@ -1066,17 +1211,17 @@ func (cfg *Config) SanitizeSteering() {
 	// Normalize rules directory (support both rules-dir and steering-dir for compatibility)
 	steer.RulesDir = strings.TrimSpace(steer.RulesDir)
 	steer.SteeringDir = strings.TrimSpace(steer.SteeringDir)
-	
+
 	// If RulesDir is empty but SteeringDir is set, use SteeringDir
 	if steer.RulesDir == "" && steer.SteeringDir != "" {
 		steer.RulesDir = steer.SteeringDir
 	}
-	
+
 	// If both are empty, set default
 	if steer.RulesDir == "" {
 		steer.RulesDir = ".switchailocal/steering"
 	}
-	
+
 	// Sync SteeringDir with RulesDir for backwards compatibility
 	steer.SteeringDir = steer.RulesDir
 
@@ -1102,7 +1247,6 @@ func (cfg *Config) SanitizeHooks() {
 	// Hot-reload defaults to true when hooks are enabled
 	// No additional validation needed for boolean
 }
-
 
 func normalizeModelPrefix(prefix string) string {
 	trimmed := strings.TrimSpace(prefix)

@@ -23,6 +23,51 @@ tls:
   cert: ""
   key: ""
 
+# Stable public aliases. Provider/native model names are implementation details.
+virtual-models:
+  ail-compound:
+    description: "Universal default assistant; capability-filtered pool"
+    expose: true
+    strategy: weighted-round-robin
+    fallback: true
+    response_model: requested
+    members:
+      - id: compound-minimax-m2_7
+        provider: minimax
+        model: MiniMax-M2.7
+        enabled: true
+        weight: 1
+        capabilities:
+          operations: [chat, chat_text_tools]
+          input: [text]
+          output: [text]
+          tools: true
+          context: 256000
+          proof_required_for: [image, audio]
+      - id: compound-deepseek-v4_pro
+        provider: deepseek
+        model: deepseek-v4-pro
+        enabled: true
+        weight: 1
+        capabilities:
+          operations: [chat]
+          input: [text]
+          output: [text]
+          tools: true
+          context: 1000000
+      - id: compound-kimi-k2_6
+        provider: kimi
+        model: kimi-k2.6
+        enabled: false
+        weight: 1
+        capabilities:
+          operations: [chat]
+          input: [text]
+          output: [text]
+          tools: true
+          context: 256000
+
+
 # Authentication directory (supports ~ for home directory)
 # This is where token files and session data are stored.
 auth-dir: "~/.switchailocal"
@@ -149,15 +194,9 @@ auto-routing:
   # Soft-steering logic to boost specific models. Prefer primary + backup
   # pairs so the circuit breaker can failover gracefully.
   preferences:
-    - model: "minimax:MiniMax-M2.7"
-      preference: 1.0
-      reason: "primary reasoning model"
-    - model: "kimi:kimi-k2.6"
-      preference: 0.8
-      reason: "backup reasoning model — mutual failover with minimax"
-    - model: "deepseek:deepseek-v4-flash"
-      preference: 0.7
-      reason: "fallback fast model"
+    - model: "ail-compound"
+      preference: 0.9
+      reason: "stable universal compound"
 
   # Tier and constraint definition overrides per provider
   providers:
@@ -321,7 +360,9 @@ openai-compatibility:
       - api-key: "sk-..."
     models:
       - name: "MiniMax-M2.7"
-        alias: "minimax:MiniMax-M2.7"
+        alias: "ail-compound-minimax"
+        expose: false
+        visibility: private
         # Provider-native tools advertised to agentic callers via the
         # /v1/models discovery endpoint. Agent runtimes (OpenClaw,
         # Hermes, custom SDKs) splice these entries into their own
@@ -335,17 +376,17 @@ openai-compatibility:
               max_keyword:  { type: "integer", default: 3 }
               limit:        { type: "integer", default: 3 }
       - name: "image-01"
-        alias: "minimax:image-01"
+        alias: "ail-image"
       - name: "speech-02-hd"
-        alias: "minimax:speech-02-hd"
+        alias: "ail-speech"
       # music-2.6: text-to-music (Plus plan, 100 songs/day). Served via
       # POST /v1/music/generations → MiniMax music adapter (minimax_music.go).
       - name: "music-2.6"
-        alias: "minimax:music-2.6"
+        alias: "ail-music"
       # music-cover: reference-audio style transfer (Plus plan, 100/day).
       # Same upstream endpoint as music-2.6 — model field switches mode.
       - name: "music-cover"
-        alias: "minimax:music-cover"
+        alias: "ail-music-cover"
 
   # Kimi K2.6 — mutual failover pair with MiniMax. See docs/fallback-strategy.md.
   #
@@ -365,6 +406,19 @@ openai-compatibility:
       - name: "kimi-k2.6"
         alias: "kimi:kimi-k2.6"
         context_length: 256000
+
+
+  # DeepSeek — text-only long-context member for ail-compound and direct ail-fast.
+  - name: "deepseek"
+    prefix: "deepseek"
+    base-url: "https://api.deepseek.com/v1"
+    models-url: "https://api.deepseek.com/v1/models"
+    api-key-entries:
+      - api-key: "sk-deepseek-..."
+    models:
+      - name: "deepseek-v4-pro"
+        alias: "ail-fast"
+        context_length: 1000000
 
 # -- VERTEX COMPATIBILITY --
 # For third-party providers using Vertex-style protocols
@@ -394,26 +448,20 @@ intelligence:
   # model. Specialized slots (image_gen, transcription, speech, embedding,
   # web_search) are used by their dedicated endpoints — see below.
   matrix:
-    coding:
-      - "kimi:kimi-k2.6"
-      - "minimax:MiniMax-M2.7"
-    reasoning:
-      - "minimax:MiniMax-M2.7"
-      - "kimi:kimi-k2.6"
-    fast:
-      - "minimax:MiniMax-M2.7"
-      - "kimi:kimi-k2.6"
-    secure: "ollama:llama3.2"
-    vision: "kimi:kimi-k2.6"                       # Kimi K2.6 is multimodal
-    audio: "kimi:kimi-k2.6"
-    embedding: "switchai-embed"
-    image_gen: "minimax:image-01"                  # POST /v1/images/generations
-    transcription: "whisper-large-v3"              # POST /v1/audio/transcriptions (via groq)
-    speech: "minimax:speech-02-hd"
-    web_search: "minimax:MiniMax-M2.7"
-    music_generation: "minimax:music-2.6"
-    music_cover: "minimax:music-cover"
-    lyrics_generation: "minimax:music-2.6"
+    coding: "ail-compound"
+    reasoning: "ail-compound"
+    fast: "ail-compound"
+    secure: "ail-compound"
+    vision: "ail-vision"
+    audio: "ail-compound"
+    embedding: "ail-embed"
+    image_gen: "ail-image"
+    transcription: "ail-transcribe"
+    speech: "ail-speech"
+    web_search: "ail-search"
+    music_generation: "ail-music"
+    music_cover: "ail-music-cover"
+    lyrics_generation: "ail-music"
 
   # -- PHASE 2 FEATURES --
 

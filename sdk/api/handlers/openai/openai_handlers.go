@@ -28,6 +28,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/registry"
 	responsesconverter "github.com/traylinx/switchAILocal/internal/translator/openai/openai/responses"
+	"github.com/traylinx/switchAILocal/internal/virtualmodels"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers"
 )
 
@@ -74,7 +75,9 @@ func (h *OpenAIAPIHandler) Models() []map[string]any {
 // and specifications in OpenAI-compatible format.
 func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// Get all available models
-	allModels := h.Models()
+	virtualCatalog := virtualmodels.PublicCatalog(h.Cfg)
+	allModels := append(virtualCatalog, h.Models()...)
+	ailCatalogMode := shouldUseAILOnlyCatalog(allModels)
 
 	// Build modality lookup from intelligence.matrix config
 	// Maps model ID → set of modality strings
@@ -91,8 +94,20 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// strips media client-side and the model never sees it.
 	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio", "native_tools"}
 	var filteredModels []map[string]any
+	seenModels := make(map[string]struct{}, len(allModels))
 	for _, model := range allModels {
 		modelID, _ := model["id"].(string)
+		modelKey := strings.ToLower(strings.TrimSpace(modelID))
+		if modelKey == "" {
+			continue
+		}
+		if ailCatalogMode && !strings.HasPrefix(modelKey, "ail-") {
+			continue
+		}
+		if _, exists := seenModels[modelKey]; exists {
+			continue
+		}
+		seenModels[modelKey] = struct{}{}
 
 		filteredModel := map[string]any{
 			"id":     model["id"],
@@ -109,11 +124,16 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
-		// Enrich with capabilities from the matrix (legacy string-array
-		// field — kept stable for any client that already reads it).
+		// Enrich with capabilities from either explicit virtual-pool truth
+		// or legacy intelligence.matrix. For virtual models, pool members are
+		// authoritative; do not let stale matrix entries advertise media.
 		capabilities := modalityMap[modelID]
+		isVirtual := virtualmodels.IsVirtualModel(h.Cfg, modelID)
+		if isVirtual {
+			capabilities = capabilitiesFromModel(model)
+		}
 		if len(capabilities) == 0 {
-			// Default: assume text capability for unlabeled models
+			// Default: assume text capability for unlabeled non-virtual models.
 			capabilities = []string{"text"}
 		}
 		filteredModel["capabilities"] = capabilities
@@ -132,7 +152,9 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		// structured fields too. Otherwise AI-SDK clients see vision in
 		// the legacy array but attachment:false in the new shape and end
 		// up stripping images. Operator's declared truth wins.
-		upgradeCapabilityFields(filteredModel, capabilities)
+		if !isVirtual {
+			upgradeCapabilityFields(filteredModel, capabilities)
+		}
 
 		// Apply modality filter if specified
 		if modalityFilter != "" {
@@ -148,6 +170,16 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		"object": "list",
 		"data":   filteredModels,
 	})
+}
+
+func shouldUseAILOnlyCatalog(models []map[string]any) bool {
+	for _, model := range models {
+		modelID, _ := model["id"].(string)
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelID)), "ail-") {
+			return true
+		}
+	}
+	return false
 }
 
 // buildModalityMap creates a reverse lookup: model ID → list of modality strings
@@ -278,6 +310,40 @@ func upgradeCapabilityFields(model map[string]any, matrixCaps []string) {
 		}
 		model["modalities"] = mods
 	}
+}
+
+func capabilitiesFromModel(model map[string]any) []string {
+	caps := []string{}
+	if mods, ok := model["modalities"].(registry.ModelModalities); ok {
+		for _, input := range mods.Input {
+			caps = appendUnique(caps, input)
+			if input == "image" {
+				caps = appendUnique(caps, "vision")
+			}
+			if input == "audio" {
+				caps = appendUnique(caps, "audio")
+			}
+		}
+		for _, output := range mods.Output {
+			caps = appendUnique(caps, output)
+		}
+		return caps
+	}
+	if mods, ok := model["modalities"].(map[string]any); ok {
+		for _, input := range stringsFromAny(mods["input"]) {
+			caps = appendUnique(caps, input)
+			if input == "image" {
+				caps = appendUnique(caps, "vision")
+			}
+			if input == "audio" {
+				caps = appendUnique(caps, "audio")
+			}
+		}
+		for _, output := range stringsFromAny(mods["output"]) {
+			caps = appendUnique(caps, output)
+		}
+	}
+	return caps
 }
 
 // stringsFromAny normalises an interface that might be []string or []any

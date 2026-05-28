@@ -338,14 +338,25 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 						if modelID == "" {
 							modelID = m.Name
 						}
+						displayName := strings.TrimSpace(m.Name)
+						if displayName == "" {
+							displayName = modelID
+						}
 						ms = append(ms, &ModelInfo{
-							ID:          modelID,
-							Object:      "model",
-							Created:     time.Now().Unix(),
-							OwnedBy:     compat.Name,
-							Type:        "openai-compatibility",
-							DisplayName: modelID,
-							NativeTools: convertConfigNativeTools(m.NativeTools),
+							ID:      modelID,
+							Object:  "model",
+							Created: time.Now().Unix(),
+							// Public catalog IDs are operator-owned aliases. Do not
+							// expose the current upstream provider as ownership; provider
+							// choices are an implementation detail and may change under
+							// stable aliases like ail-fast / ail-music / ail-compound.
+							OwnedBy:       "switchai",
+							Type:          "openai-compatibility",
+							DisplayName:   displayName,
+							ContextLength: m.ContextLength,
+							Capabilities:  convertConfigCapabilities(m.Capabilities),
+							Visibility:    modelVisibility(m),
+							NativeTools:   convertConfigNativeTools(m.NativeTools),
 						})
 					}
 
@@ -601,6 +612,13 @@ func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix boo
 		}
 		clone := *model
 		clone.ID = trimmedPrefix + "/" + baseID
+		// Provider-prefixed IDs remain routable for explicit operator/debug
+		// calls, but they are not part of the public model catalog. Public
+		// callers should see stable aliases only; upstream/provider names can
+		// change with pricing and capability rotations.
+		if !forceModelPrefix && !strings.EqualFold(strings.TrimSpace(clone.Visibility), "private") {
+			clone.Visibility = "private"
+		}
 		addModel(&clone)
 	}
 	return out
@@ -831,15 +849,73 @@ func buildGenericConfigModels(models []config.OpenAICompatibilityModel) []*Model
 			display = alias
 		}
 		out = append(out, &ModelInfo{
-			ID:          alias,
-			Object:      "model",
-			Created:     now,
-			OwnedBy:     "generic",
-			Type:        "generic",
-			DisplayName: display,
+			ID:            alias,
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "switchai",
+			Type:          "generic",
+			DisplayName:   display,
+			ContextLength: model.ContextLength,
+			Capabilities:  convertConfigCapabilities(model.Capabilities),
+			Visibility:    modelVisibility(model),
 		})
 	}
 	return out
+}
+
+func modelVisibility(model config.OpenAICompatibilityModel) string {
+	if strings.EqualFold(strings.TrimSpace(model.Visibility), "private") {
+		return "private"
+	}
+	if model.Expose != nil && !*model.Expose {
+		return "private"
+	}
+	return strings.ToLower(strings.TrimSpace(model.Visibility))
+}
+
+func convertConfigCapabilities(c config.VirtualModelCapabilitiesConfig) *registry.ModelCapabilities {
+	input := normalizeCapabilityList(c.Input)
+	output := normalizeCapabilityList(c.Output)
+	if len(input) == 0 && len(output) == 0 && !c.Tools {
+		return nil
+	}
+	if len(output) == 0 {
+		output = []string{"text"}
+	}
+	return &registry.ModelCapabilities{
+		Attachment: containsCapability(input, "image") || containsCapability(input, "audio") || containsCapability(input, "pdf"),
+		ToolCall:   c.Tools,
+		Modalities: registry.ModelModalities{Input: input, Output: output},
+	}
+}
+
+func normalizeCapabilityList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, s := range in {
+		v := strings.ToLower(strings.TrimSpace(s))
+		if v == "" {
+			continue
+		}
+		if _, exists := seen[v]; exists {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func containsCapability(items []string, target string) bool {
+	for _, item := range items {
+		if strings.EqualFold(item, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // convertConfigNativeTools rehydrates the YAML-side NativeTool slice

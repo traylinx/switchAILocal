@@ -47,6 +47,11 @@ type SDKConfig struct {
 	// AutoRouting configures the Phase 2 intelligent routing system.
 	AutoRouting autoroute.Config `yaml:"auto-routing,omitempty" json:"auto-routing,omitempty"`
 
+	// VirtualModels defines public model IDs backed by one or more concrete
+	// provider/model members. These are routed by capability instead of by
+	// provider-name inference (for example: ail-compound).
+	VirtualModels map[string]VirtualModelConfig `yaml:"virtual-models,omitempty" json:"virtual_models,omitempty"`
+
 	// Notifications configures the outbound notifications relay subsystem
 	// (e.g. /v1/notifications/telegram/sendMessage). Lets sandboxed clients
 	// emit messages to external services without ever holding the credentials.
@@ -72,6 +77,45 @@ type RoutingConfig struct {
 	// The server will pick the first available model from this list.
 	// If none are available, it falls back to the default timestamp-based selection.
 	AutoModelPriority []string `yaml:"auto-model-priority,omitempty" json:"auto-model-priority,omitempty"`
+}
+
+// VirtualModelConfig describes a public model ID that routes to eligible
+// provider+native-model members.
+type VirtualModelConfig struct {
+	Description   string                     `yaml:"description,omitempty" json:"description,omitempty"`
+	Expose        bool                       `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Strategy      string                     `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+	Fallback      bool                       `yaml:"fallback,omitempty" json:"fallback,omitempty"`
+	ResponseModel string                     `yaml:"response_model,omitempty" json:"response_model,omitempty"`
+	Members       []VirtualModelMemberConfig `yaml:"members" json:"members"`
+}
+
+// VirtualModelMemberConfig describes one concrete provider+model backend in a
+// virtual model pool.
+type VirtualModelMemberConfig struct {
+	ID           string                         `yaml:"id" json:"id"`
+	Provider     string                         `yaml:"provider" json:"provider"`
+	Model        string                         `yaml:"model" json:"model"`
+	Enabled      *bool                          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Weight       int                            `yaml:"weight,omitempty" json:"weight,omitempty"`
+	Capabilities VirtualModelCapabilitiesConfig `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Visibility   string                         `yaml:"visibility,omitempty" json:"visibility,omitempty"`
+	Proof        []string                       `yaml:"proof,omitempty" json:"proof,omitempty"`
+}
+
+// VirtualModelCapabilitiesConfig is explicit capability metadata for virtual
+// pool selection. It is intentionally config-local to avoid registry/config
+// package cycles.
+type VirtualModelCapabilitiesConfig struct {
+	Operations        []string `yaml:"operations,omitempty" json:"operations,omitempty"`
+	Input             []string `yaml:"input,omitempty" json:"input,omitempty"`
+	Output            []string `yaml:"output,omitempty" json:"output,omitempty"`
+	Tools             bool     `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Context           int      `yaml:"context,omitempty" json:"context,omitempty"`
+	ProofRequiredFor  []string `yaml:"proof_required_for,omitempty" json:"proof_required_for,omitempty"`
+	AgenticSafe       bool     `yaml:"agentic_safe,omitempty" json:"agentic_safe,omitempty"`
+	AgenticSafeAfter  string   `yaml:"agentic_safe_after,omitempty" json:"agentic_safe_after,omitempty"`
+	ToolHistoryReplay bool     `yaml:"tool_history_replay,omitempty" json:"tool_history_replay,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

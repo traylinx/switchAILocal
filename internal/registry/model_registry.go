@@ -38,6 +38,9 @@ type ModelInfo struct {
 	Version string `json:"version,omitempty"`
 	// Description provides detailed information about the model
 	Description string `json:"description,omitempty"`
+	// Visibility controls normal public catalog exposure. "private" models
+	// remain routable internally but are omitted from GetAvailableModels.
+	Visibility string `json:"visibility,omitempty"`
 	// InputTokenLimit is the maximum input token limit
 	InputTokenLimit int `json:"inputTokenLimit,omitempty"`
 	// OutputTokenLimit is the maximum output token limit
@@ -479,6 +482,12 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	if len(model.SupportedParameters) > 0 {
 		copyModel.SupportedParameters = append([]string(nil), model.SupportedParameters...)
 	}
+	if model.Capabilities != nil {
+		caps := *model.Capabilities
+		caps.Modalities.Input = append([]string(nil), model.Capabilities.Modalities.Input...)
+		caps.Modalities.Output = append([]string(nil), model.Capabilities.Modalities.Output...)
+		copyModel.Capabilities = &caps
+	}
 	if len(model.NativeTools) > 0 {
 		copyModel.NativeTools = cloneNativeTools(model.NativeTools)
 	}
@@ -711,6 +720,12 @@ func (r *ModelRegistry) getAvailableModelsLocked(handlerType string) []map[strin
 	quotaExpiredDuration := 5 * time.Minute
 
 	for _, registration := range r.models {
+		if registration == nil || registration.Info == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(registration.Info.Visibility), "private") {
+			continue
+		}
 		// Check if model has any non-quota-exceeded clients
 		availableClients := registration.Count
 		now := time.Now()

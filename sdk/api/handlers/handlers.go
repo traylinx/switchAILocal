@@ -24,14 +24,15 @@ import (
 	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
+	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 	"github.com/traylinx/switchAILocal/internal/plugin"
 	"github.com/traylinx/switchAILocal/internal/runtime/executor"
 	"github.com/traylinx/switchAILocal/internal/util"
+	"github.com/traylinx/switchAILocal/internal/virtualmodels"
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
-	"github.com/traylinx/switchAILocal/internal/performance/circuit"
 )
 
 // ErrorResponse represents a standard error response format for the API.
@@ -98,6 +99,11 @@ func BuildErrorResponseBody(status int, errText string) []byte {
 	case http.StatusNotFound:
 		errType = "invalid_request_error"
 		code = "model_not_found"
+	case http.StatusUnprocessableEntity:
+		errType = "invalid_request_error"
+		if strings.Contains(strings.ToLower(errText), "no eligible backend") {
+			code = "no_eligible_backend"
+		}
 	default:
 		if status >= http.StatusInternalServerError {
 			errType = "server_error"
@@ -195,6 +201,10 @@ type BaseAPIHandler struct {
 
 	// CircuitBreaker manages provider-level overload protection.
 	CircuitBreaker *circuit.Registry
+
+	// VirtualRouter routes public virtual models (ail-compound) to concrete
+	// provider/model members with capability filtering.
+	VirtualRouter *virtualmodels.Router
 }
 
 // PipelineIntegrator defines the interface for request pipeline integration.
@@ -203,13 +213,13 @@ type BaseAPIHandler struct {
 type PipelineIntegrator interface {
 	// ApplySteering evaluates steering rules and modifies the request if rules match.
 	ApplySteering(ctx interface{}, messages []map[string]string) (string, []map[string]string, error)
-	
+
 	// RecordRouting records a routing decision to the memory system.
 	RecordRouting(decision interface{}) error
-	
+
 	// UpdateOutcome updates a routing decision with its outcome.
 	UpdateOutcome(decision interface{}) error
-	
+
 	// EmitRoutingEvent emits a routing decision event to the event bus.
 	EmitRoutingEvent(decision interface{}) error
 }
@@ -234,6 +244,7 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager, lu
 		PipelineIntegrator: pipelineIntegrator,
 		AutoResolver:       autoResolver,
 		CircuitBreaker:     circuitBreaker,
+		VirtualRouter:      virtualmodels.NewRouter(),
 	}
 }
 
@@ -389,7 +400,7 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
 	startTime := time.Now()
-	
+
 	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
 	if errMsg != nil {
 		return nil, errMsg
@@ -423,26 +434,26 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		SourceFormat:    sdktranslator.FromString(handlerType),
 	}
 	opts.Metadata = mergeMetadata(cloneMetadata(metadata), reqMeta)
-	
+
 	// Record routing decision start time
 	routingStartTime := time.Now()
-	
+
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
-	
+
 	// Calculate routing latency
 	routingLatency := time.Since(routingStartTime).Milliseconds()
-	
+
 	executedProvider := providers[0]
 	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
 		executedProvider = ep
 	}
-	
+
 	if err != nil {
 		// Record failed routing decision if pipeline integrator is available
 		if h.PipelineIntegrator != nil {
 			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
 		}
-		
+
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
 			if code := se.StatusCode(); code > 0 {
@@ -455,20 +466,51 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 				addon = hdr.Clone()
 			}
 		}
-		
+
+		if publicModel, _ := metadata["ail_public_model"].(string); publicModel != "" &&
+			virtualmodels.FallbackEnabled(h.Cfg, publicModel) &&
+			isRecoverableVirtualError(err, status) {
+			exclude := map[string]struct{}{}
+			if memberID, _ := metadata["virtual_member_id"].(string); memberID != "" {
+				exclude[memberID] = struct{}{}
+			}
+			if route, routeErr := h.selectVirtualRouteExcluding(publicModel, body, "", exclude); routeErr == nil && route != nil {
+				fallbackMeta := cloneMetadata(metadata)
+				fallbackMeta["virtual_member_id"] = route.MemberID
+				fallbackMeta["virtual_native_model"] = route.NativeModel
+				fallbackMeta["virtual_provider"] = route.Provider
+				fallbackMeta["virtual_fallback_attempt"] = true
+				fallbackReq := coreexecutor.Request{Model: route.NativeModel, Payload: body, Metadata: cloneMetadata(fallbackMeta)}
+				fallbackOpts := coreexecutor.Options{
+					Stream:          false,
+					Alt:             alt,
+					OriginalRequest: cloneBytes(rawJSON),
+					SourceFormat:    sdktranslator.FromString(handlerType),
+					Metadata:        mergeMetadata(cloneMetadata(fallbackMeta), reqMeta),
+				}
+				if fallbackProviders, breakerErr := h.enforceCircuitBreaker([]string{route.Provider}); breakerErr == nil {
+					log.WithFields(log.Fields{"virtual_model": publicModel, "fallback_member_id": route.MemberID, "previous_error": err.Error()}).Warn("virtual model fallback attempt")
+					if fallbackResp, fallbackErr := h.AuthManager.Execute(ctx, fallbackProviders, fallbackReq, fallbackOpts); fallbackErr == nil {
+						h.recordAutoRoutingOutcome(ctx, fallbackMeta, route.Provider, time.Since(startTime), true, 200)
+						return rewritePublicModel(fallbackResp.Payload, fallbackMeta), nil
+					}
+				}
+			}
+		}
+
 		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
-		
+
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
-	
+
 	// Record successful routing decision if pipeline integrator is available
 	if h.PipelineIntegrator != nil {
 		responseTime := time.Since(startTime).Milliseconds()
 		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
 	}
-	
+
 	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
-	
+
 	// ROUTING: Apply LUA on_response hook
 	if h.LuaEngine.IsEnabled() {
 		resData := map[string]any{
@@ -481,7 +523,7 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		_, _ = h.LuaEngine.RunHook(ctx, plugin.HookOnResponse, resData)
 	}
 
-	return cloneBytes(resp.Payload), nil
+	return rewritePublicModel(resp.Payload, metadata), nil
 }
 
 // enforceCircuitBreaker validates the requested providers against their circuit breakers.
@@ -489,7 +531,7 @@ func (h *BaseAPIHandler) enforceCircuitBreaker(providers []string) ([]string, *i
 	if h.CircuitBreaker == nil || len(providers) == 0 {
 		return providers, nil
 	}
-	
+
 	var active []string
 	for _, p := range providers {
 		if err := h.CircuitBreaker.Get(p).AllowRequest(); err == nil {
@@ -498,7 +540,7 @@ func (h *BaseAPIHandler) enforceCircuitBreaker(providers []string) ([]string, *i
 			log.WithFields(log.Fields{"provider": p}).Warn("Circuit breaker triggered, skipping provider")
 		}
 	}
-	
+
 	if len(active) == 0 {
 		return nil, &interfaces.ErrorMessage{
 			StatusCode: http.StatusServiceUnavailable,
@@ -557,14 +599,14 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
 	h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), true, 200)
-	return cloneBytes(resp.Payload), nil
+	return rewritePublicModel(resp.Payload, metadata), nil
 }
 
 // ExecuteMultimodalWithAuthManager executes a multimodal request (audio/image) via the core auth manager.
 // It injects operation and content-type metadata for the executor.
 func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, operation string, contentType string) ([]byte, *interfaces.ErrorMessage) {
 	startTime := time.Now()
-	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetailsWithOperation(ctx, modelName, rawJSON, operation)
 	if errMsg != nil {
 		return nil, errMsg
 	}
@@ -618,7 +660,7 @@ func (h *BaseAPIHandler) ExecuteMultimodalWithAuthManager(ctx context.Context, h
 		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
 	h.recordAutoRoutingOutcome(ctx, metadata, providers[0], time.Since(startTime), true, 200)
-	return cloneBytes(resp.Payload), nil
+	return rewritePublicModel(resp.Payload, metadata), nil
 }
 
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
@@ -646,7 +688,13 @@ func (h *BaseAPIHandler) ExecuteStreamMultimodalWithAuthManager(ctx context.Cont
 
 func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, extraMetadata map[string]any) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
 	startTime := time.Now()
-	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetails(ctx, modelName, rawJSON)
+	operation := ""
+	if len(extraMetadata) > 0 {
+		if op, ok := extraMetadata["operation"].(string); ok {
+			operation = op
+		}
+	}
+	providers, normalizedModel, metadata, body, errMsg := h.getRequestDetailsWithOperation(ctx, modelName, rawJSON, operation)
 	if errMsg != nil {
 		dataChan := make(chan []byte)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
@@ -712,7 +760,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Contex
 	routingStartTime := time.Now()
 
 	chunks, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
-	
+
 	routingLatency := time.Since(routingStartTime).Milliseconds()
 	executedProvider := providers[0]
 	if ep, ok := opts.Metadata["executed_provider"].(string); ok && ep != "" {
@@ -723,7 +771,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Contex
 		if h.PipelineIntegrator != nil {
 			h.recordFailedRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, err)
 		}
-		
+
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
@@ -737,19 +785,68 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Contex
 				addon = hdr.Clone()
 			}
 		}
-		
+
+		if publicModel, _ := metadata["ail_public_model"].(string); publicModel != "" &&
+			virtualmodels.FallbackEnabled(h.Cfg, publicModel) &&
+			isRecoverableVirtualError(err, status) {
+			exclude := map[string]struct{}{}
+			if memberID, _ := metadata["virtual_member_id"].(string); memberID != "" {
+				exclude[memberID] = struct{}{}
+			}
+			if route, routeErr := h.selectVirtualRouteExcluding(publicModel, body, operation, exclude); routeErr == nil && route != nil {
+				fallbackMeta := cloneMetadata(metadata)
+				fallbackMeta["virtual_member_id"] = route.MemberID
+				fallbackMeta["virtual_native_model"] = route.NativeModel
+				fallbackMeta["virtual_provider"] = route.Provider
+				fallbackMeta["virtual_fallback_attempt"] = true
+				fallbackReq := coreexecutor.Request{Model: route.NativeModel, Payload: body, Metadata: cloneMetadata(fallbackMeta)}
+				if len(extraMetadata) > 0 {
+					if fallbackReq.Metadata == nil {
+						fallbackReq.Metadata = make(map[string]any)
+					}
+					for k, v := range extraMetadata {
+						fallbackReq.Metadata[k] = v
+					}
+				}
+				fallbackOpts := coreexecutor.Options{
+					Stream:          true,
+					Alt:             alt,
+					OriginalRequest: cloneBytes(rawJSON),
+					SourceFormat:    sdktranslator.FromString(handlerType),
+					Metadata:        mergeMetadata(cloneMetadata(fallbackMeta), reqMeta),
+				}
+				if len(extraMetadata) > 0 {
+					for k, v := range extraMetadata {
+						fallbackOpts.Metadata[k] = v
+					}
+				}
+				if fallbackProviders, breakerErr := h.enforceCircuitBreaker([]string{route.Provider}); breakerErr == nil {
+					log.WithFields(log.Fields{"virtual_model": publicModel, "fallback_member_id": route.MemberID, "previous_error": err.Error()}).Warn("virtual model streaming fallback attempt")
+					if fallbackChunks, fallbackErr := h.AuthManager.ExecuteStream(ctx, fallbackProviders, fallbackReq, fallbackOpts); fallbackErr == nil {
+						chunks = fallbackChunks
+						metadata = fallbackMeta
+						providers = fallbackProviders
+						normalizedModel = route.NativeModel
+						executedProvider = route.Provider
+						goto streamReady
+					}
+				}
+			}
+		}
+
 		h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), false, status)
-		
+
 		errChan <- &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 		close(errChan)
 		return nil, errChan
 	}
-	
+
+streamReady:
 	if h.PipelineIntegrator != nil {
 		responseTime := time.Since(startTime).Milliseconds()
 		h.recordSuccessfulRouting(ctx, modelName, normalizedModel, []string{executedProvider}, routingLatency, responseTime)
 	}
-	
+
 	h.recordAutoRoutingOutcome(ctx, metadata, executedProvider, time.Since(startTime), true, 200)
 
 	dataChan := make(chan []byte)
@@ -819,7 +916,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Contex
 				}
 				if len(chunk.Payload) > 0 {
 					sentPayload = true
-					dataChan <- cloneBytes(chunk.Payload)
+					dataChan <- rewritePublicModel(chunk.Payload, metadata)
 				}
 			}
 		}
@@ -840,6 +937,10 @@ func statusFromError(err error) int {
 }
 
 func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string, rawJSON []byte) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
+	return h.getRequestDetailsWithOperation(ctx, modelName, rawJSON, "")
+}
+
+func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, modelName string, rawJSON []byte, operation string) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
 	body = cloneBytes(rawJSON)
 	// Parse provider prefix (e.g., "ollama:llama3.2" -> provider="ollama", model="llama3.2")
 	providerPrefix, prefixedModel := util.ParseProviderPrefix(modelName)
@@ -870,7 +971,7 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 		}
 
 		// Normalize the model name for thinking suffixes
-		normalizedModel, metadata = normalizeModelMetadata(actualModel)
+		normalizedModel, metadata = h.normalizeModelMetadata(actualModel)
 
 		// ROUTING: Apply LUA on_request hook if engine is enabled
 		if h.LuaEngine.IsEnabled() {
@@ -916,7 +1017,7 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 
 	// No prefix - use existing auto-detection logic
 	// 1. Initial normalization
-	normalizedModel, metadata = normalizeModelMetadata(modelName)
+	normalizedModel, metadata = h.normalizeModelMetadata(modelName)
 
 	// 2. ROUTING: Apply LUA on_request hook early so it can intercept "auto" or "cortex"
 	if h.LuaEngine.IsEnabled() && ctx.Value(plugin.SkipLuaContextKey) == nil {
@@ -965,6 +1066,31 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 				return ps, normalizedModel, metadata, body, nil
 			}
 		}
+	}
+
+	// 2b. First-class virtual model routing. This must happen before legacy
+	// provider inference; virtual IDs are public contracts, not concrete
+	// provider aliases.
+	if route, routeErr := h.selectVirtualRoute(normalizedModel, body, operation); routeErr != nil {
+		return nil, "", nil, nil, routeErr
+	} else if route != nil {
+		if metadata == nil {
+			metadata = make(map[string]any)
+		}
+		metadata["ail_public_model"] = route.PublicModel
+		metadata["virtual_model"] = route.PublicModel
+		metadata["virtual_member_id"] = route.MemberID
+		metadata["virtual_request_class"] = route.Requirements.Class
+		metadata["virtual_native_model"] = route.NativeModel
+		metadata["virtual_provider"] = route.Provider
+		log.WithFields(log.Fields{
+			"virtual_model": route.PublicModel,
+			"member_id":     route.MemberID,
+			"provider":      route.Provider,
+			"native_model":  route.NativeModel,
+			"request_class": route.Requirements.Class,
+		}).Info("selected virtual model member")
+		return []string{route.Provider}, route.NativeModel, metadata, body, nil
 	}
 
 	// 3. If it's still "auto", resolve it via intelligent auto-routing or legacy fallback
@@ -1029,16 +1155,56 @@ func cloneBytes(src []byte) []byte {
 	return dst
 }
 
-func normalizeModelMetadata(modelName string) (string, map[string]any) {
+func (h *BaseAPIHandler) normalizeModelMetadata(modelName string) (string, map[string]any) {
 	norm, meta := util.NormalizeThinkingModel(modelName)
 	// OpenCode and Continue DEV force models to have `-vision` in their names to unlock the UI GUI for image upload.
 	// We strip it here so the actual provider backend gets the correct model name invisibly.
 	// BUT: only strip when `norm` itself isn't a registered model — otherwise legitimate aliases
 	// ending in `-vision` (e.g. `ail-vision`) would be rewritten to non-existent names.
-	if strings.HasSuffix(norm, "-vision") && len(util.GetProviderName(norm)) == 0 {
+	if strings.HasSuffix(norm, "-vision") && len(util.GetProviderName(norm)) == 0 && !virtualmodels.IsVirtualModel(h.Cfg, norm) {
 		norm = strings.TrimSuffix(norm, "-vision")
 	}
 	return norm, meta
+}
+
+func (h *BaseAPIHandler) selectVirtualRoute(modelName string, rawJSON []byte, operation string) (*virtualmodels.Route, *interfaces.ErrorMessage) {
+	return h.selectVirtualRouteExcluding(modelName, rawJSON, operation, nil)
+}
+
+func (h *BaseAPIHandler) selectVirtualRouteExcluding(modelName string, rawJSON []byte, operation string, exclude map[string]struct{}) (*virtualmodels.Route, *interfaces.ErrorMessage) {
+	if h == nil || h.Cfg == nil || !virtualmodels.IsVirtualModel(h.Cfg, modelName) {
+		return nil, nil
+	}
+	router := h.VirtualRouter
+	if router == nil {
+		router = virtualmodels.NewRouter()
+		h.VirtualRouter = router
+	}
+	route, err := router.SelectExcluding(h.Cfg, modelName, rawJSON, operation, exclude)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if _, ok := err.(virtualmodels.NoEligibleBackendError); ok {
+			status = http.StatusUnprocessableEntity
+		}
+		return nil, &interfaces.ErrorMessage{StatusCode: status, Error: err}
+	}
+	return &route, nil
+}
+
+func isRecoverableVirtualError(err error, status int) bool {
+	if err == nil {
+		return false
+	}
+	if status == 0 {
+		return true
+	}
+	switch status {
+	case http.StatusPaymentRequired, http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return status >= http.StatusInternalServerError
+	}
 }
 
 func cloneMetadata(src map[string]any) map[string]any {
@@ -1050,6 +1216,14 @@ func cloneMetadata(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+func rewritePublicModel(payload []byte, metadata map[string]any) []byte {
+	publicModel, _ := metadata["ail_public_model"].(string)
+	if publicModel == "" {
+		return cloneBytes(payload)
+	}
+	return virtualmodels.RewriteModelField(cloneBytes(payload), publicModel)
 }
 
 // WriteErrorResponse writes an error message to the response writer using the HTTP status embedded in the message.
@@ -1224,7 +1398,7 @@ func (h *BaseAPIHandler) recordSuccessfulRouting(ctx context.Context, requestedM
 			}
 		}
 	}
-	
+
 	// Build routing decision using the builder pattern
 	// Note: We use interface{} to avoid import cycles, the adapter will handle type conversion
 	decision := map[string]interface{}{
@@ -1244,10 +1418,10 @@ func (h *BaseAPIHandler) recordSuccessfulRouting(ctx context.Context, requestedM
 			"response_time_ms": responseTime,
 		},
 	}
-	
+
 	// Record the routing decision (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.RecordRouting(decision)
-	
+
 	// Emit routing event (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
 }
@@ -1263,7 +1437,7 @@ func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel
 			}
 		}
 	}
-	
+
 	// Build routing decision for failure
 	decision := map[string]interface{}{
 		"api_key_hash": apiKeyHash,
@@ -1282,10 +1456,10 @@ func (h *BaseAPIHandler) recordFailedRouting(ctx context.Context, requestedModel
 			"error":   err.Error(),
 		},
 	}
-	
+
 	// Record the routing decision (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.RecordRouting(decision)
-	
+
 	// Emit routing event (errors are logged internally by the integrator)
 	_ = h.PipelineIntegrator.EmitRoutingEvent(decision)
 }
@@ -1296,7 +1470,7 @@ func determineTier(providers []string) string {
 	if len(providers) == 0 {
 		return "semantic"
 	}
-	
+
 	// Simple tier determination based on provider name
 	provider := strings.ToLower(providers[0])
 	switch provider {
@@ -1331,7 +1505,7 @@ func (h *BaseAPIHandler) recordAutoRoutingOutcome(ctx context.Context, metadata 
 		reqID = uuid.NewString() // Fallback if no trace context
 	}
 	h.AutoResolver.RecordOutcome(reqID, decision, executedProvider, latency, success, statusCode, nil)
-	
+
 	// Apply Circuit Breaker Success/Failure feedback
 	if h.CircuitBreaker != nil {
 		cb := h.CircuitBreaker.Get(executedProvider)

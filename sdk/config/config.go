@@ -24,6 +24,9 @@ type PayloadConfig = internalconfig.PayloadConfig
 type PayloadRule = internalconfig.PayloadRule
 type PayloadModelRule = internalconfig.PayloadModelRule
 type IntelligenceConfig = internalconfig.IntelligenceConfig
+type VirtualModelConfig = internalconfig.VirtualModelConfig
+type VirtualModelMemberConfig = internalconfig.VirtualModelMemberConfig
+type VirtualModelCapabilitiesConfig = internalconfig.VirtualModelCapabilitiesConfig
 
 type GeminiKey = internalconfig.GeminiKey
 type CodexKey = internalconfig.CodexKey
