@@ -307,7 +307,7 @@ curl http://localhost:18080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "minimax:speech-02-hd",
+    "model": "ail-speech",
     "input": "Hello from switchAILocal",
     "voice": "male-qn-qingse",
     "response_format": "mp3"
@@ -334,7 +334,7 @@ curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-2.6",
+    "model": "ail-music",
     "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing"
   }' | jq -r .data.audio | base64 -d > song.mp3
 
@@ -343,13 +343,13 @@ curl -N http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-2.6",
+    "model": "ail-music",
     "stream": true,
     "lyrics": "[Verse]\nHello world\n[Chorus]\nLet us sing"
   }' > song.mp3
 ```
 
-Sync returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. Streaming returns `Content-Type: audio/mpeg` with progressive MP3 frames. For cover mode use `"model": "minimax:music-cover"` with `"audio_url"` or `"audio_base64"` + `"prompt"`.
+Sync returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}, model, trace_id}`. Streaming returns `Content-Type: audio/mpeg` with progressive MP3 frames. For cover mode use `"model": "ail-music-cover"` with `"audio_url"` or `"audio_base64"` + `"prompt"`.
 
 #### Lyrics Generation
 
@@ -385,7 +385,7 @@ curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "minimax:MiniMax-M2.7",
+    "model": "ail-compound",
     "messages": [
       {"role": "user", "content": "What are the latest AI news today?"}
     ],

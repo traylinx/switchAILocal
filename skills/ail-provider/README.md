@@ -98,7 +98,7 @@ switchAILocal supports these providers (all discoverable by the wizard):
 | Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile`, `whisper-large-v3` |
 | Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
 | Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
-| MiniMax | `minimax:` | `MiniMax-M2.7`, `image-01`, **`speech-02-hd`** |
+| MiniMax | `minimax:` | `ail-compound`, `image-01`, **`speech-02-hd`** |
 | switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast`, `switchai-embed` |
 | OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
 
@@ -108,12 +108,12 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 
 | Endpoint | What it does | Default model | Notes |
 |----------|--------------|---------------|-------|
-| `POST /v1/chat/completions` | Chat / reasoning / vision | `minimax:MiniMax-M2.7` (via `model: "auto"`) | Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
+| `POST /v1/chat/completions` | Chat / reasoning / vision | `ail-compound` (via `model: "auto"`) | Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
 | `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallbacks: `switchai-embed`, alibaba `text-embedding-v3`. All return dim=1024. |
-| `POST /v1/images/generations` | Image generation | `minimax:image-01` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
+| `POST /v1/images/generations` | Image generation | `ail-image` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
 | `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |
-| `POST /v1/audio/speech` | Text → speech (TTS) | `minimax:speech-02-hd` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
-| `POST /v1/music/generations` | Text → music / style cover | `minimax:music-2.6` | Generate real songs from lyrics (text-to-music) or covers (`model: "minimax:music-cover"` + `audio_url`). Sync (default): returns `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`, 30–90s. Streaming (`stream: true`): returns raw `audio/mpeg`, TTFB ~20s. 100 songs/day. |
+| `POST /v1/audio/speech` | Text → speech (TTS) | `ail-speech` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
+| `POST /v1/music/generations` | Text → music / style cover | `ail-music` | Generate real songs from lyrics (text-to-music) or covers (`model: "ail-music-cover"` + `audio_url`). Sync (default): returns `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`, 30–90s. Streaming (`stream: true`): returns raw `audio/mpeg`, TTFB ~20s. 100 songs/day. |
 | `POST /v1/music/lyrics` | Song lyrics generator | (same credential) | Fast (~2s). Modes: `write_full_song` (default) or `edit`. Returns `{song_title, style_tags, lyrics}` with `[Verse]`/`[Chorus]` structure. 100/day. |
 
 ### Chat + web search (agent recipe)
@@ -122,7 +122,7 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 curl http://localhost:18080/v1/chat/completions \
   -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:MiniMax-M2.7",
+    "model": "ail-compound",
     "messages": [{"role":"user","content":"What did Apple announce today? Use web search."}],
     "max_tokens": 2000,
     "tools": [{"type": "web_search"}]
@@ -137,7 +137,7 @@ curl http://localhost:18080/v1/chat/completions \
 curl http://localhost:18080/v1/audio/speech \
   -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:speech-02-hd",
+    "model": "ail-speech",
     "input": "Hello from your agent",
     "voice": "male-qn-qingse",
     "response_format": "mp3"
@@ -169,13 +169,13 @@ LYRICS=$(curl -sS http://localhost:18080/v1/music/lyrics \
 # Step 2 — synthesize music (~30-90s sync, or use stream: true for ~20s TTFB)
 curl -sS http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
-  -d "$(jq -n --arg l "$LYRICS" '{"model":"minimax:music-2.6","lyrics":$l}')" \
+  -d "$(jq -n --arg l "$LYRICS" '{"model":"ail-music","lyrics":$l}')" \
   | jq -r .data.audio | base64 -d > song.mp3
 
 # Or stream raw MP3 as it's generated (Content-Type: audio/mpeg):
 curl -N -sS http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
-  -d "$(jq -n --arg l "$LYRICS" '{"model":"minimax:music-2.6","stream":true,"lyrics":$l}')" \
+  -d "$(jq -n --arg l "$LYRICS" '{"model":"ail-music","stream":true,"lyrics":$l}')" \
   > song.mp3
 ```
 

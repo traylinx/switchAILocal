@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -110,7 +111,12 @@ func (e *Engine) Initialize(sharedLibPath string) error {
 	}
 
 	if err := ort.InitializeEnvironment(); err != nil {
-		return fmt.Errorf("failed to initialize ONNX runtime: %w", err)
+		// onnxruntime_go keeps a process-global environment. Multiple engines
+		// in the same process/test run can legitimately see an already-initialized
+		// runtime; sessions can still be created against that shared environment.
+		if !strings.Contains(strings.ToLower(err.Error()), "already been initialized") {
+			return fmt.Errorf("failed to initialize ONNX runtime: %w", err)
+		}
 	}
 
 	// Create session options

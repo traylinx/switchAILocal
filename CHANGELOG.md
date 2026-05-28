@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## v0.5.20 - 2026-05-29
+
+- Publish the stable public AIL alias contract in docs and examples: `ail-compound`, `ail-fast`, `ail-image`, `ail-speech`, `ail-music`, and `ail-music-cover`.
+- Add hidden compatibility aliases in `config.example.yaml` for stale `minimax:*` clients so existing local agents fail forward instead of returning `unknown provider`.
+- Keep provider/native model names private implementation details; new installs should point apps and agents at `ail-*` aliases only.
+
 ## v0.5.17 - 2026-05-12
 
 - Fix MiniMax `output_format:"url"` music responses. The adapter now preserves URL audio payloads as `{data:{audio, audio_url, format:"url"}}` instead of trying to hex-decode the URL string.

@@ -363,6 +363,19 @@ openai-compatibility:
         alias: "ail-compound-minimax"
         expose: false
         visibility: private
+        capabilities:
+          operations:
+            - chat
+            - chat_text_tools
+            - chat_image_understanding
+            - chat_audio_understanding
+          input:
+            - text
+            - image
+            - audio
+          output:
+            - text
+          tools: true
         # Provider-native tools advertised to agentic callers via the
         # /v1/models discovery endpoint. Agent runtimes (OpenClaw,
         # Hermes, custom SDKs) splice these entries into their own
@@ -375,16 +388,51 @@ openai-compatibility:
               force_search: { type: "boolean", default: false }
               max_keyword:  { type: "integer", default: 3 }
               limit:        { type: "integer", default: 3 }
+      # Hidden compatibility aliases: stale clients that still send raw
+      # provider IDs keep routing, while /v1/models exposes only stable ail-*.
+      - name: "MiniMax-M2.7"
+        alias: "minimax:MiniMax-M2.7"
+        expose: false
+        visibility: private
+        capabilities:
+          operations:
+            - chat
+            - chat_text_tools
+            - chat_image_understanding
+            - chat_audio_understanding
+          input:
+            - text
+            - image
+            - audio
+          output:
+            - text
+          tools: true
+      - name: "image-01"
+        alias: "minimax:image-01"
+        expose: false
+        visibility: private
       - name: "image-01"
         alias: "ail-image"
+      - name: "speech-02-hd"
+        alias: "minimax:speech-02-hd"
+        expose: false
+        visibility: private
       - name: "speech-02-hd"
         alias: "ail-speech"
       # music-2.6: text-to-music (Plus plan, 100 songs/day). Served via
       # POST /v1/music/generations → MiniMax music adapter (minimax_music.go).
       - name: "music-2.6"
+        alias: "minimax:music-2.6"
+        expose: false
+        visibility: private
+      - name: "music-2.6"
         alias: "ail-music"
       # music-cover: reference-audio style transfer (Plus plan, 100/day).
       # Same upstream endpoint as music-2.6 — model field switches mode.
+      - name: "music-cover"
+        alias: "minimax:music-cover"
+        expose: false
+        visibility: private
       - name: "music-cover"
         alias: "ail-music-cover"
 

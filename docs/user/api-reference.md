@@ -24,18 +24,18 @@ Standard OpenAI chat completions. Supports streaming (`"stream": true`).
 | `model` | string | Yes | Model name (e.g., `gemini-2.5-pro`, `ollama:llama3.2`) |
 | `messages` | array | Yes | Array of message objects |
 | `stream` | boolean | No | Enable SSE streaming |
-| `tools` | array | No | Tool definitions. `[{"type":"web_search"}]` is supported natively by `minimax:MiniMax-M2.7` — see Web Search below. |
+| `tools` | array | No | Tool definitions. `[{"type":"web_search"}]` is supported natively by `ail-compound` — see Web Search below. |
 
 #### Web Search (MiniMax native tool)
 
-`minimax:MiniMax-M2.7` supports a built-in `web_search` tool that performs live web lookups and folds the results into the response. Enable it via the `tools` field:
+`ail-compound` supports a built-in `web_search` tool that performs live web lookups and folds the results into the response. Enable it via the `tools` field:
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
   -H "Authorization: Bearer $AIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:MiniMax-M2.7",
+    "model": "ail-compound",
     "messages": [{"role": "user", "content": "Who won the 2026 Super Bowl?"}],
     "max_tokens": 2000,
     "tools": [{"type": "web_search"}]
@@ -201,7 +201,7 @@ curl http://localhost:18080/v1/audio/speech \
   -H "Authorization: Bearer $AIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:speech-02-hd",
+    "model": "ail-speech",
     "input": "Hello from switchAILocal",
     "voice": "male-qn-qingse",
     "response_format": "mp3"
@@ -243,7 +243,7 @@ Generate music from lyrics using MiniMax `music-2.6` (text-to-music) or `music-c
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `model` | string | No | `minimax:music-2.6` (default via `intelligence.matrix.music_generation`) or `minimax:music-cover` |
+| `model` | string | No | `ail-music` (default via `intelligence.matrix.music_generation`) or `ail-music-cover` |
 | `stream` | bool | No | `true` streams raw `audio/mpeg` bytes as they arrive (~20s TTFB vs ~60s sync); default `false` returns JSON with base64 audio |
 | `lyrics` | string | Yes for `music-2.6` | Lyrics with optional structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`, `[Inst]` |
 | `prompt` | string | Yes for `music-cover` (10–300 chars) | Style description for the cover |
@@ -273,7 +273,7 @@ curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer $AIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-2.6",
+    "model": "ail-music",
     "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
   }' | jq -r .data.audio | base64 -d > song.mp3
 ```
@@ -284,7 +284,7 @@ curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer $AIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-cover",
+    "model": "ail-music-cover",
     "prompt": "upbeat jazz cover with saxophone solo",
     "audio_url": "https://example.com/reference.mp3"
   }' | jq -r .data.audio | base64 -d > cover.mp3
@@ -305,7 +305,7 @@ curl -N http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer $AIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-2.6",
+    "model": "ail-music",
     "stream": true,
     "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
   }' > song.mp3
@@ -355,7 +355,7 @@ curl http://localhost:18080/v1/music/lyrics \
   }'
 ```
 
-**Common workflow:** call `/v1/music/lyrics` first to generate structured lyrics, then feed the result into `/v1/music/generations` with `model: "minimax:music-2.6"`.
+**Common workflow:** call `/v1/music/lyrics` first to generate structured lyrics, then feed the result into `/v1/music/generations` with `model: "ail-music"`.
 
 **Plan limits:** 100 lyrics/day on the Plus plan.
 

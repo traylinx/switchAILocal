@@ -94,21 +94,21 @@ auto-routing:
     creative:        # Storytelling & roleplay
       - "geminicli:gemini-2.5-pro"
     vision:          # Image / multimodal understanding
-      - "minimax:MiniMax-M2.7"
+      - "ail-compound"
     audio:           # Audio input processing
-      - "minimax:MiniMax-M2.7"
+      - "ail-compound"
     transcription:   # Speech-to-text (groq-hosted whisper)
       - "whisper-large-v3"
     speech:          # Text-to-speech (MiniMax T2A adapter)
-      - "minimax:speech-02-hd"
+      - "ail-speech"
     web_search:      # Live web lookups (MiniMax native tool)
-      - "minimax:MiniMax-M2.7"
+      - "ail-compound"
     music_generation:   # Text-to-music (MiniMax music adapter, /v1/music/generations)
-      - "minimax:music-2.6"
+      - "ail-music"
     music_cover:        # Reference-audio style transfer (same endpoint, different model)
-      - "minimax:music-cover"
+      - "ail-music-cover"
     lyrics_generation:  # Structured song lyrics (POST /v1/music/lyrics)
-      - "minimax:music-2.6"
+      - "ail-music"
 ```
 
 > **FAQ: Why do I also have a `pipeline.intelligence.matrix` in my config?**

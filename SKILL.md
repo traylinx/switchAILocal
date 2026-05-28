@@ -288,7 +288,7 @@ curl --location 'http://localhost:18080/v1/images/generations' \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:image-01",
+    "model": "ail-image",
     "prompt": "A dog wearing a space suit on Mars, photorealistic",
     "aspect_ratio": "16:9",
     "response_format": "url"
@@ -296,7 +296,7 @@ curl --location 'http://localhost:18080/v1/images/generations' \
 ```
 
 **Parameters:**
-- `model` — Always use `minimax:image-01`
+- `model` — Always use `ail-image`
 - `prompt` — Text description of the desired image
 - `aspect_ratio` — `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
 - `response_format` — `url` (returns HTTP URL) or `base64` (returns base64 encoded image)
@@ -304,7 +304,7 @@ curl --location 'http://localhost:18080/v1/images/generations' \
 **Example Python:**
 ```python
 response = client.images.generate(
-    model="minimax:image-01",
+    model="ail-image",
     prompt="A serene Japanese garden with cherry blossoms",
     aspect_ratio="16:9",
     response_format="url"
@@ -323,7 +323,7 @@ curl http://localhost:18080/v1/audio/speech \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:speech-02-hd",
+    "model": "ail-speech",
     "input": "Hello from switchAILocal",
     "voice": "male-qn-qingse",
     "response_format": "mp3"
@@ -373,7 +373,7 @@ curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:music-2.6",
+    "model": "ail-music",
     "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
   }' | jq -r .data.audio | base64 -d > song.mp3
 ```
@@ -385,7 +385,7 @@ Returns `{data: {audio: <base64>, format, size_bytes, duration_ms, sample_rate, 
 curl -N http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
-  -d '{"model":"minimax:music-2.6","stream":true,"lyrics":"[Verse]\nHello world"}' > song.mp3
+  -d '{"model":"ail-music","stream":true,"lyrics":"[Verse]\nHello world"}' > song.mp3
 ```
 
 Use streaming when UX matters (web player, agent progress signal). Use sync when you need the metadata block (duration_ms, sample_rate, bitrate) upfront — those fields are logged server-side during streaming but not exposed to the client.
@@ -398,7 +398,7 @@ Generate a cover of an existing track in a different style. Same endpoint, diffe
 curl http://localhost:18080/v1/music/generations \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "minimax:music-cover",
+    "model": "ail-music-cover",
     "prompt": "upbeat jazz cover with saxophone solo",
     "audio_url": "https://example.com/reference.mp3"
   }' | jq -r .data.audio | base64 -d > cover.mp3
@@ -434,7 +434,7 @@ curl http://localhost:18080/v1/chat/completions \
   -H "Authorization: Bearer sk-test-123" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "minimax:MiniMax-M2.7",
+    "model": "ail-compound",
     "messages": [{"role":"user","content":"What happened today in tech news?"}],
     "max_tokens": 2000,
     "tools": [{"type": "web_search"}]

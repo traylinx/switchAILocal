@@ -36,8 +36,8 @@ Edit `~/.config/opencode/opencode.json`:
         "apiKey": "sk-test-123"
       },
       "models": {
-        "minimax:MiniMax-M2.7": {
-          "name": "MiniMax-M2.7 (via AIL)",
+        "ail-compound": {
+          "name": "ail-compound (via AIL)",
           "limit": {
             "context": 1000000,
             "output": 65536
@@ -79,8 +79,8 @@ Edit `~/.claude/settings.json`:
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:18080",
     "ANTHROPIC_AUTH_TOKEN": "sk-test-123",
-    "ANTHROPIC_MODEL": "minimax:MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_MODEL": "ail-compound",
+    "ANTHROPIC_SMALL_FAST_MODEL": "ail-compound",
     "API_TIMEOUT_MS": "300000"
   }
 }
@@ -108,11 +108,11 @@ You can override all model slots to route everything through switchAILocal:
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:18080",
     "ANTHROPIC_AUTH_TOKEN": "sk-test-123",
-    "ANTHROPIC_MODEL": "minimax:MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "minimax:MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "minimax:MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "minimax:MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "minimax:MiniMax-M2.7",
+    "ANTHROPIC_MODEL": "ail-compound",
+    "ANTHROPIC_SMALL_FAST_MODEL": "ail-compound",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "ail-compound",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "ail-compound",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "ail-compound",
     "API_TIMEOUT_MS": "300000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   }
@@ -129,7 +129,7 @@ curl http://localhost:18080/v1/messages \
   -H "x-api-key: sk-test-123" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
-    "model": "minimax:MiniMax-M2.7",
+    "model": "ail-compound",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}]
   }'
@@ -149,7 +149,7 @@ Edit `~/.codex/config.toml`:
 
 ```toml
 # Set switchAILocal as the default provider
-model = "minimax:MiniMax-M2.7"
+model = "ail-compound"
 model_provider = "switchailocal"
 
 [model_providers.switchailocal]
@@ -188,7 +188,7 @@ For any generic OpenAI-compatible CLI tool, use these connection parameters:
 ```
 API Base URL:  http://localhost:18080/v1
 API Key:       sk-test-123  (or your configured key)
-Model:         provider:ModelName  (e.g., minimax:MiniMax-M2.7)
+Model:         provider:ModelName  (e.g., ail-compound)
 ```
 
 ### Anthropic-Compatible Clients
