@@ -230,3 +230,69 @@ func TestOpenAIModels_AILCatalogHidesProviderNativeModels(t *testing.T) {
 		t.Fatalf("ail-music missing from filtered catalog: body=%s", w.Body.String())
 	}
 }
+
+// TestOpenAIModels_HidesPrivateStableAliases pins the second half of the Tytus
+// public catalog contract: even ail-* aliases are hidden when config marks them
+// private. This keeps disabled/provider-specific routes like ail-kimi and
+// ail-compound-minimax out of JULI3TA/Tytus model pickers while preserving their
+// internal routability if an operator deliberately keeps them configured.
+func TestOpenAIModels_HidesPrivateStableAliases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-ail-private-alias-filter-client"
+	reg.RegisterClient(clientID, "minimax", []*registry.ModelInfo{
+		{
+			ID:      "ail-compound",
+			Object:  "model",
+			OwnedBy: "switchai",
+			Type:    "openai-compatibility",
+		},
+		{
+			ID:         "ail-compound-minimax",
+			Object:     "model",
+			OwnedBy:    "switchai",
+			Type:       "openai-compatibility",
+			Visibility: "private",
+		},
+		{
+			ID:         "ail-kimi",
+			Object:     "model",
+			OwnedBy:    "switchai",
+			Type:       "openai-compatibility",
+			Visibility: "private",
+		},
+	})
+	defer reg.UnregisterClient(clientID)
+
+	h := newTestOpenAIHandler()
+	r := gin.New()
+	r.GET("/v1/models", h.OpenAIModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 (body=%s)", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, w.Body.String())
+	}
+	seenCompound := false
+	for _, m := range body.Data {
+		id, _ := m["id"].(string)
+		switch id {
+		case "ail-compound":
+			seenCompound = true
+		case "ail-compound-minimax", "ail-kimi":
+			t.Fatalf("private alias leaked into public catalog: %s (body=%s)", id, w.Body.String())
+		}
+	}
+	if !seenCompound {
+		t.Fatalf("ail-compound missing from filtered catalog: body=%s", w.Body.String())
+	}
+}

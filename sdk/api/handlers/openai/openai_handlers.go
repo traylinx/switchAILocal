@@ -101,6 +101,9 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		if modelKey == "" {
 			continue
 		}
+		if visibility, _ := model["visibility"].(string); strings.EqualFold(strings.TrimSpace(visibility), "private") {
+			continue
+		}
 		if ailCatalogMode && !strings.HasPrefix(modelKey, "ail-") {
 			continue
 		}
