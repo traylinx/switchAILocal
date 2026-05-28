@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-05-28 - Overly Permissive Sensitive Cache Files
+**Vulnerability:** Cached discovery registry files and directories were created with permissive 0644 and 0755 permissions, making them readable by other users.
+**Learning:** Hardcoding standard permissions like 0644/0755 exposes sensitive AI model metadata and configuration structures on multi-user systems.
+**Prevention:** Explicitly restrict directory creation permissions to 0750 or less (os.MkdirAll) and file write permissions to 0600 or less (os.WriteFile) for any sensitive data caching or configuration storage.
