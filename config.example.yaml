@@ -50,7 +50,7 @@ virtual-models:
         enabled: true
         weight: 1
         capabilities:
-          operations: [chat]
+          operations: [chat, chat_text_tools]
           input: [text]
           output: [text]
           tools: true
@@ -467,6 +467,13 @@ openai-compatibility:
       - name: "deepseek-v4-pro"
         alias: "ail-fast"
         context_length: 1000000
+        capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true, context: 1000000}
+      - name: "deepseek-v4-flash"
+        alias: "deepseek:deepseek-v4-flash"
+        expose: false
+        visibility: private
+        context_length: 1000000
+        capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true, context: 1000000}
 
 # -- VERTEX COMPATIBILITY --
 # For third-party providers using Vertex-style protocols
