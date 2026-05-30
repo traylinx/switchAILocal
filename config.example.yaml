@@ -468,8 +468,15 @@ openai-compatibility:
         alias: "ail-fast"
         context_length: 1000000
         capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true, context: 1000000}
+      # Private direct alias used by deployment templates and diagnostics.
+      - name: "deepseek-v4-pro"
+        alias: "ail-compound-deepseek"
+        expose: false
+        visibility: private
+        context_length: 1000000
+        capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true, context: 1000000}
       - name: "deepseek-v4-flash"
-        alias: "deepseek:deepseek-v4-flash"
+        alias: "ail-fast-flash"
         expose: false
         visibility: private
         context_length: 1000000
