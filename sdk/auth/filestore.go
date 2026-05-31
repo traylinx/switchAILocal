@@ -156,7 +156,7 @@ func (s *FileTokenStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *FileTokenStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
+	if strings.ContainsAny(id, "/\\") || filepath.IsAbs(id) {
 		return id, nil
 	}
 	dir := s.baseDirSnapshot()
