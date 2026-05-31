@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-31 - Optimize SSE emitEvent hot paths
+**Learning:** Using `fmt.Sprintf` in SSE event generation hot paths introduces unnecessary reflection overhead and allocations (176 B/op, 1 alloc/op vs 0 B/op).
+**Action:** In hot paths for SSE event building that return `string`, optimize performance by using direct string concatenation (`+`) instead of `fmt.Sprintf`. This eliminates reflection overhead and minimizes per-chunk memory allocations.
