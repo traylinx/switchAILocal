@@ -43,7 +43,7 @@ virtual-models:
           output: [text]
           tools: true
           tool_history_replay: true
-          context: 256000
+          context: 1000000
           proof_required_for: [audio]
       - id: compound-deepseek-v4_pro
         provider: deepseek
