@@ -32,18 +32,19 @@ virtual-models:
     fallback: true
     response_model: requested
     members:
-      - id: compound-minimax-m2_7
+      - id: compound-minimax-m3
         provider: minimax
-        model: MiniMax-M2.7
+        model: MiniMax-M3
         enabled: true
         weight: 1
         capabilities:
-          operations: [chat, chat_text_tools]
-          input: [text]
+          operations: [chat, chat_text_tools, chat_multiturn_tools, chat_image_understanding]
+          input: [text, image]
           output: [text]
           tools: true
+          tool_history_replay: true
           context: 256000
-          proof_required_for: [image, audio]
+          proof_required_for: [audio]
       - id: compound-deepseek-v4_pro
         provider: deepseek
         model: deepseek-v4-pro
@@ -340,7 +341,7 @@ openai-compatibility:
 
   # MiniMax — chat, image generation, and TTS.
   #
-  # Chat (MiniMax-M2.7) supports built-in web_search via tools field — see
+  # Chat (MiniMax-M3) supports built-in web_search via tools field — see
   # docs/user/api-reference.md §Web Search.
   #
   # TTS (speech-02-hd) is served through the MiniMax T2A adapter
@@ -359,7 +360,7 @@ openai-compatibility:
     api-key-entries:
       - api-key: "sk-..."
     models:
-      - name: "MiniMax-M2.7"
+      - name: "MiniMax-M3"
         alias: "ail-compound-minimax"
         expose: false
         visibility: private
@@ -367,12 +368,11 @@ openai-compatibility:
           operations:
             - chat
             - chat_text_tools
+            - chat_multiturn_tools
             - chat_image_understanding
-            - chat_audio_understanding
           input:
             - text
             - image
-            - audio
           output:
             - text
           tools: true
@@ -390,7 +390,9 @@ openai-compatibility:
               limit:        { type: "integer", default: 3 }
       # Hidden compatibility aliases: stale clients that still send raw
       # provider IDs keep routing, while /v1/models exposes only stable ail-*.
-      - name: "MiniMax-M2.7"
+      # The M2.7 alias intentionally routes to M3 so already-open shells do not
+      # break during rollout.
+      - name: "MiniMax-M3"
         alias: "minimax:MiniMax-M2.7"
         expose: false
         visibility: private
@@ -398,12 +400,27 @@ openai-compatibility:
           operations:
             - chat
             - chat_text_tools
+            - chat_multiturn_tools
             - chat_image_understanding
-            - chat_audio_understanding
           input:
             - text
             - image
-            - audio
+          output:
+            - text
+          tools: true
+      - name: "MiniMax-M3"
+        alias: "minimax:MiniMax-M3"
+        expose: false
+        visibility: private
+        capabilities:
+          operations:
+            - chat
+            - chat_text_tools
+            - chat_multiturn_tools
+            - chat_image_understanding
+          input:
+            - text
+            - image
           output:
             - text
           tools: true
