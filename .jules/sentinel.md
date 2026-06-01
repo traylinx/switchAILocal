@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-01 - Fix SSRF via taint analysis in executeRemote
+**Vulnerability:** The `executeRemote` function in `cli_executor.go` used a tainted variable (`os.Getenv("REMOTE_COMMAND_HOST")`) directly to construct a URL and sent an HTTP request without validating its scheme, leading to a Potential Server-Side Request Forgery (SSRF) vulnerability.
+**Learning:** External variables (such as environment variables) used as remote hosts or URLs must be parsed and explicitly validated to restrict the schemes to expected ones (e.g., `http`, `https`).
+**Prevention:** Use `net/url.Parse` to parse untrusted URLs and explicitly check the `.Scheme` against a strict whitelist (`http` and `https`) before initiating requests to mitigate SSRF risks.
