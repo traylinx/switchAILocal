@@ -148,6 +148,15 @@ func TestClassify_ClientDisconnect(t *testing.T) {
 	}
 }
 
+func TestClassify_ContextCanceled_Transient(t *testing.T) {
+	// Transport-level context.Canceled where the parent ctx is still alive
+	// (e.g. stall watchdog cancelled child stream ctx).
+	// Must NOT be ClientDisconnect — the parent is intact.
+	if got := Classify(context.Background(), context.Canceled, nil); got != ClassTransient {
+		t.Errorf("context.Canceled with live parent → %s, want transient", got)
+	}
+}
+
 func TestClassify_Unknown(t *testing.T) {
 	if got := Classify(context.Background(), errors.New("mystery"), nil); got != ClassUnknown {
 		t.Errorf("plain error → %s, want unknown", got)

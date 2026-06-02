@@ -173,6 +173,13 @@ func Classify(ctx context.Context, err error, body []byte) ErrorClass {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return ClassTransient
 	}
+	// Transport-level context cancellation where the parent ctx is still
+	// alive (e.g. stall watchdog cancelled a child stream context, an
+	// HTTP transport timeout in the proxy layer). Not a client disconnect
+	// — classified as transient so the failover loop can advance.
+	if errors.Is(err, context.Canceled) {
+		return ClassTransient
+	}
 	if errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.EPIPE) {

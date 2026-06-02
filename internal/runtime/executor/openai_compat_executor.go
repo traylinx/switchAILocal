@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -391,6 +392,24 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		if watchdog != nil {
+			// When the watchdog fires and cancels the stream context,
+			// httpClient.Do returns a bare context.Canceled. Wrap it as
+			// a stallError so the failover chain can classify it correctly
+			// (stall_pre_first_byte vs stall_mid_stream) instead of falling
+			// through to ClassUnknown.
+			if watchdog.firedDueToStall() && errors.Is(err, context.Canceled) {
+				phase := stallPhasePreFirstByte
+				timeout := e.cfg.Performance.Streaming.FirstByteTimeout
+				if !watchdog.preFirstChunk() {
+					phase = stallPhaseMidStream
+					timeout = e.cfg.Performance.Streaming.StallTimeout
+				}
+				err = &stallError{
+					Provider: e.Identifier(),
+					Phase:    phase,
+					Timeout:  timeout,
+				}
+			}
 			watchdog.stop()
 		}
 		streamCancel()
