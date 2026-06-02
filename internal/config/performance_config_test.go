@@ -82,6 +82,60 @@ func TestPerformanceConfig_SanitizeDefaults(t *testing.T) {
 	}
 }
 
+func TestStreamHealth_ResolveFirstByte(t *testing.T) {
+	cfg := StreamHealthConfig{
+		FirstByteTimeout: 15 * time.Second,
+		PerProvider: map[string]time.Duration{
+			"minimax": 30 * time.Second,
+			"ollama":  60 * time.Second,
+		},
+	}
+
+	tests := []struct {
+		provider string
+		want     time.Duration
+	}{
+		{"minimax", 30 * time.Second},  // override
+		{"ollama", 60 * time.Second},   // override
+		{"openai", 15 * time.Second},   // unknown → global default
+		{"", 15 * time.Second},         // empty → global default
+	}
+
+	for _, tt := range tests {
+		if got := cfg.ResolveFirstByte(tt.provider); got != tt.want {
+			t.Errorf("ResolveFirstByte(%q) = %v, want %v", tt.provider, got, tt.want)
+		}
+	}
+}
+
+func TestStreamHealth_ResolveFirstByte_ZeroEntryFallsThrough(t *testing.T) {
+	// A zero-value entry in PerProvider must fall through to FirstByteTimeout,
+	// not return 0 (callers would treat 0 as "no watchdog").
+	cfg := StreamHealthConfig{
+		FirstByteTimeout: 15 * time.Second,
+		PerProvider: map[string]time.Duration{
+			"minimax": 0, // explicitly zero
+		},
+	}
+	if got := cfg.ResolveFirstByte("minimax"); got != 15*time.Second {
+		t.Errorf("zero entry should fall through to FirstByteTimeout; got %v", got)
+	}
+}
+
+func TestStreamHealth_Sanitize_InitializesPerProvider(t *testing.T) {
+	// SanitizePerformance must initialize Streaming.PerProvider to a non-nil
+	// empty map so callers can range/safe-index without nil-checks.
+	var c PerformanceConfig
+	c.SanitizePerformance()
+	if c.Streaming.PerProvider == nil {
+		t.Error("Streaming.PerProvider should be non-nil after sanitize")
+	}
+	if c.Streaming.ResolveFirstByte("anything") != 15*time.Second {
+		t.Errorf("post-sanitize default ResolveFirstByte = %v, want 15s",
+			c.Streaming.ResolveFirstByte("anything"))
+	}
+}
+
 func TestPerformanceConfig_SanitizePreservesUserValues(t *testing.T) {
 	c := PerformanceConfig{
 		ProviderTimeouts: ProviderTimeoutsConfig{
@@ -108,5 +162,19 @@ func TestPerformanceConfig_SanitizePreservesUserValues(t *testing.T) {
 	}
 	if c.Streaming.StallTimeout != 90*time.Second {
 		t.Errorf("user-set StallTimeout overwritten: got %v", c.Streaming.StallTimeout)
+	}
+	// user-set streaming per-provider entry survives sanitize
+	c2 := PerformanceConfig{
+		Streaming: StreamHealthConfig{
+			FirstByteTimeout: 15 * time.Second,
+			PerProvider: map[string]time.Duration{
+				"minimax": 30 * time.Second,
+			},
+		},
+	}
+	c2.SanitizePerformance()
+	if c2.Streaming.PerProvider["minimax"] != 30*time.Second {
+		t.Errorf("user-set streaming per-provider overwritten: got %v",
+			c2.Streaming.PerProvider["minimax"])
 	}
 }

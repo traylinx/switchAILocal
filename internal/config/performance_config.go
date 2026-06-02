@@ -58,12 +58,32 @@ type StreamHealthConfig struct {
 	// FirstByteTimeout is the max time to wait for the first byte from upstream
 	// before classifying the request as stalled. Pre-first-byte stalls are
 	// transparently recoverable (nothing has been flushed to the client yet).
+	//
+	// Used as the global default; per-provider overrides live in PerProvider.
 	FirstByteTimeout time.Duration `yaml:"first-byte-timeout" json:"first-byte-timeout"`
 
 	// StallTimeout is the max gap between SSE chunks before we classify the stream
 	// as stalled and cancel it. Post-first-chunk stalls CANNOT be transparently
 	// recovered — we terminate with an SSE error event.
 	StallTimeout time.Duration `yaml:"stall-timeout" json:"stall-timeout"`
+
+	// PerProvider maps provider-name → first-byte timeout override. Use this
+	// to give specific providers more headroom when their upstream is known
+	// to be slow on first-byte (e.g. cold-start or large-context requests).
+	// Case-sensitive; lowercase preferred (matches the provider `name` field
+	// in openai-compatibility providers). Unknown providers fall back to
+	// FirstByteTimeout.
+	PerProvider map[string]time.Duration `yaml:"per-provider" json:"per-provider"`
+}
+
+// ResolveFirstByte returns the effective first-byte timeout for the named
+// provider. Unknown providers fall back to the global FirstByteTimeout.
+// A zero entry in PerProvider is treated as "use the global default".
+func (s StreamHealthConfig) ResolveFirstByte(provider string) time.Duration {
+	if t, ok := s.PerProvider[provider]; ok && t > 0 {
+		return t
+	}
+	return s.FirstByteTimeout
 }
 
 // RateLimiterConfig configures the token-bucket rate limiter.
@@ -154,5 +174,8 @@ func (c *PerformanceConfig) SanitizePerformance() {
 	}
 	if c.Streaming.StallTimeout == 0 {
 		c.Streaming.StallTimeout = 60 * time.Second
+	}
+	if c.Streaming.PerProvider == nil {
+		c.Streaming.PerProvider = map[string]time.Duration{}
 	}
 }

@@ -708,7 +708,7 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 	// normal for MiniMax), stall timeout covers inter-frame gaps. The
 	// global SSE defaults (15s / 60s) are tuned for chat token streaming
 	// and too aggressive for music — we bump to a music-appropriate floor.
-	firstByte := e.cfg.Performance.Streaming.FirstByteTimeout
+	firstByte := e.cfg.Performance.Streaming.ResolveFirstByte(e.Identifier())
 	if firstByte < minimaxMusicFirstByteMin {
 		firstByte = minimaxMusicFirstByteMin
 	}

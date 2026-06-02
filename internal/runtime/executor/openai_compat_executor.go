@@ -381,7 +381,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	// chunk channel for the P1 retry layer to classify.
 	streamCtx, streamCancel := context.WithCancel(ctx)
 	httpReq = httpReq.WithContext(streamCtx)
-	firstByte := e.cfg.Performance.Streaming.FirstByteTimeout
+	firstByte := e.cfg.Performance.Streaming.ResolveFirstByte(e.Identifier())
 	stallT := e.cfg.Performance.Streaming.StallTimeout
 	var watchdog *streamStallWatchdog
 	if firstByte > 0 || stallT > 0 {
@@ -399,7 +399,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			// through to ClassUnknown.
 			if watchdog.firedDueToStall() && errors.Is(err, context.Canceled) {
 				phase := stallPhasePreFirstByte
-				timeout := e.cfg.Performance.Streaming.FirstByteTimeout
+				timeout := e.cfg.Performance.Streaming.ResolveFirstByte(e.Identifier())
 				if !watchdog.preFirstChunk() {
 					phase = stallPhaseMidStream
 					timeout = e.cfg.Performance.Streaming.StallTimeout
