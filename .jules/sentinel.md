@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - SSRF in CLI Executor Remote Bridge
+**Vulnerability:** An SSRF vulnerability was present in `internal/runtime/executor/cli_executor.go` where `REMOTE_COMMAND_HOST` was parsed and directly appended to a path in the `executeRemote` method, without proper scheme validation (`http` or `https`).
+**Learning:** External variables (such as `REMOTE_COMMAND_HOST` from the environment or input payload) that are used to build remote URLs can be manipulated by attackers to perform requests using unintended schemes (like `file://` or `gopher://`), leading to SSRF or local file read.
+**Prevention:** Always parse URLs constructed from dynamic input using `net/url.Parse` and enforce strict boundaries on the `.Scheme` field (e.g., verifying it is exactly `http` or `https`) before dispatching HTTP requests. Add security comments near complex validations.
