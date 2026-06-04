@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-04 - Fix SSRF via taint analysis
+**Vulnerability:** Unvalidated remote host URL allowed Potential Server-Side Request Forgery (SSRF) when making requests to the remote execution bridge.
+**Learning:** In Go, passing a dynamic URL to `http.NewRequestWithContext` or similar HTTP client methods without validating its scheme can lead to SSRF vulnerabilities, especially if the URL contains untrusted user input or environment variables.
+**Prevention:** Always parse dynamic URLs using `net/url.Parse()` and validate the scheme against an allowlist (e.g., `http` and `https`) before making the HTTP request. Also, rename the URL variable to `rawurl` to avoid shadowing the `net/url` standard library package.
