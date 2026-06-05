@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-05 - Optimize SSE String Generation
+**Learning:** In hot paths for SSE event building that return string (e.g., emitEvent), using direct string concatenation (+) is significantly faster (~1.9x) than fmt.Sprintf. This eliminates reflection overhead and minimizes per-chunk memory allocations.
+**Action:** Always prefer direct string concatenation over fmt.Sprintf for simple string formatting in streaming/high-frequency paths.
