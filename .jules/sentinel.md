@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-05 - URL Validation in HTTP Requests
+**Vulnerability:** Server-Side Request Forgery (SSRF) via unvalidated external URLs passed directly to `http.NewRequestWithContext`.
+**Learning:** Directly concatenating untrusted input to form URLs and passing them to an HTTP client opens the door to protocol-smuggling or local-file reading (e.g., `file://`, `gopher://`) if the scheme is not explicitly restricted.
+**Prevention:** Always parse untrusted or dynamic URLs using `net/url.Parse()` and explicitly validate that `.Scheme` is restricted to safe protocols (e.g., `http`, `https`) before executing the HTTP request.
