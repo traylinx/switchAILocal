@@ -44,8 +44,10 @@ type claudeToResponsesState struct {
 
 var dataTag = []byte("data:")
 
+// emitEvent uses direct string concatenation instead of fmt.Sprintf for better performance
+// in the SSE event hot path, avoiding reflection and reducing CPU overhead per chunk.
 func emitEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertClaudeResponseToOpenAIResponses converts Claude SSE to OpenAI Responses SSE events.
