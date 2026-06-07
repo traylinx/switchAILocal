@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-07 - Prevent SSRF in HTTP Client Execution
+**Vulnerability:** The local CLI executor accepted a dynamically constructed URL (`remoteHost` + `/run`) directly into `http.NewRequestWithContext` without validating the scheme, leading to potential Server-Side Request Forgery (SSRF).
+**Learning:** `http.NewRequestWithContext` and similar functions do not validate that the target protocol is safe (e.g. they allow `file://` or other schemes if constructed dynamically). GoSec flags this as `G704: SSRF via taint analysis`.
+**Prevention:** Always parse dynamic/external URLs with `net/url.Parse` and strictly validate that `.Scheme` is `http` or `https` before passing the raw URL to HTTP clients. Rename variables like `url` to `rawurl` to avoid shadowing the `net/url` package.
