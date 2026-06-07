@@ -300,7 +300,7 @@ curl http://localhost:18080/v1/images/edits \
 
 #### Text-to-Speech
 
-Works natively via the MiniMax T2A adapter — gateway translates OpenAI shape to MiniMax `/v1/t2a_pro` behind the scenes. Use MiniMax voice IDs (not OpenAI voice names):
+Works natively via the MiniMax T2A adapter — gateway translates OpenAI shape or MiniMax-native shape to MiniMax `/v1/t2a_v2` behind the scenes. Use MiniMax voice IDs (not OpenAI voice names):
 
 ```bash
 curl http://localhost:18080/v1/audio/speech \
@@ -309,12 +309,29 @@ curl http://localhost:18080/v1/audio/speech \
   -d '{
     "model": "ail-speech",
     "input": "Hello from switchAILocal",
-    "voice": "male-qn-qingse",
+    "voice": "English_expressive_narrator",
     "response_format": "mp3"
   }' --output speech.mp3
 ```
 
-Common voice IDs: `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`, `presenter_male`, `clever_boy`. Formats: `mp3`, `pcm`, `flac`, `wav`.
+MiniMax-native T2A controls are also accepted through the same endpoint:
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-test-123" \
+  -d '{
+    "model": "ail-speech",
+    "text": "Omg(sighs), hello from switchAILocal",
+    "stream": false,
+    "voice_setting": {"voice_id": "English_expressive_narrator", "speed": 1, "vol": 1, "pitch": 0},
+    "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
+    "language_boost": "auto",
+    "output_format": "hex"
+  }' --output speech.mp3
+```
+
+Common voice IDs: `English_expressive_narrator`, `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`, `presenter_male`, `clever_boy`. Formats: `mp3`, `flac`, `wav`.
 
 #### Audio Transcription
 ```bash

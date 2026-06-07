@@ -253,7 +253,7 @@ Supports:
 - Embeddings: `/embeddings`
 - Image generation: `/images/generations` (path auto-rewritten to `/image_generation` for MiniMax)
 - Audio transcription: `/audio/transcriptions`
-- Audio speech: `/audio/speech` — for MiniMax, the request is translated to native `/t2a_pro` by an adapter in `internal/runtime/executor/minimax_tts.go`. MiniMax error codes (1002/2013/2061) are mapped onto HTTP status so the failover taxonomy can classify them correctly.
+- Audio speech: `/audio/speech` — for MiniMax, OpenAI-shape or MiniMax-native requests are translated to native `/t2a_v2` by an adapter in `internal/runtime/executor/minimax_tts.go`. MiniMax error codes (1002/2013/2061) are mapped onto HTTP status so the failover taxonomy can classify them correctly.
 - Music generation + covers: `/music/generations` — for MiniMax, adapter in `internal/runtime/executor/minimax_music.go` routes to upstream `/v1/music_generation`, hex-decodes the audio, and returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}}`. Passing `stream: true` switches the response to `Content-Type: audio/mpeg` with raw MP3 bytes streamed progressively (~20s TTFB) — the adapter unwraps MiniMax's SSE, drops the duplicated terminal frame, and uses a music-tuned watchdog floor (60s first-byte, 120s stall) so the legitimately-slow happy path isn't killed.
 - Lyrics generation: `/music/lyrics` — MiniMax `/v1/lyrics_generation` pass-through with mode defaulting.
 </Accordion>

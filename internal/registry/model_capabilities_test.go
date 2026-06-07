@@ -27,6 +27,7 @@ func TestInferCapabilities(t *testing.T) {
 		{"minimax:music-2.6", false, false, false, "audio"},
 		{"minimax:music-cover", false, false, false, "audio"},
 		{"minimax:speech-02-hd", false, false, false, "audio"},
+		{"minimax:speech-2.8-hd", false, false, false, "audio"},
 		{"minimax:image-01", false, false, false, "image"},
 
 		// xiaomi mimo

@@ -49,7 +49,7 @@ func TestIsMinimaxTTSRequest(t *testing.T) {
 // should appear and the ones that should not.
 func TestTranslateOpenAITTSToMinimaxT2A(t *testing.T) {
 	t.Run("minimal valid request", func(t *testing.T) {
-		in := []byte(`{"model":"speech-02-hd","input":"hello","voice":"male-qn-qingse"}`)
+		in := []byte(`{"model":"speech-2.8-hd","input":"hello","voice":"English_expressive_narrator"}`)
 		out, err := translateOpenAITTSToMinimaxT2A(in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -58,14 +58,21 @@ func TestTranslateOpenAITTSToMinimaxT2A(t *testing.T) {
 		if err := json.Unmarshal(out, &got); err != nil {
 			t.Fatalf("output not valid JSON: %v (raw=%s)", err, out)
 		}
-		if got["model"] != "speech-02-hd" {
-			t.Errorf("model=%v, want speech-02-hd", got["model"])
+		if got["model"] != "speech-2.8-hd" {
+			t.Errorf("model=%v, want speech-2.8-hd", got["model"])
 		}
 		if got["text"] != "hello" {
 			t.Errorf("text=%v, want hello (OpenAI 'input' should map to 'text')", got["text"])
 		}
-		if got["voice_id"] != "male-qn-qingse" {
-			t.Errorf("voice_id=%v, want male-qn-qingse (OpenAI 'voice' should map to 'voice_id')", got["voice_id"])
+		voiceSetting, ok := got["voice_setting"].(map[string]any)
+		if !ok {
+			t.Fatalf("voice_setting missing/wrong type: %#v", got["voice_setting"])
+		}
+		if voiceSetting["voice_id"] != "English_expressive_narrator" {
+			t.Errorf("voice_setting.voice_id=%v, want English_expressive_narrator", voiceSetting["voice_id"])
+		}
+		if got["output_format"] != "hex" {
+			t.Errorf("output_format=%v, want hex", got["output_format"])
 		}
 		// These OpenAI field names must NOT be present in the translated body.
 		for _, forbidden := range []string{"input", "voice", "response_format"} {
@@ -76,34 +83,72 @@ func TestTranslateOpenAITTSToMinimaxT2A(t *testing.T) {
 	})
 
 	t.Run("full passthrough fields", func(t *testing.T) {
-		in := []byte(`{"model":"speech-02-hd","input":"hi","voice":"v1","speed":1.25,"vol":0.8,"pitch":2,"audio_sample_rate":44100,"bitrate":192000,"channel":2,"response_format":"wav"}`)
+		in := []byte(`{"model":"speech-2.8-hd","input":"hi","voice":"v1","speed":1.25,"vol":0.8,"pitch":2,"audio_sample_rate":44100,"bitrate":192000,"channel":2,"response_format":"wav"}`)
 		out, err := translateOpenAITTSToMinimaxT2A(in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		var got map[string]any
 		_ = json.Unmarshal(out, &got)
-		checks := map[string]any{
-			"speed":             1.25,
-			"vol":               0.8,
-			"pitch":             float64(2),
-			"audio_sample_rate": float64(44100),
-			"bitrate":           float64(192000),
-			"channel":           float64(2),
-			"format":            "wav",
+		voiceSetting := got["voice_setting"].(map[string]any)
+		audioSetting := got["audio_setting"].(map[string]any)
+		checks := []struct {
+			name string
+			got  any
+			want any
+		}{
+			{"voice_setting.speed", voiceSetting["speed"], 1.25},
+			{"voice_setting.vol", voiceSetting["vol"], 0.8},
+			{"voice_setting.pitch", voiceSetting["pitch"], float64(2)},
+			{"audio_setting.sample_rate", audioSetting["sample_rate"], float64(44100)},
+			{"audio_setting.bitrate", audioSetting["bitrate"], float64(192000)},
+			{"audio_setting.channel", audioSetting["channel"], float64(2)},
+			{"audio_setting.format", audioSetting["format"], "wav"},
 		}
-		for k, want := range checks {
-			if got[k] != want {
-				t.Errorf("field %s = %v (%T), want %v (%T)", k, got[k], got[k], want, want)
+		for _, check := range checks {
+			if check.got != check.want {
+				t.Errorf("%s = %v (%T), want %v (%T)", check.name, check.got, check.got, check.want, check.want)
 			}
 		}
 	})
 
 	t.Run("format field alias (client sent 'format' directly)", func(t *testing.T) {
-		in := []byte(`{"model":"speech-02-hd","input":"hi","voice":"v1","format":"mp3"}`)
+		in := []byte(`{"model":"speech-2.8-hd","input":"hi","voice":"v1","format":"mp3"}`)
 		out, _ := translateOpenAITTSToMinimaxT2A(in)
-		if !strings.Contains(string(out), `"format":"mp3"`) {
-			t.Errorf("expected format=mp3 in output, got %s", string(out))
+		if !strings.Contains(string(out), `"audio_setting":{"format":"mp3"}`) {
+			t.Errorf("expected audio_setting.format=mp3 in output, got %s", string(out))
+		}
+	})
+
+	t.Run("minimax native request preserves rich controls", func(t *testing.T) {
+		in := []byte(`{
+			"model":"speech-2.8-hd",
+			"text":"Omg(sighs), hello",
+			"stream":false,
+			"voice_setting":{"voice_id":"English_expressive_narrator","speed":1,"vol":1,"pitch":0},
+			"audio_setting":{"sample_rate":32000,"bitrate":128000,"format":"mp3","channel":1},
+			"pronunciation_dict":{"tone":["Omg/Oh my god"]},
+			"language_boost":"auto",
+			"voice_modify":{"pitch":0,"intensity":0,"timbre":0,"sound_effects":"spacious_echo"},
+			"output_format":"hex"
+		}`)
+		out, err := translateOpenAITTSToMinimaxT2A(in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var got map[string]any
+		_ = json.Unmarshal(out, &got)
+		if got["text"] != "Omg(sighs), hello" {
+			t.Errorf("text=%v", got["text"])
+		}
+		if got["language_boost"] != "auto" {
+			t.Errorf("language_boost=%v", got["language_boost"])
+		}
+		if _, ok := got["pronunciation_dict"].(map[string]any); !ok {
+			t.Errorf("pronunciation_dict not preserved: %#v", got["pronunciation_dict"])
+		}
+		if _, ok := got["voice_modify"].(map[string]any); !ok {
+			t.Errorf("voice_modify not preserved: %#v", got["voice_modify"])
 		}
 	})
 
@@ -115,18 +160,18 @@ func TestTranslateOpenAITTSToMinimaxT2A(t *testing.T) {
 	})
 
 	t.Run("missing input fails", func(t *testing.T) {
-		_, err := translateOpenAITTSToMinimaxT2A([]byte(`{"model":"speech-02-hd","voice":"v"}`))
-		if err == nil || !strings.Contains(err.Error(), "missing input") {
-			t.Errorf("expected 'missing input' error, got %v", err)
+		_, err := translateOpenAITTSToMinimaxT2A([]byte(`{"model":"speech-2.8-hd","voice":"v"}`))
+		if err == nil || !strings.Contains(err.Error(), "missing input/text") {
+			t.Errorf("expected 'missing input/text' error, got %v", err)
 		}
 	})
 
 	t.Run("missing voice fails with helpful hint", func(t *testing.T) {
-		_, err := translateOpenAITTSToMinimaxT2A([]byte(`{"model":"speech-02-hd","input":"hi"}`))
+		_, err := translateOpenAITTSToMinimaxT2A([]byte(`{"model":"speech-2.8-hd","input":"hi"}`))
 		if err == nil {
 			t.Fatalf("expected error, got nil")
 		}
-		if !strings.Contains(err.Error(), "missing voice") || !strings.Contains(err.Error(), "voice_id") {
+		if !strings.Contains(err.Error(), "missing voice") || !strings.Contains(err.Error(), "voice_setting.voice_id") {
 			t.Errorf("error should mention 'missing voice' and hint at MiniMax voice_id, got: %v", err)
 		}
 	})
@@ -160,25 +205,18 @@ func TestMinimaxStatusToHTTP(t *testing.T) {
 }
 
 // TestExecuteMinimaxTTS_HappyPath exercises the full round-trip using two
-// stacked httptest servers: one impersonates MiniMax's /v1/t2a_pro endpoint,
-// the other acts as the CDN serving the audio_file URL MiniMax hands back.
-// Proves the adapter correctly translates, posts, parses, resolves, and
-// returns audio bytes — without burning any real MiniMax RPM quota.
+// one impersonates MiniMax's /v1/t2a_v2 endpoint. Proves the adapter correctly
+// translates, posts, parses, decodes hex, and returns audio bytes — without
+// burning any real MiniMax RPM quota.
 func TestExecuteMinimaxTTS_HappyPath(t *testing.T) {
-	// Fake OSS/CDN that returns real MP3-shaped bytes.
 	wantAudio := []byte{0xFF, 0xFB, 0x90, 0x44, 0x00, 0x00, 0x00, 0x00} // MP3 frame header
-	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "audio/mpeg")
-		_, _ = w.Write(wantAudio)
-	}))
-	defer cdn.Close()
 
-	// Fake MiniMax /v1/t2a_pro that validates the translated payload and
-	// returns a pointer at the CDN above.
+	// Fake MiniMax /v1/t2a_v2 that validates the translated payload and
+	// returns hex-encoded audio.
 	var seenBody map[string]any
 	minimax := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/t2a_pro") {
-			t.Errorf("upstream path = %q, want suffix /t2a_pro", r.URL.Path)
+		if !strings.HasSuffix(r.URL.Path, "/t2a_v2") {
+			t.Errorf("upstream path = %q, want suffix /t2a_v2", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("missing/wrong auth header: %q", r.Header.Get("Authorization"))
@@ -186,18 +224,17 @@ func TestExecuteMinimaxTTS_HappyPath(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&seenBody)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"audio_file":    cdn.URL + "/signed-url.mp3",
-			"subtitle_file": "",
-			"trace_id":      "test-trace-123",
-			"base_resp":     map[string]any{"status_code": 0, "status_msg": ""},
+			"data":      map[string]any{"audio": "fffb904400000000", "status": 2},
+			"trace_id":  "test-trace-123",
+			"base_resp": map[string]any{"status_code": 0, "status_msg": "success"},
 		})
 	}))
 	defer minimax.Close()
 
 	exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
 	req := switchailocalexecutor.Request{
-		Model:   "minimax:speech-02-hd",
-		Payload: []byte(`{"model":"minimax:speech-02-hd","input":"hi there","voice":"male-qn-qingse","response_format":"mp3"}`),
+		Model:   "minimax:speech-2.8-hd",
+		Payload: []byte(`{"model":"minimax:speech-2.8-hd","input":"hi there","voice":"English_expressive_narrator","response_format":"mp3"}`),
 		Metadata: map[string]any{
 			"operation": "audio_speech",
 		},
@@ -214,11 +251,24 @@ func TestExecuteMinimaxTTS_HappyPath(t *testing.T) {
 	if seenBody["text"] != "hi there" {
 		t.Errorf("upstream 'text' field = %v, want 'hi there' (OpenAI 'input' should be renamed)", seenBody["text"])
 	}
-	if seenBody["voice_id"] != "male-qn-qingse" {
-		t.Errorf("upstream 'voice_id' = %v, want male-qn-qingse", seenBody["voice_id"])
+	voiceSetting := seenBody["voice_setting"].(map[string]any)
+	if voiceSetting["voice_id"] != "English_expressive_narrator" {
+		t.Errorf("upstream 'voice_setting.voice_id' = %v, want English_expressive_narrator", voiceSetting["voice_id"])
 	}
 	if _, hasInput := seenBody["input"]; hasInput {
 		t.Errorf("upstream body still has OpenAI 'input' field — translation didn't run")
+	}
+}
+
+func TestDecodeMinimaxT2AAudio_URL(t *testing.T) {
+	var resp minimaxTTSResponse
+	resp.Data.Audio = "https://example.com/audio.mp3"
+	audio, url, err := decodeMinimaxT2AAudio(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audio) != 0 || url != "https://example.com/audio.mp3" {
+		t.Fatalf("audio=%x url=%q", audio, url)
 	}
 }
 
@@ -247,7 +297,7 @@ func TestExecuteMinimaxTTS_ErrorMapping(t *testing.T) {
 
 			exec := &OpenAICompatExecutor{provider: "minimax", cfg: &config.Config{}}
 			req := switchailocalexecutor.Request{
-				Model:    "minimax:speech-02-hd",
+				Model:    "minimax:speech-2.8-hd",
 				Payload:  []byte(`{"input":"hi","voice":"male-qn-qingse"}`),
 				Metadata: map[string]any{"operation": "audio_speech"},
 			}

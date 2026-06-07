@@ -344,12 +344,12 @@ openai-compatibility:
   # Chat (MiniMax-M3) supports built-in web_search via tools field — see
   # docs/user/api-reference.md §Web Search.
   #
-  # TTS (speech-02-hd) is served through the MiniMax T2A adapter
+  # TTS (speech-2.8-hd) is served through the MiniMax T2A adapter
   # (internal/runtime/executor/minimax_tts.go). When a request hits
   # /v1/audio/speech with a minimax model, the adapter translates the
-  # OpenAI-shape request to MiniMax's native /v1/t2a_pro schema and resolves
-  # the returned audio_file URL to raw bytes. Use MiniMax voice IDs (e.g.
-  # male-qn-qingse), not OpenAI voice names.
+  # OpenAI-shape or MiniMax-native request to MiniMax's native /v1/t2a_v2
+  # schema and resolves the returned hex/url audio to raw bytes. Use MiniMax
+  # voice IDs (e.g. English_expressive_narrator), not OpenAI voice names.
   #
   # Plan caveats: the Plus token plan has a very restrictive RPM (~1–5 req/min)
   # on TTS. MiniMax's 1002 error is translated to HTTP 429 so the failover
@@ -434,7 +434,11 @@ openai-compatibility:
         alias: "minimax:speech-02-hd"
         expose: false
         visibility: private
-      - name: "speech-02-hd"
+      - name: "speech-2.8-hd"
+        alias: "minimax:speech-2.8-hd"
+        expose: false
+        visibility: private
+      - name: "speech-2.8-hd"
         alias: "ail-speech"
       # music-2.6: text-to-music (Plus plan, 100 songs/day). Served via
       # POST /v1/music/generations → MiniMax music adapter (minimax_music.go).

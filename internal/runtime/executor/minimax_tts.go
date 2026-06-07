@@ -7,6 +7,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,28 +23,38 @@ import (
 )
 
 // MiniMax T2A endpoint and shape are completely different from OpenAI's
-// /v1/audio/speech. The native MiniMax TTS path on Plus token plans is
-// /v1/t2a_pro and returns a URL to fetch the audio file rather than raw bytes.
+// /v1/audio/speech. The native MiniMax TTS path is /v1/t2a_v2 and returns
+// hex-encoded audio by default, or a short-lived URL when output_format=url.
 //
 // This file converts an OpenAI-shaped /v1/audio/speech request into a MiniMax
-// /v1/t2a_pro call, fetches the audio_file URL the upstream returns, and
-// passes the bytes back to the caller. The handler at the public boundary
+// /v1/t2a_v2 call, decodes/fetches the returned audio, and passes the bytes
+// back to the caller. The handler at the public boundary
 // (sdk/api/handlers/openai/openai_handlers.go:AudioSpeech) does not need to
 // change — it still talks OpenAI shape; this adapter sits behind it.
+//
+// The translator also accepts MiniMax-native fields (text, voice_setting,
+// audio_setting, pronunciation_dict, language_boost, voice_modify,
+// output_format) so clients can use the richer MiniMax T2A controls through
+// the same SwitchAI Local endpoint without losing existing OpenAI clients.
 //
 // Trigger conditions (see openai_compat_executor.go Execute):
 //   - operation == "audio_speech"
 //   - provider identifier or auth.Provider contains "minimax"
 
-const minimaxTTSEndpoint = "/t2a_pro"
+const minimaxTTSEndpoint = "/t2a_v2"
 
-// minimaxTTSResponse mirrors the shape returned by /v1/t2a_pro. The JSON has
+// minimaxTTSResponse mirrors the shapes returned by /v1/t2a_v2 plus the
+// legacy audio_file field kept for old upstream compatibility. The JSON has
 // other fields too but only these matter for converting back to bytes.
 type minimaxTTSResponse struct {
 	AudioFile    string `json:"audio_file"`
 	SubtitleFile string `json:"subtitle_file"`
-	TraceID      string `json:"trace_id"`
-	BaseResp     struct {
+	Data         struct {
+		Audio  string `json:"audio"`
+		Status int    `json:"status"`
+	} `json:"data"`
+	TraceID  string `json:"trace_id"`
+	BaseResp struct {
 		StatusCode int    `json:"status_code"`
 		StatusMsg  string `json:"status_msg"`
 	} `json:"base_resp"`
@@ -63,68 +74,158 @@ func isMinimaxTTSRequest(executorID string, auth *switchailocalauth.Auth) bool {
 }
 
 // translateOpenAITTSToMinimaxT2A rewrites an OpenAI /v1/audio/speech request
-// body into the MiniMax /v1/t2a_pro shape. It preserves the upstream model
+// body into the MiniMax /v1/t2a_v2 shape. It preserves the upstream model
 // name (already injected by the caller) and maps the well-known fields. Any
 // unknown fields are dropped — MiniMax rejects unrecognised keys with 2013.
 //
 // Field mapping:
 //
-//	OpenAI                       MiniMax t2a_pro
+//	OpenAI                       MiniMax t2a_v2
 //	model                        model
 //	input              ────►     text
-//	voice              ────►     voice_id     (no synthetic voice mapping —
-//	                                            client must send a real
-//	                                            MiniMax voice ID)
-//	speed                        speed        (passthrough, default 1.0)
-//	response_format    ────►     format       (mp3 / pcm / flac / wav)
+//	voice              ────►     voice_setting.voice_id
+//	speed                        voice_setting.speed
+//	response_format    ────►     audio_setting.format (mp3 / flac / wav)
 //
-// MiniMax also accepts vol, pitch, audio_sample_rate, bitrate, channel —
-// callers can send those at the top level and they'll be forwarded.
+// MiniMax-native fields are preserved when supplied:
+// text, stream=false, voice_setting, audio_setting, pronunciation_dict,
+// language_boost, voice_modify, subtitle_enable, subtitle_type, output_format.
 func translateOpenAITTSToMinimaxT2A(body []byte) ([]byte, error) {
 	model := gjson.GetBytes(body, "model").String()
-	input := gjson.GetBytes(body, "input").String()
+	input := gjson.GetBytes(body, "text").String()
+	if input == "" {
+		input = gjson.GetBytes(body, "input").String()
+	}
 	voice := gjson.GetBytes(body, "voice").String()
+	voiceSetting := gjson.GetBytes(body, "voice_setting")
+	if voice == "" && voiceSetting.IsObject() {
+		voice = voiceSetting.Get("voice_id").String()
+	}
 	if model == "" {
 		return nil, fmt.Errorf("minimax-tts: missing model")
 	}
 	if input == "" {
-		return nil, fmt.Errorf("minimax-tts: missing input")
+		return nil, fmt.Errorf("minimax-tts: missing input/text")
 	}
 	if voice == "" {
-		return nil, fmt.Errorf("minimax-tts: missing voice (use a MiniMax voice_id, e.g. male-qn-qingse)")
+		return nil, fmt.Errorf("minimax-tts: missing voice or voice_setting.voice_id (use a MiniMax voice_id, e.g. English_expressive_narrator)")
 	}
 
 	out := map[string]any{
-		"model":    model,
-		"text":     input,
-		"voice_id": voice,
+		"model":         model,
+		"text":          input,
+		"stream":        false,
+		"output_format": "hex",
 	}
 
-	if speed := gjson.GetBytes(body, "speed"); speed.Exists() {
-		out["speed"] = speed.Float()
+	if stream := gjson.GetBytes(body, "stream"); stream.Exists() {
+		if stream.Bool() {
+			return nil, fmt.Errorf("minimax-tts: stream=true is not supported on /v1/audio/speech yet; use stream=false")
+		}
+		out["stream"] = false
 	}
-	if vol := gjson.GetBytes(body, "vol"); vol.Exists() {
-		out["vol"] = vol.Float()
+
+	if voiceSetting.IsObject() {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(voiceSetting.Raw), &parsed); err == nil {
+			out["voice_setting"] = parsed
+		}
+	} else {
+		setting := map[string]any{"voice_id": voice}
+		if speed := gjson.GetBytes(body, "speed"); speed.Exists() {
+			setting["speed"] = speed.Float()
+		}
+		if vol := gjson.GetBytes(body, "vol"); vol.Exists() {
+			setting["vol"] = vol.Float()
+		}
+		if pitch := gjson.GetBytes(body, "pitch"); pitch.Exists() {
+			setting["pitch"] = pitch.Int()
+		}
+		out["voice_setting"] = setting
 	}
-	if pitch := gjson.GetBytes(body, "pitch"); pitch.Exists() {
-		out["pitch"] = pitch.Int()
+
+	audioSetting := gjson.GetBytes(body, "audio_setting")
+	if audioSetting.IsObject() {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(audioSetting.Raw), &parsed); err == nil {
+			out["audio_setting"] = parsed
+		}
+	} else {
+		setting := map[string]any{}
+		if rf := gjson.GetBytes(body, "response_format").String(); rf != "" {
+			setting["format"] = rf
+		} else if f := gjson.GetBytes(body, "format").String(); f != "" {
+			setting["format"] = f
+		}
+		if sr := gjson.GetBytes(body, "audio_sample_rate"); sr.Exists() {
+			setting["sample_rate"] = sr.Int()
+		} else if sr := gjson.GetBytes(body, "sample_rate"); sr.Exists() {
+			setting["sample_rate"] = sr.Int()
+		}
+		if br := gjson.GetBytes(body, "bitrate"); br.Exists() {
+			setting["bitrate"] = br.Int()
+		}
+		if ch := gjson.GetBytes(body, "channel"); ch.Exists() {
+			setting["channel"] = ch.Int()
+		}
+		if len(setting) > 0 {
+			out["audio_setting"] = setting
+		}
 	}
-	if sr := gjson.GetBytes(body, "audio_sample_rate"); sr.Exists() {
-		out["audio_sample_rate"] = sr.Int()
-	}
-	if br := gjson.GetBytes(body, "bitrate"); br.Exists() {
-		out["bitrate"] = br.Int()
-	}
-	if ch := gjson.GetBytes(body, "channel"); ch.Exists() {
-		out["channel"] = ch.Int()
-	}
-	if rf := gjson.GetBytes(body, "response_format").String(); rf != "" {
-		out["format"] = rf
-	} else if f := gjson.GetBytes(body, "format").String(); f != "" {
-		out["format"] = f
+
+	preserveJSONField(body, out, "pronunciation_dict")
+	preserveJSONField(body, out, "timbre_weights")
+	preserveJSONField(body, out, "voice_modify")
+	preserveJSONField(body, out, "stream_options")
+	preserveJSONScalar(body, out, "language_boost")
+	preserveJSONScalar(body, out, "subtitle_enable")
+	preserveJSONScalar(body, out, "subtitle_type")
+	if outputFormat := gjson.GetBytes(body, "output_format").String(); outputFormat != "" {
+		out["output_format"] = outputFormat
 	}
 
 	return json.Marshal(out)
+}
+
+func preserveJSONField(body []byte, out map[string]any, field string) {
+	value := gjson.GetBytes(body, field)
+	if !value.Exists() {
+		return
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(value.Raw), &parsed); err == nil {
+		out[field] = parsed
+	}
+}
+
+func preserveJSONScalar(body []byte, out map[string]any, field string) {
+	value := gjson.GetBytes(body, field)
+	if !value.Exists() {
+		return
+	}
+	switch value.Type {
+	case gjson.String:
+		out[field] = value.String()
+	case gjson.True, gjson.False:
+		out[field] = value.Bool()
+	case gjson.Number:
+		out[field] = value.Value()
+	}
+}
+
+func decodeMinimaxT2AAudio(resp minimaxTTSResponse) ([]byte, string, error) {
+	if resp.Data.Audio == "" {
+		return nil, "", nil
+	}
+	audio := strings.TrimSpace(resp.Data.Audio)
+	if strings.HasPrefix(strings.ToLower(audio), "http://") || strings.HasPrefix(strings.ToLower(audio), "https://") {
+		return nil, audio, nil
+	}
+	decoded, err := hex.DecodeString(audio)
+	if err != nil {
+		return nil, "", fmt.Errorf("minimax t2a_v2: decode hex audio: %w", err)
+	}
+	return decoded, "", nil
 }
 
 // minimaxStatusToHTTP maps MiniMax base_resp.status_code values onto HTTP
@@ -161,13 +262,13 @@ func minimaxStatusToHTTP(code int) (httpCode int, retryable bool) {
 }
 
 // executeMinimaxTTS runs the full MiniMax TTS path: translate request → POST
-// to /v1/t2a_pro → handle MiniMax error codes → fetch audio_file URL →
+// to /v1/t2a_v2 → handle MiniMax error codes → decode/fetch audio →
 // return bytes. Returns the same shape the dumb-proxy would have, so the
 // public AudioSpeech handler doesn't need to know it ran.
 func (e *OpenAICompatExecutor) executeMinimaxTTS(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, baseURL, apiKey string) (switchailocalexecutor.Response, error) {
 	// Inject upstream model (alias → real name) before translating, otherwise
-	// the request body still carries "minimax:speech-02-hd" instead of
-	// "speech-02-hd" and MiniMax rejects with 2013 invalid_params.
+	// the request body still carries "minimax:speech-2.8-hd" instead of
+	// "speech-2.8-hd" and MiniMax rejects with 2013 invalid_params.
 	upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
 	if override := e.resolveUpstreamModel(req.Model, auth); override != "" {
 		upstreamModel = override
@@ -234,28 +335,38 @@ func (e *OpenAICompatExecutor) executeMinimaxTTS(ctx context.Context, auth *swit
 		httpCode, _ := minimaxStatusToHTTP(t2aResp.BaseResp.StatusCode)
 		return switchailocalexecutor.Response{}, statusErr{
 			code: httpCode,
-			msg:  fmt.Sprintf("minimax t2a_pro: code=%d msg=%q trace=%s", t2aResp.BaseResp.StatusCode, t2aResp.BaseResp.StatusMsg, t2aResp.TraceID),
+			msg:  fmt.Sprintf("minimax t2a_v2: code=%d msg=%q trace=%s", t2aResp.BaseResp.StatusCode, t2aResp.BaseResp.StatusMsg, t2aResp.TraceID),
 		}
 	}
 
-	if t2aResp.AudioFile == "" {
-		return switchailocalexecutor.Response{}, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("minimax t2a_pro: empty audio_file (trace=%s)", t2aResp.TraceID)}
-	}
-
-	// Fetch the audio bytes from the URL MiniMax handed back. Reuse the same
-	// proxy-aware client so SOCKS / HTTP proxy settings carry through to OSS.
-	audioBytes, err := fetchMinimaxAudioFile(ctx, httpClient, t2aResp.AudioFile)
+	audioBytes, audioURL, err := decodeMinimaxT2AAudio(t2aResp)
 	if err != nil {
-		return switchailocalexecutor.Response{}, fmt.Errorf("minimax-tts: fetch audio_file %q: %w", t2aResp.AudioFile, err)
+		return switchailocalexecutor.Response{}, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("%v (trace=%s)", err, t2aResp.TraceID)}
 	}
 
-	log.Infof("MINIMAX TTS: success trace=%s audio_url=%s bytes=%d", t2aResp.TraceID, t2aResp.AudioFile, len(audioBytes))
+	if len(audioBytes) == 0 && audioURL == "" {
+		audioURL = t2aResp.AudioFile
+	}
+	if len(audioBytes) == 0 && audioURL == "" {
+		return switchailocalexecutor.Response{}, statusErr{code: http.StatusBadGateway, msg: fmt.Sprintf("minimax t2a_v2: empty audio (trace=%s)", t2aResp.TraceID)}
+	}
+
+	if len(audioBytes) == 0 {
+		// Fetch the audio bytes from the URL MiniMax handed back. Reuse the same
+		// proxy-aware client so SOCKS / HTTP proxy settings carry through to OSS.
+		audioBytes, err = fetchMinimaxAudioFile(ctx, httpClient, audioURL)
+		if err != nil {
+			return switchailocalexecutor.Response{}, fmt.Errorf("minimax-tts: fetch audio url %q: %w", audioURL, err)
+		}
+	}
+
+	log.Infof("MINIMAX TTS: success trace=%s audio_url=%s bytes=%d", t2aResp.TraceID, audioURL, len(audioBytes))
 	return switchailocalexecutor.Response{Payload: audioBytes}, nil
 }
 
-// fetchMinimaxAudioFile resolves the audio_file URL the upstream returned to
-// the actual binary bytes the client is waiting for. The MiniMax CDN appears
-// to be aliyun OSS — short-lived signed URLs.
+// fetchMinimaxAudioFile resolves an audio URL the upstream returned to the
+// actual binary bytes the client is waiting for. MiniMax URL outputs are
+// short-lived signed URLs.
 func fetchMinimaxAudioFile(ctx context.Context, client *http.Client, audioURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL, nil)
 	if err != nil {

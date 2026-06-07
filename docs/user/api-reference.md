@@ -160,6 +160,14 @@ Generate images from text prompts. Supports `application/json` and `multipart/fo
 > [!NOTE]
 > **Provider Quirks**: For the `minimax` provider, switchAILocal automatically rewrites the upstream path from `/v1/images/generations` to their native `/v1/image_generation` to maintain OpenAI compatibility.
 
+For existing SwitchAI clients, `/v1/images/generations` preserves the configured upstream response shape. For strict OpenAI Images API clients that require `data[0].url` or `data[0].b64_json`, use the additive compatibility namespace:
+
+```
+POST /openai/v1/images/generations
+```
+
+This route leaves already-standard OpenAI image responses unchanged and normalizes gateway responses such as `{"data":{"image_urls":["https://..."]}}` to `{"data":[{"url":"https://..."}]}`.
+
 ### Image Editing
 
 ```
@@ -173,6 +181,12 @@ Edit existing images. Supports `application/json` (image URLs) and `multipart/fo
 | `model` | string | Yes | Image model |
 | `prompt` | string | Yes | Edit instructions |
 | `image` | file/url | Yes | Source image |
+
+Strict OpenAI-compatible image edits are also available at:
+
+```
+POST /openai/v1/images/edits
+```
 | `mask` | file/url | No | Edit mask |
 
 ### Text-to-Speech
@@ -185,16 +199,16 @@ Convert text to speech audio.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `model` | string | Yes | TTS model (e.g., `tts-1`) |
-| `input` | string | Yes | Text to speak |
-| `voice` | string | Yes | Voice (e.g., `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) |
-| `response_format` | string | No | `mp3` (default), `opus`, `aac`, `flac`, `wav`, `pcm` |
+| `model` | string | Yes | TTS model or alias, usually `ail-speech` |
+| `input` / `text` | string | Yes | Text to speak |
+| `voice` / `voice_setting.voice_id` | string | Yes | MiniMax voice ID, e.g. `English_expressive_narrator` |
+| `response_format` / `audio_setting.format` | string | No | `mp3` (default), `flac`, `wav` for MiniMax sync T2A |
 
 Response is binary audio with appropriate `Content-Type`.
 
 #### MiniMax TTS — working example
 
-MiniMax `speech-02-hd` is the default `speech` model in `intelligence.matrix`. The gateway runs an adapter (`internal/runtime/executor/minimax_tts.go`) that translates the OpenAI-shape request into MiniMax's native `/v1/t2a_pro` API and resolves the returned audio URL to raw bytes before handing them back.
+MiniMax `speech-2.8-hd` is the default `speech` model in `intelligence.matrix`. The gateway runs an adapter (`internal/runtime/executor/minimax_tts.go`) that translates OpenAI-shape or MiniMax-native requests into MiniMax's native `/v1/t2a_v2` API and resolves the returned hex/url audio to raw bytes before handing them back.
 
 ```bash
 curl http://localhost:18080/v1/audio/speech \
@@ -203,23 +217,63 @@ curl http://localhost:18080/v1/audio/speech \
   -d '{
     "model": "ail-speech",
     "input": "Hello from switchAILocal",
-    "voice": "male-qn-qingse",
+    "voice": "English_expressive_narrator",
     "response_format": "mp3"
   }' \
   --output hello.mp3
+```
+
+MiniMax-native T2A controls are also accepted through the same local endpoint:
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer $AIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ail-speech",
+    "text": "Omg(sighs), the real danger is not that computers start thinking like people.",
+    "stream": false,
+    "voice_setting": {
+      "voice_id": "English_expressive_narrator",
+      "speed": 1,
+      "vol": 1,
+      "pitch": 0
+    },
+    "audio_setting": {
+      "sample_rate": 32000,
+      "bitrate": 128000,
+      "format": "mp3",
+      "channel": 1
+    },
+    "pronunciation_dict": {
+      "tone": ["Omg/Oh my god"]
+    },
+    "language_boost": "auto",
+    "voice_modify": {
+      "pitch": 0,
+      "intensity": 0,
+      "timbre": 0,
+      "sound_effects": "spacious_echo"
+    },
+    "output_format": "hex"
+  }' \
+  --output speech.mp3
 ```
 
 **Voice IDs are MiniMax-native** — OpenAI voice names (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) are not aliased. Sample MiniMax voices:
 
 | Voice ID | Description |
 |---|---|
-| `male-qn-qingse` | Male, calm (default for testing) |
+| `English_expressive_narrator` | English narrator, expressive |
+| `male-qn-qingse` | Male, calm |
 | `female-shaonv` | Female, young |
 | `audiobook_male_2` | Male, narrator-style |
 | `presenter_male` | Male, anchor-style |
 | `clever_boy` | Male, youthful |
 
-**Supported formats:** `mp3` (default), `pcm`, `flac`, `wav`. Bitrate and sample rate can be overridden via top-level `bitrate`, `audio_sample_rate`, `channel`.
+**Supported formats:** `mp3` (default), `flac`, `wav` for non-streaming MiniMax `t2a_v2`. Bitrate and sample rate can be overridden via OpenAI-style top-level `bitrate`, `audio_sample_rate`, `channel`, or MiniMax-native `audio_setting`.
+
+**Streaming:** MiniMax `t2a_v2` supports streaming, but SwitchAI Local's `/v1/audio/speech` adapter currently exposes synchronous raw bytes only. Send `"stream": false`.
 
 **Plan limits:** MiniMax Plus token plan allows ~9000 characters/day and imposes a very tight RPM (1–5 requests/min). When the RPM is exceeded, MiniMax returns internal code `1002` which the adapter maps to HTTP 429 (rate_limit) — the failover taxonomy then classifies this as `ClassRateLimit` and advances to the next provider if a fallback chain is configured. Internal code `2061` ("plan not support") maps to HTTP 402 (out_of_credits).
 

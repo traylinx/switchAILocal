@@ -92,7 +92,7 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// based clients (OpenCode / Cursor / Continue.dev) auto-detect whether
 	// to forward image and audio content blocks; without them the client
 	// strips media client-side and the model never sees it.
-	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio", "native_tools"}
+	preserveIfPresent := []string{"attachment", "tool_call", "reasoning", "modalities", "vision", "audio", "native_tools", "context_length", "max_completion_tokens"}
 	var filteredModels []map[string]any
 	seenModels := make(map[string]struct{}, len(allModels))
 	for _, model := range allModels {
@@ -1055,8 +1055,25 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 	})
 }
 
-// ImagesGenerations handles /v1/images/generations
+// ImagesGenerations handles /v1/images/generations.
 func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
+	h.handleImagesOperation(c, "images_generations", false, true)
+}
+
+// OpenAICompatImagesGenerations handles /openai/v1/images/generations.
+// It preserves the legacy /v1 response shape while exposing a strict
+// OpenAI Images-compatible surface for clients that require data[0].url or
+// data[0].b64_json.
+func (h *OpenAIAPIHandler) OpenAICompatImagesGenerations(c *gin.Context) {
+	h.handleImagesOperation(c, "images_generations", true, true)
+}
+
+// OpenAICompatImagesEdits handles /openai/v1/images/edits.
+func (h *OpenAIAPIHandler) OpenAICompatImagesEdits(c *gin.Context) {
+	h.handleImagesOperation(c, "images_edits", true, false)
+}
+
+func (h *OpenAIAPIHandler) handleImagesOperation(c *gin.Context, operation string, normalizeOpenAIImages bool, defaultJSONContentType bool) {
 	contentType := c.GetHeader("Content-Type")
 	rawJSON, err := c.GetRawData()
 	if err != nil {
@@ -1079,16 +1096,19 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 		}
 	}
 
-	if contentType == "" {
+	if defaultJSONContentType && contentType == "" {
 		contentType = "application/json"
 	}
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", "images_generations", contentType)
+	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "", operation, contentType)
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
 		return
+	}
+	if normalizeOpenAIImages {
+		resp = normalizeOpenAIImagesResponse(resp)
 	}
 	c.Data(http.StatusOK, "application/json", resp)
 	cliCancel()
@@ -1119,9 +1139,18 @@ func (h *OpenAIAPIHandler) AudioSpeech(c *gin.Context) {
 		cliCancel(errMsg.Error)
 		return
 	}
-	// Determine response Content-Type from request's response_format field
+	// Determine response Content-Type from request format fields. OpenAI-shaped
+	// clients use response_format; MiniMax-native T2A clients can send
+	// audio_setting.format through the same endpoint.
 	respContentType := "audio/mpeg" // default: mp3
-	switch gjson.GetBytes(rawJSON, "response_format").String() {
+	responseFormat := gjson.GetBytes(rawJSON, "response_format").String()
+	if responseFormat == "" {
+		responseFormat = gjson.GetBytes(rawJSON, "audio_setting.format").String()
+	}
+	if responseFormat == "" {
+		responseFormat = gjson.GetBytes(rawJSON, "format").String()
+	}
+	switch responseFormat {
 	case "opus":
 		respContentType = "audio/opus"
 	case "aac":
@@ -1140,38 +1169,120 @@ func (h *OpenAIAPIHandler) AudioSpeech(c *gin.Context) {
 // ImagesEdits handles /v1/images/edits
 // Supports both multipart/form-data (binary image upload) and application/json (image URLs).
 func (h *OpenAIAPIHandler) ImagesEdits(c *gin.Context) {
-	contentType := c.GetHeader("Content-Type")
-	rawBody, err := c.GetRawData()
-	if err != nil {
-		h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("invalid request: %v", err)})
-		return
+	h.handleImagesOperation(c, "images_edits", false, false)
+}
+
+func normalizeOpenAIImagesResponse(body []byte) []byte {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	data, ok := payload["data"]
+	if !ok {
+		return body
+	}
+	if _, ok := data.([]any); ok {
+		return body
+	}
+	dataMap, ok := data.(map[string]any)
+	if !ok {
+		return body
 	}
 
-	var modelName string
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		modelName = extractModelFromMultipart(rawBody, contentType)
-	} else {
-		modelName = gjson.GetBytes(rawBody, "model").String()
+	var entries []map[string]any
+	revisedPrompt, _ := firstString(dataMap, "revised_prompt", "revisedPrompt")
+	for _, url := range collectStringList(dataMap, "image_urls", "imageUrls", "urls") {
+		entries = append(entries, imageResponseEntry(url, "", revisedPrompt))
 	}
-
-	if modelName == "" {
-		if val, ok := h.Cfg.Intelligence.Matrix["image_gen"]; ok && val != "" {
-			modelName = val
+	for _, b64 := range collectStringList(dataMap, "b64_jsons", "base64_images", "base64Images") {
+		entries = append(entries, imageResponseEntry("", b64, revisedPrompt))
+	}
+	if url, hasURL := firstString(dataMap, "image_url", "imageUrl", "url"); hasURL {
+		if b64, hasB64 := firstString(dataMap, "b64_json", "base64", "image_base64", "imageBase64"); hasB64 {
+			entries = append(entries, imageResponseEntry(url, b64, revisedPrompt))
 		} else {
-			h.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model not specified and no 'image_gen' configured in intelligence.matrix")})
-			return
+			entries = append(entries, imageResponseEntry(url, "", revisedPrompt))
+		}
+	} else if b64, hasB64 := firstString(dataMap, "b64_json", "base64", "image_base64", "imageBase64"); hasB64 {
+		entries = append(entries, imageResponseEntry("", b64, revisedPrompt))
+	}
+	if nested, ok := dataMap["images"].([]any); ok {
+		for _, image := range nested {
+			switch value := image.(type) {
+			case string:
+				if strings.TrimSpace(value) != "" {
+					entries = append(entries, imageResponseEntry(value, "", revisedPrompt))
+				}
+			case map[string]any:
+				url, _ := firstString(value, "url", "image_url", "imageUrl")
+				b64, _ := firstString(value, "b64_json", "base64", "image_base64", "imageBase64")
+				prompt, _ := firstString(value, "revised_prompt", "revisedPrompt")
+				if prompt == "" {
+					prompt = revisedPrompt
+				}
+				if url != "" || b64 != "" {
+					entries = append(entries, imageResponseEntry(url, b64, prompt))
+				}
+			}
 		}
 	}
-
-	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	resp, errMsg := h.ExecuteMultimodalWithAuthManager(cliCtx, h.HandlerType(), modelName, rawBody, "", "images_edits", contentType)
-	if errMsg != nil {
-		h.WriteErrorResponse(c, errMsg)
-		cliCancel(errMsg.Error)
-		return
+	if len(entries) == 0 {
+		return body
 	}
-	c.Data(http.StatusOK, "application/json", resp)
-	cliCancel()
+
+	openAIData := make([]map[string]any, 0, len(entries))
+	openAIData = append(openAIData, entries...)
+	payload["data"] = openAIData
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return normalized
+}
+
+func imageResponseEntry(url, b64, revisedPrompt string) map[string]any {
+	entry := make(map[string]any)
+	if strings.TrimSpace(url) != "" {
+		entry["url"] = url
+	}
+	if strings.TrimSpace(b64) != "" {
+		entry["b64_json"] = b64
+	}
+	if strings.TrimSpace(revisedPrompt) != "" {
+		entry["revised_prompt"] = revisedPrompt
+	}
+	return entry
+}
+
+func collectStringList(data map[string]any, keys ...string) []string {
+	var out []string
+	for _, key := range keys {
+		raw, ok := data[key]
+		if !ok {
+			continue
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range items {
+			value, ok := item.(string)
+			if ok && strings.TrimSpace(value) != "" {
+				out = append(out, value)
+			}
+		}
+	}
+	return out
+}
+
+func firstString(data map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		value, ok := data[key].(string)
+		if ok && strings.TrimSpace(value) != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // AudioTranslations handles /v1/audio/translations

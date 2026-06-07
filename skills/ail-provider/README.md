@@ -98,13 +98,13 @@ switchAILocal supports these providers (all discoverable by the wizard):
 | Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile`, `whisper-large-v3` |
 | Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
 | Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
-| MiniMax | `minimax:` | `ail-compound`, `image-01`, **`speech-02-hd`** |
+| MiniMax | `minimax:` | `ail-compound`, `image-01`, **`speech-2.8-hd`** |
 | switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast`, `switchai-embed` |
 | OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
 
 ## Capability Endpoints (for AI agents)
 
-Use these endpoints directly — no special client needed. All accept OpenAI-compatible shapes. The gateway internally translates to the upstream provider's native API where needed (e.g. MiniMax TTS → `/v1/t2a_pro`).
+Use these endpoints directly — no special client needed. All accept OpenAI-compatible shapes. The gateway internally translates to the upstream provider's native API where needed (e.g. MiniMax TTS → `/v1/t2a_v2`).
 
 | Endpoint | What it does | Default model | Notes |
 |----------|--------------|---------------|-------|
@@ -112,7 +112,7 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 | `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallbacks: `switchai-embed`, alibaba `text-embedding-v3`. All return dim=1024. |
 | `POST /v1/images/generations` | Image generation | `ail-image` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
 | `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |
-| `POST /v1/audio/speech` | Text → speech (TTS) | `ail-speech` | **Use MiniMax voice IDs**, e.g. `male-qn-qingse`, `female-shaonv`, `audiobook_male_2`. Not OpenAI voice names. Returns binary audio (mp3/pcm/flac/wav). |
+| `POST /v1/audio/speech` | Text → speech (TTS) | `ail-speech` | MiniMax `speech-2.8-hd` via `/v1/t2a_v2`. Use MiniMax voice IDs, e.g. `English_expressive_narrator`, `male-qn-qingse`, `female-shaonv`. Accepts OpenAI shape and MiniMax-native `voice_setting` / `audio_setting`. Returns binary audio (mp3/flac/wav). |
 | `POST /v1/music/generations` | Text → music / style cover | `ail-music` | Generate real songs from lyrics (text-to-music) or covers (`model: "ail-music-cover"` + `audio_url`). Sync (default): returns `{data: {audio: <base64 MP3>, duration_ms, sample_rate, channels, bitrate}}`, 30–90s. Streaming (`stream: true`): returns raw `audio/mpeg`, TTFB ~20s. 100 songs/day. |
 | `POST /v1/music/lyrics` | Song lyrics generator | (same credential) | Fast (~2s). Modes: `write_full_song` (default) or `edit`. Returns `{song_title, style_tags, lyrics}` with `[Verse]`/`[Chorus]` structure. 100/day. |
 
@@ -139,8 +139,24 @@ curl http://localhost:18080/v1/audio/speech \
   -d '{
     "model": "ail-speech",
     "input": "Hello from your agent",
-    "voice": "male-qn-qingse",
+    "voice": "English_expressive_narrator",
     "response_format": "mp3"
+  }' --output out.mp3
+```
+
+MiniMax-native controls through the same endpoint:
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{
+    "model": "ail-speech",
+    "text": "Omg(sighs), hello from your agent",
+    "stream": false,
+    "voice_setting": {"voice_id": "English_expressive_narrator", "speed": 1, "vol": 1, "pitch": 0},
+    "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
+    "language_boost": "auto",
+    "output_format": "hex"
   }' --output out.mp3
 ```
 

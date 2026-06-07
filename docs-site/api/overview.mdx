@@ -88,7 +88,7 @@ console.log(response.choices[0].message.content);
 | `/v1/embeddings` | POST | Generate text embeddings |
 | `/v1/images/generations` | POST | Generate images from prompts |
 | `/v1/images/edits` | POST | Edit images with prompts (multipart or JSON) |
-| `/v1/audio/speech` | POST | Text-to-speech (TTS). MiniMax routed to native `/t2a_pro`. Binary `audio/mpeg` response. |
+| `/v1/audio/speech` | POST | Text-to-speech (TTS). MiniMax routed to native `/t2a_v2`. Accepts OpenAI-shape and MiniMax-native controls. Binary audio response. |
 | `/v1/audio/transcriptions` | POST | Speech-to-text (ASR), multipart upload |
 | `/v1/audio/translations` | POST | Audio translated to English text |
 | `/v1/music/generations` | POST | Text-to-music + style cover (MiniMax). Supports `stream: true` for progressive `audio/mpeg` (~20s TTFB) |

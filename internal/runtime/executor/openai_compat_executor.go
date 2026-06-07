@@ -11,7 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -106,7 +109,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 				contentType = ct
 			}
 		case "audio_speech":
-			// MiniMax ships its own native TTS API at /v1/t2a_pro with a
+			// MiniMax ships its own native TTS API at /v1/t2a_v2 with a
 			// different request/response shape — the dumb-proxy path 404s
 			// because /v1/audio/speech doesn't exist upstream. Detect early
 			// and dispatch to the dedicated adapter, which returns binary
@@ -147,23 +150,33 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		// For all non-chat skip-translation operations (embeddings, images, audio),
 		// inject the resolved upstream model name into the payload.
 		// This ensures aliased model names are correctly mapped before forwarding.
-		if contentType == "application/json" {
-			upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
-			modelOverride := e.resolveUpstreamModel(req.Model, auth)
-			targetModel := upstreamModel
-			if modelOverride != "" {
-				targetModel = modelOverride
-			}
-			if targetModel == "" {
-				targetModel = req.Model
-			}
+		upstreamModel := util.ResolveOriginalModel(req.Model, req.Metadata)
+		modelOverride := e.resolveUpstreamModel(req.Model, auth)
+		if modelOverride == "" {
+			modelOverride = e.resolveConfiguredAlias(req.Model)
+		}
+		targetModel := upstreamModel
+		if modelOverride != "" {
+			targetModel = modelOverride
+		}
+		if targetModel == "" {
+			targetModel = req.Model
+		}
 
+		if contentType == "application/json" {
 			log.Infof("DEBUG MULTIMODAL OP: operation=%v, req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s",
 				req.Metadata["operation"], req.Model, upstreamModel, modelOverride, targetModel)
 
 			if targetModel != "" {
 				translated, _ = sjson.SetBytes(translated, "model", targetModel)
 			}
+		} else if strings.HasPrefix(strings.ToLower(contentType), "multipart/") && targetModel != "" && targetModel != req.Model {
+			rewritten, rewrittenContentType, rewriteErr := rewriteMultipartModelField(translated, contentType, targetModel)
+			if rewriteErr != nil {
+				return resp, statusErr{code: http.StatusBadRequest, msg: fmt.Sprintf("multipart model rewrite: %v", rewriteErr)}
+			}
+			translated = rewritten
+			contentType = rewrittenContentType
 		}
 	} else {
 		// Translate inbound request to OpenAI format
@@ -284,6 +297,104 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		resp = switchailocalexecutor.Response{Payload: []byte(out)}
 	}
 	return resp, nil
+}
+
+func (e *OpenAICompatExecutor) resolveConfiguredAlias(alias string) string {
+	if alias == "" || e.cfg == nil {
+		return ""
+	}
+	for i := range e.cfg.SwitchAIKey {
+		for j := range e.cfg.SwitchAIKey[i].Models {
+			model := e.cfg.SwitchAIKey[i].Models[j]
+			if model.Alias != "" && strings.EqualFold(model.Alias, alias) {
+				if model.Name != "" && model.Name != "*" {
+					return model.Name
+				}
+				return alias
+			}
+		}
+	}
+	for i := range e.cfg.OpenAICompatibility {
+		for j := range e.cfg.OpenAICompatibility[i].Models {
+			model := e.cfg.OpenAICompatibility[i].Models[j]
+			if model.Alias != "" && strings.EqualFold(model.Alias, alias) {
+				if model.Name != "" {
+					return model.Name
+				}
+				return alias
+			}
+		}
+	}
+	return ""
+}
+
+func rewriteMultipartModelField(body []byte, contentType, targetModel string) ([]byte, string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", err
+	}
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+		return body, contentType, nil
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return nil, "", fmt.Errorf("missing multipart boundary")
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var out bytes.Buffer
+	writer := multipart.NewWriter(&out)
+	wroteModel := false
+
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+
+		header := make(textproto.MIMEHeader, len(part.Header))
+		for k, values := range part.Header {
+			header[k] = append([]string(nil), values...)
+		}
+		if part.FormName() == "model" {
+			wroteModel = true
+			dst, err := writer.CreatePart(header)
+			if err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
+			if _, err := io.WriteString(dst, targetModel); err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
+			continue
+		}
+
+		dst, err := writer.CreatePart(header)
+		if err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+		if _, err := io.Copy(dst, part); err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+	}
+
+	if !wroteModel {
+		if err := writer.WriteField("model", targetModel); err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return out.Bytes(), writer.FormDataContentType(), nil
 }
 
 func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchailocalauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (stream <-chan switchailocalexecutor.StreamChunk, err error) {
@@ -685,7 +796,9 @@ func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 
 // detectSSEErrorEvent checks if an SSE data line contains an error event.
 // Some providers (e.g. MiniMax) return HTTP 200 but embed errors inside the SSE stream like:
-//   data: {"type":"error","error":{"type":"server_error","message":"unknown error, 798 (1000)","http_code":"500"}}
+//
+//	data: {"type":"error","error":{"type":"server_error","message":"unknown error, 798 (1000)","http_code":"500"}}
+//
 // This function detects such events and returns a statusErr so the upstream retry logic can handle them.
 // Returns nil if the line is not an error event.
 func detectSSEErrorEvent(line []byte) error {

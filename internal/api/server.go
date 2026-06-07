@@ -634,6 +634,20 @@ func (s *Server) setupRoutes() {
 		v1.POST("/notifications/telegram/sendMessage", notificationsHandlers.TelegramSendMessage)
 	}
 
+	// Strict OpenAI-compatible API routes. This additive namespace preserves the
+	// legacy /v1 image response shape while giving third-party OpenAI clients a
+	// response with data[0].url / data[0].b64_json.
+	openaiV1 := s.engine.Group("/openai/v1")
+	openaiV1.Use(AuthMiddleware(s.accessManager))
+	{
+		openaiV1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
+		openaiV1.POST("/chat/completions", openaiHandlers.ChatCompletions)
+		openaiV1.POST("/completions", openaiHandlers.Completions)
+		openaiV1.POST("/embeddings", openaiHandlers.Embeddings)
+		openaiV1.POST("/images/generations", openaiHandlers.OpenAICompatImagesGenerations)
+		openaiV1.POST("/images/edits", openaiHandlers.OpenAICompatImagesEdits)
+	}
+
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
 	v1beta.Use(AuthMiddleware(s.accessManager))

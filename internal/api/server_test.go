@@ -114,6 +114,59 @@ func TestAmpProviderModelRoutes(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatNamespaceRoutes(t *testing.T) {
+	server := newTestServer(t)
+
+	testCases := []struct {
+		name          string
+		method        string
+		path          string
+		body          string
+		wantNotStatus int
+		wantStatus    int
+	}{
+		{
+			name:       "models",
+			method:     http.MethodGet,
+			path:       "/openai/v1/models",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:          "image generations route registered",
+			method:        http.MethodPost,
+			path:          "/openai/v1/images/generations",
+			body:          `{}`,
+			wantNotStatus: http.StatusNotFound,
+		},
+		{
+			name:          "image edits route registered",
+			method:        http.MethodPost,
+			path:          "/openai/v1/images/edits",
+			body:          `{}`,
+			wantNotStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer test-key")
+			req.Header.Set("Content-Type", "application/json")
+
+			rr := httptest.NewRecorder()
+			server.engine.ServeHTTP(rr, req)
+
+			if tc.wantStatus > 0 && rr.Code != tc.wantStatus {
+				t.Fatalf("unexpected status for %s %s: got %d want %d; body=%s", tc.method, tc.path, rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if tc.wantNotStatus > 0 && rr.Code == tc.wantNotStatus {
+				t.Fatalf("route %s %s not registered: got %d; body=%s", tc.method, tc.path, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestIntelligenceManagementRoutes(t *testing.T) {
 	server := newTestServer(t)
 
@@ -121,9 +174,9 @@ func TestIntelligenceManagementRoutes(t *testing.T) {
 	// Authentication will fail (401/403) but that's expected - we're just checking the routes exist
 
 	testCases := []struct {
-		name       string
-		method     string
-		path       string
+		name   string
+		method string
+		path   string
 	}{
 		{
 			name:   "GET memory stats",

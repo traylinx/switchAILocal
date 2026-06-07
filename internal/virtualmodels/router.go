@@ -480,6 +480,22 @@ func PublicCatalog(cfg *config.SDKConfig) []map[string]any {
 				model["audio"] = true
 			}
 		}
+		// Aggregate context length from enabled pool members (max-of-pool = the
+		// headline context for the alias). switchAI clients (pi-switchai-provider,
+		// Codex, OpenCode, etc.) read context_length from /v1/models to display
+		// the right value without hardcoding per-pool.
+		var maxContext int
+		for _, member := range pool.Members {
+			if member.Enabled != nil && !*member.Enabled {
+				continue
+			}
+			if member.Capabilities.Context > maxContext {
+				maxContext = member.Capabilities.Context
+			}
+		}
+		if maxContext > 0 {
+			model["context_length"] = maxContext
+		}
 		out = append(out, model)
 	}
 	return out

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## v0.5.23 - 2026-06-07
+
+- Add strict OpenAI-compatible image namespace for third-party clients: `/openai/v1/images/generations` and `/openai/v1/images/edits` normalize gateway-native image payloads into OpenAI `data:[{url|b64_json}]` shape while preserving legacy `/v1/images/*` behavior.
+- Upgrade MiniMax text-to-speech adapter from legacy `/v1/t2a_pro` to current `/v1/t2a_v2`; `/v1/audio/speech` now supports both OpenAI-shaped requests and MiniMax-native controls (`voice_setting`, `audio_setting`, `pronunciation_dict`, `language_boost`, `voice_modify`, `output_format`).
+- Move public `ail-speech` default to MiniMax `speech-2.8-hd`, keep legacy `speech-02-hd` as a private compatibility alias, and document `English_expressive_narrator` as the preferred smoke-test voice.
+- Preserve model metadata needed by agent clients (`context_length`, `max_completion_tokens`) and expose max context for virtual model pools.
+- Rewrite multipart model fields for skip-translation operations so aliased audio/image uploads reach upstream providers with the correct native model name.
+- Update repo docs, docs-site pages, config example, and agent-facing skills for OpenAI-compatible image generation and MiniMax T2A v2.
+
 ## v0.5.20 - 2026-05-29
 
 - Publish the stable public AIL alias contract in docs and examples: `ail-compound`, `ail-fast`, `ail-image`, `ail-speech`, `ail-music`, and `ail-music-cover`.

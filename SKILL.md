@@ -312,11 +312,28 @@ response = client.images.generate(
 image_url = response.data[0].url
 ```
 
+Strict OpenAI-compatible clients that require `data[0].url` or
+`data[0].b64_json` can use the additive namespace:
+
+```bash
+curl --location 'http://localhost:18080/openai/v1/images/generations' \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ail-image",
+    "prompt": "A dog wearing a space suit on Mars, photorealistic",
+    "response_format": "url"
+  }'
+```
+
+Legacy `/v1/images/generations` behavior is preserved for existing
+SwitchAI clients.
+
 ---
 
 ## 🔊 Text-to-Speech
 
-Generate audio from text via `/v1/audio/speech`. switchAILocal ships a MiniMax T2A adapter that translates the OpenAI-shape request to MiniMax's native `/v1/t2a_pro` API behind the scenes.
+Generate audio from text via `/v1/audio/speech`. switchAILocal ships a MiniMax T2A adapter that translates OpenAI-shape or MiniMax-native requests to MiniMax's native `/v1/t2a_v2` API behind the scenes.
 
 ```bash
 curl http://localhost:18080/v1/audio/speech \
@@ -325,22 +342,44 @@ curl http://localhost:18080/v1/audio/speech \
   -d '{
     "model": "ail-speech",
     "input": "Hello from switchAILocal",
-    "voice": "male-qn-qingse",
+    "voice": "English_expressive_narrator",
     "response_format": "mp3"
   }' --output hello.mp3
+```
+
+MiniMax-native controls also work through the same local endpoint:
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ail-speech",
+    "text": "Omg(sighs), the real danger is not that computers start thinking like people.",
+    "stream": false,
+    "voice_setting": {"voice_id": "English_expressive_narrator", "speed": 1, "vol": 1, "pitch": 0},
+    "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
+    "pronunciation_dict": {"tone": ["Omg/Oh my god"]},
+    "language_boost": "auto",
+    "voice_modify": {"pitch": 0, "intensity": 0, "timbre": 0, "sound_effects": "spacious_echo"},
+    "output_format": "hex"
+  }' --output speech.mp3
 ```
 
 **Voice IDs — use MiniMax-native, NOT OpenAI voice names:**
 
 | Voice ID | Description |
 |---|---|
+| `English_expressive_narrator` | English narrator, expressive |
 | `male-qn-qingse` | Male, calm |
 | `female-shaonv` | Female, young |
 | `audiobook_male_2` | Male, narrator |
 | `presenter_male` | Male, anchor-style |
 | `clever_boy` | Male, youthful |
 
-**Formats:** `mp3` (default), `pcm`, `flac`, `wav`. Override `bitrate`, `audio_sample_rate`, `channel` at the top level if needed.
+**Formats:** `mp3` (default), `flac`, `wav` for sync `t2a_v2`. Override `bitrate`, `audio_sample_rate`, `channel` at the top level or use MiniMax-native `audio_setting`.
+
+**Streaming:** MiniMax `t2a_v2` supports streaming, but `/v1/audio/speech` currently exposes synchronous raw bytes only. Send `"stream": false`.
 
 **Rate limit:** Plus plan = ~1–5 RPM (very strict). MiniMax error 1002 → HTTP 429 → `ClassRateLimit` in failover taxonomy. Plan throughput accordingly.
 
@@ -517,4 +556,3 @@ For full human-readable documentation: [ail.traylinx.com](https://ail.traylinx.c
 ---
 
 *Route wisely. Save tokens. Use CLI.* 🚀
-
