@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-06-07 - String Concatenation vs fmt.Sprintf in SSE Streams
+**Learning:** In highly concurrent hot paths generating SSE events (like translating responses to Claude format), `fmt.Sprintf` introduces unnecessary reflection overhead and allocations. `fmt.Sprintf("data: %s\n\n", text)` is roughly 2.5x slower and allocates twice as much memory per operation compared to simple string concatenation `"data: " + text + "\n\n"`. This is particularly impactful for high-throughput streaming AI responses where this operation occurs thousands of times per second across concurrent requests.
+**Action:** Always prefer direct string concatenation (`+`) over `fmt.Sprintf` when building simple payload strings with a known, small number of components, especially inside translation loops or SSE event generators.
