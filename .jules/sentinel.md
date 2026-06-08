@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-06-08 - SSRF via taint analysis in CLI Executor
+**Vulnerability:** The `executeRemote` function blindly constructed an HTTP request URL from an unvalidated environment variable (`REMOTE_COMMAND_HOST`).
+**Learning:** Using an unvalidated variable as a base URL for `http.NewRequestWithContext` leads to a G704 (SSRF via taint analysis) vulnerability since the URL scheme might be hijacked.
+**Prevention:** Always parse untrusted external URLs using `net/url.Parse` and strictly validate the `.Scheme` to be `http` or `https` before passing it to HTTP clients. Use `rawurl` variable names to avoid shadowing the `net/url` package.
