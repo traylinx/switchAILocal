@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Prevent SSRF via URL Scheme Smuggling in CLI Executor
+**Vulnerability:** The `executeRemote` method in the CLI executor blindly used the `remoteHost` parameter to construct an HTTP request URL without verifying the scheme, allowing for potential Server-Side Request Forgery (SSRF) if a malicious or unintended scheme (e.g., `file://`) was provided.
+**Learning:** Naive string concatenation for URLs (`strings.TrimSuffix(remoteHost, "/") + "/run"`) bypassing scheme checks can allow attackers to smuggle unsupported protocols into the standard HTTP client, particularly leading to internal network probing or unauthorized command execution via bridge agents.
+**Prevention:** Always parse untrusted or dynamic base URLs using `net/url.Parse()` and strictly validate the scheme (`parsedURL.Scheme == "http" || parsedURL.Scheme == "https"`) before constructing the final request URL. Additionally, avoid shadowing the `net/url` package by renaming local URL string variables to `rawurl`.
