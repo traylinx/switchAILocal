@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-06-10 - Prevent SSRF via URL Scheme Validation
+**Vulnerability:** HTTP clients constructed requests using dynamically provided URLs (like remote bridge URLs or custom model proxies) without verifying the URL scheme, leading to potential Server-Side Request Forgery (SSRF) and command injection if attackers provided `file://` or `gopher://` URLs.
+**Learning:** Taint analysis flags URLs passed directly into `http.NewRequestWithContext` or `http.Get`. Using a naive string prefix check isn't sufficient.
+**Prevention:** Always validate external/dynamic URL schemes by parsing them with `net/url.Parse()` and strictly enforcing that `.Scheme` is either `http` or `https` before execution.

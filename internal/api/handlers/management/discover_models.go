@@ -72,6 +72,12 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 		}
 	}
 
+	parsedURL, err := url.Parse(req.ModelsURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": "Models URL must be http or https"})
+		return
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.ModelsURL, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "request_creation_failed", "message": err.Error()})

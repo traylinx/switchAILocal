@@ -164,26 +164,31 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 	}
 
 	if baseURL != "" {
-		// Try to reach base URL (often returns 404 or welcome message, establishing connectivity)
-		req, _ := http.NewRequest("GET", baseURL, nil)
-		if strings.Contains(baseURL, "openai.com") {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		start := time.Now()
-		resp, err := client.Do(req)
-		latency := time.Since(start).Milliseconds()
-
-		if err != nil {
-			tests["baseUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Unreachable: %v", err)}
+		parsedURL, err := url.Parse(baseURL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+			tests["baseUrl"] = gin.H{"passed": false, "message": "Invalid Base URL scheme: must be http or https"}
 		} else {
-			defer resp.Body.Close()
-			msg := fmt.Sprintf("Reachable (Status: %d, %dms)", resp.StatusCode, latency)
-			tests["baseUrl"] = gin.H{"passed": true, "message": msg, "latency": latency}
+			// Try to reach base URL (often returns 404 or welcome message, establishing connectivity)
+			req, _ := http.NewRequest("GET", baseURL, nil)
+			if strings.Contains(baseURL, "openai.com") {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
 
-			// If status is 401, API key is invalid
-			if resp.StatusCode == 401 {
-				tests["apiKey"] = gin.H{"passed": false, "message": "Unauthorized (Invalid API Key)"}
+			start := time.Now()
+			resp, err := client.Do(req)
+			latency := time.Since(start).Milliseconds()
+
+			if err != nil {
+				tests["baseUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Unreachable: %v", err)}
+			} else {
+				defer resp.Body.Close()
+				msg := fmt.Sprintf("Reachable (Status: %d, %dms)", resp.StatusCode, latency)
+				tests["baseUrl"] = gin.H{"passed": true, "message": msg, "latency": latency}
+
+				// If status is 401, API key is invalid
+				if resp.StatusCode == 401 {
+					tests["apiKey"] = gin.H{"passed": false, "message": "Unauthorized (Invalid API Key)"}
+				}
 			}
 		}
 	} else {
