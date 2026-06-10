@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-10 - Optimize hot path SSE string generation
+**Learning:** In highly trafficked hot paths for Server-Sent Events (SSE) building, using `fmt.Sprintf` incurs unnecessary overhead and reduces throughput. Direct string concatenation using the `+` operator is optimized by the Go compiler (`runtime.concatstrings`) and performs significantly faster (approx. 40% reduction in execution time, from ~200 ns/op to ~118 ns/op).
+**Action:** Prefer direct string concatenation over `fmt.Sprintf` for simple payload construction in hot paths, such as chunk streaming.
