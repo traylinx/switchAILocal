@@ -50,7 +50,10 @@ type oaiToResponsesState struct {
 var responseIDCounter uint64
 
 func emitRespEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	// ⚡ Bolt: Optimize SSE chunk emission with direct string concatenation
+	// Concatenation avoids reflection overhead of fmt.Sprintf and minimizes allocations
+	// in this extremely hot streaming path.
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertOpenAIChatCompletionsResponseToOpenAIResponses converts OpenAI Chat Completions streaming chunks
