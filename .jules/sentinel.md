@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-12 - Prevent SSRF in Remote CLI Execution Bridge
+**Vulnerability:** A Server-Side Request Forgery (SSRF) vulnerability via taint analysis (G704) was detected where an environment variable (`REMOTE_COMMAND_HOST`) was used directly to construct an HTTP request URL without validation.
+**Learning:** Using environment variables or external inputs directly in HTTP clients without validating the URL scheme can lead to SSRF or execution of unintended protocols (like `file://` or `gopher://`).
+**Prevention:** Always validate external/dynamic URL schemes using `net/url.Parse()` and explicitly check that the `.Scheme` is `http` or `https` before using it in `http.NewRequestWithContext`. Also, name the variable `rawurl` instead of `url` to avoid shadowing the `net/url` standard library package.
