@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-13 - Prevent SSRF in Bridge Agent Communication
+**Vulnerability:** Unvalidated remote host URLs in the CLI executor permitted SSRF attacks by allowing arbitrary URL schemes (e.g., `file://`, `ftp://`).
+**Learning:** External bridge URLs were appended directly with path segments and passed to `http.NewRequestWithContext` without verifying the scheme, triggering G704 from gosec.
+**Prevention:** Always parse external/dynamic URLs using `net/url.Parse` and explicitly validate the `.Scheme` against `http` and `https` before executing HTTP requests. Rename the string variable to `rawurl` to avoid shadowing the `net/url` package.
