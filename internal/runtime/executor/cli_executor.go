@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +59,6 @@ func ensureCLISandbox() string {
 	})
 	return cliSandboxPath
 }
-
 
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
@@ -504,6 +505,24 @@ func (e *LocalCLIExecutor) Refresh(ctx context.Context, auth *sdkauth.Auth) (*sd
 // executeRemote forwards execution to a host-side bridge agent.
 func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary string, args []string, modelName string) (switchailocalexecutor.Response, error) {
 	log.Infof("Forwarding execution to remote bridge: %s", remoteHost)
+
+	parsedURL, err := url.Parse(remoteHost)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote bridge URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote bridge URL scheme: must be http or https")
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, parsedURL.Hostname())
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("failed to resolve remote bridge hostname: %w", err)
+	}
+	for _, ip := range ips {
+		if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsUnspecified() {
+			return switchailocalexecutor.Response{}, fmt.Errorf("remote bridge URL resolves to a protected internal network address")
+		}
+	}
 
 	reqBody := struct {
 		Binary string   `json:"binary"`

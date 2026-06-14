@@ -357,3 +357,17 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-14 - Fix SSRF via scheme validation in remote bridge requests
+**Vulnerability:** The `executeRemote` function in the CLI executor accepted a `remoteHost` parameter and performed HTTP POST requests against it without validating the URL structure or scheme, leading to Server-Side Request Forgery (SSRF) vulnerabilities (gosec G704).
+**Learning:** Naive URL string concatenation (e.g. `remoteHost + "/run"`) followed by execution using HTTP clients is inherently unsafe because malicious hosts or unexpected schemes (like `file://` or `gopher://`) can be exploited to bypass perimeter controls or read local data.
+**Prevention:** Always use `net/url.Parse` to parse user-provided or externally configurable URLs and explicitly validate that the `.Scheme` is strictly `http` or `https` before issuing outbound HTTP requests.
+
+## 2026-06-14 - Fix comprehensive SSRF via internal network validation
+**Vulnerability:** The \`executeRemote\` function in the CLI executor accepted a \`remoteHost\` parameter and performed HTTP POST requests. Even with URL scheme validation (\`http\`/\`https\`), the endpoint could be coerced into attacking internal resources (like \`http://localhost:8080\` or metadata endpoints) because the host resolution was unchecked, maintaining a critical Server-Side Request Forgery (SSRF) attack vector.
+**Learning:** Scheme validation alone is insufficient for SSRF protection. An attacker can still use valid \`http\` schemes to target private network ranges, loopback addresses, or sensitive link-local services.
+**Prevention:** Always parse the URL, resolve the target hostname to its IP addresses using \`net.LookupIP\`, and explicitly deny connections to protected internal networks (\`ip.IsLoopback()\`, \`ip.IsPrivate()\`, \`ip.IsLinkLocalUnicast()\`) prior to execution.
+
+## 2026-06-14 - SSRF Edge Cases: Unspecified IPs and Context Cancellation
+**Vulnerability:** When fixing SSRF, blocking loopback (`127.0.0.1`) and private IPs is insufficient. The unspecified IP (`0.0.0.0`) routes to `localhost` on Linux and bypasses basic filters. Furthermore, using `net.LookupIP` instead of `LookupIPAddr` with a context can lead to goroutine blocking if DNS hangs.
+**Learning:** Robust SSRF protection must block `IsUnspecified()` alongside `IsLoopback()`. Network operations in a gateway must always respect request context cancellation. (Note: A perfect SSRF defense requires overriding the HTTP client's `DialContext` to prevent DNS rebinding TOCTOU attacks, but this iterative patch mitigates the immediate direct IP threat).
+**Prevention:** Always validate against `IsUnspecified()` and use context-aware standard library functions (e.g., `net.DefaultResolver.LookupIPAddr`) for DNS resolution.
