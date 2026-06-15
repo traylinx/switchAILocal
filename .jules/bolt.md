@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-06-15 - Optimize emitEvent allocations
+**Learning:** In highly called SSE payload construction (like `emitEvent` and `emitRespEvent` in the translator paths), using `fmt.Sprintf` is surprisingly slow and creates an extra allocation compared to standard string concatenation. The Go compiler optimizes `+` concatenation nicely via `runtime.concatstrings`.
+**Action:** Replace `fmt.Sprintf("event: %s\ndata: %s", event, payload)` with `"event: " + event + "\ndata: " + payload` in hot paths to eliminate reflection and decrease execution time.
