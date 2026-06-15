@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-15 - Prevent Protocol Abuse in Remote CLI Execution
+**Vulnerability:** The `executeRemote` function in `cli_executor.go` sent requests to user-provided `REMOTE_COMMAND_HOST` URLs without validation, leading to potential Server-Side Request Forgery (SSRF) via protocol abuse (e.g. `file://`).
+**Learning:** For trusted configuration endpoints like admin-defined Remote Bridge environments, blocking private IPs or loopback networks creates critical functional regressions and is often susceptible to TOCTOU rebinding. When an input represents a trusted service definition, it's safer to enforce protocol strictness.
+**Prevention:** Always parse the URL and strictly validate the scheme (`http`/`https`) to block out-of-band protocols (`file`, `gopher`, `ftp`), while explicitly treating the endpoint as a trusted destination.
