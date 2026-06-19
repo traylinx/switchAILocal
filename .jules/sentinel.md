@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-19 - SSRF via Taint Analysis in CLI Executor
+**Vulnerability:** Server-Side Request Forgery (SSRF) risk in `executeRemote` where the `REMOTE_COMMAND_HOST` environment variable was used to construct HTTP requests without scheme validation.
+**Learning:** Even admin-defined configuration endpoints (like `REMOTE_COMMAND_HOST`) must enforce protocol strictness. Blocking private IPs creates functional regressions for local API gateways; instead, enforcing `http`/`https` schemes prevents protocol abuse (e.g., `file://`).
+**Prevention:** Always parse URLs and explicitly validate the scheme against an allowlist (`http`, `https`) before passing them to HTTP clients. Use `rawurl` as the variable name for string URLs to avoid shadowing the `net/url` package.
