@@ -7,7 +7,6 @@ package responses
 import (
 	"bytes"
 	"context"
-	"fmt"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -25,7 +24,7 @@ func ConvertCodexResponseToOpenAIResponses(ctx context.Context, modelName string
 				rawJSON, _ = sjson.SetBytes(rawJSON, "response.instructions", gjson.GetBytes(originalRequestRawJSON, "instructions").String())
 			}
 		}
-		out := fmt.Sprintf("data: %s", string(rawJSON))
+		out := "data: "+string(rawJSON)
 		return []string{out}
 	}
 	return []string{string(rawJSON)}

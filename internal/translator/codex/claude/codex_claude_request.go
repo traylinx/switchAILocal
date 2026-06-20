@@ -137,7 +137,7 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 								if mediaType == "" {
 									mediaType = "application/octet-stream"
 								}
-								dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, data)
+								dataURL := "data:"+mediaType+";base64,"+data
 								appendImageContent(dataURL)
 							}
 						}
