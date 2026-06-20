@@ -58,7 +58,6 @@ func ensureCLISandbox() string {
 	return cliSandboxPath
 }
 
-
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
 type CLIExecutionError struct {
@@ -514,7 +513,18 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	url := strings.TrimSuffix(remoteHost, "/") + "/run"
+
+	// Ensure remoteHost has a valid HTTP/HTTPS scheme to prevent SSRF/Protocol abuse
+	rawurl := strings.TrimSuffix(remoteHost, "/")
+	if !strings.HasPrefix(rawurl, "http://") && !strings.HasPrefix(rawurl, "https://") {
+		// Default to HTTP if no scheme is provided for backwards compatibility,
+		// but block explicitly dangerous schemes like file:// or gopher://
+		if strings.Contains(rawurl, "://") {
+			return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote command host scheme: %s", rawurl)
+		}
+		rawurl = "http://" + rawurl
+	}
+	url := rawurl + "/run"
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	if err != nil {

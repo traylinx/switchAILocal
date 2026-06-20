@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-20 - Prevent SSRF via Protocol Abuse in Remote Host Executions
+**Vulnerability:** A Server-Side Request Forgery (SSRF) vulnerability existed in `executeRemote` (`internal/runtime/executor/cli_executor.go`) where `os.Getenv("REMOTE_COMMAND_HOST")` was used directly to construct the URL for bridging command executions (`remoteHost + "/run"`) without verifying the scheme. This allowed potential protocol abuse by supplying schemes like `file://` or `gopher://`.
+**Learning:** Even internal, trusted administrative configurations (like `REMOTE_COMMAND_HOST`) require strict protocol scheme validation to prevent the Go `http.Client` from processing dangerous non-HTTP schemas when forming out-of-band requests. Go's taint analysis in `gosec` flags these usages as G704 (SSRF).
+**Prevention:** Always parse and explicitly validate the scheme (e.g., enforce `http://` or `https://`) for any dynamically provided URL or host variable before passing it to `http.NewRequestWithContext`. Do not rely solely on IP blocking, as it causes functional regressions and TOCTOU vulnerabilities for internal bridge services.
