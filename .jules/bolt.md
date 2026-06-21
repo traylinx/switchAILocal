@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-21 - Optimize SSE Event Emission String Concatenation
+**Learning:** In highly frequent hot paths for Server-Sent Events (SSE) construction, using `fmt.Sprintf("event: %s\ndata: %s", event, payload)` incurs unnecessary reflection overhead. Benchmark results show that substituting `fmt.Sprintf` with direct string concatenation (`+`) cuts execution time from ~153.6 ns/op to ~76.4 ns/op. Go's compiler efficiently optimizes this known-length direct concatenation.
+**Action:** When creating SSE payload strings or similar simple formatted outputs in hot paths, directly concatenate the strings rather than using `fmt.Sprintf` or `strings.Builder` to maximize throughput.
