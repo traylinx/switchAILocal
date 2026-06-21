@@ -957,36 +957,6 @@ func (cfg *Config) ValidateVirtualModels() error {
 		return nil
 	}
 
-	knownProviders := make(map[string]struct{})
-	for i := range cfg.OpenAICompatibility {
-		name := strings.ToLower(strings.TrimSpace(cfg.OpenAICompatibility[i].Name))
-		if name != "" {
-			knownProviders[name] = struct{}{}
-		}
-	}
-	if len(cfg.SwitchAIKey) > 0 {
-		knownProviders["switchai"] = struct{}{}
-	}
-	if len(cfg.GeminiKey) > 0 {
-		knownProviders["gemini"] = struct{}{}
-	}
-	if len(cfg.ClaudeKey) > 0 {
-		knownProviders["claude"] = struct{}{}
-	}
-	if len(cfg.CodexKey) > 0 {
-		knownProviders["codex"] = struct{}{}
-	}
-	if len(cfg.VertexCompatAPIKey) > 0 {
-		knownProviders["vertex"] = struct{}{}
-		knownProviders["vertex-compat"] = struct{}{}
-	}
-	if cfg.Ollama.Enabled {
-		knownProviders["ollama"] = struct{}{}
-	}
-	if cfg.LMStudio.Enabled {
-		knownProviders["lmstudio"] = struct{}{}
-	}
-
 	normalized := make(map[string]VirtualModelConfig, len(cfg.SDKConfig.VirtualModels))
 	for rawID, pool := range cfg.SDKConfig.VirtualModels {
 		poolID := strings.TrimSpace(rawID)
@@ -1023,9 +993,10 @@ func (cfg *Config) ValidateVirtualModels() error {
 			if member.Provider == "" {
 				return fmt.Errorf("virtual-models.%s member %s missing provider", poolID, member.ID)
 			}
-			if _, ok := knownProviders[member.Provider]; !ok && len(knownProviders) > 0 {
-				return fmt.Errorf("virtual-models.%s member %s references unknown provider %q", poolID, member.ID, member.Provider)
-			}
+			// Provider identifiers are lower-case opaque backend IDs for virtual
+			// pools. They may be supplied by runtime/provider plugins, so
+			// validation only enforces shape here and leaves resolution to
+			// request time.
 			if member.Model == "" {
 				return fmt.Errorf("virtual-models.%s member %s missing model", poolID, member.ID)
 			}

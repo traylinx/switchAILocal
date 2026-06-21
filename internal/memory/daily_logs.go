@@ -30,8 +30,10 @@ type DailyLogsManager struct {
 	mu sync.RWMutex
 
 	// Rotation management
-	rotationTicker *time.Ticker
-	rotationDone   chan struct{}
+	rotationTicker   *time.Ticker
+	rotationStop     chan struct{}
+	rotationDone     chan struct{}
+	rotationStopOnce sync.Once
 }
 
 // DailyLogEntry represents a single entry in the daily log.
@@ -47,6 +49,7 @@ func NewDailyLogsManager(baseDir string, retentionDays int, compression bool) (*
 		baseDir:       baseDir,
 		retentionDays: retentionDays,
 		compression:   compression,
+		rotationStop:  make(chan struct{}),
 		rotationDone:  make(chan struct{}),
 	}
 
@@ -382,8 +385,14 @@ func (dlm *DailyLogsManager) startRotationRoutine() {
 	go func() {
 		defer close(dlm.rotationDone)
 
-		// Wait until first midnight
-		time.Sleep(timeUntilMidnight)
+		// Wait until first midnight, but allow shutdown before then.
+		timer := time.NewTimer(timeUntilMidnight)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-dlm.rotationStop:
+			return
+		}
 
 		// Create ticker for daily rotation
 		dlm.rotationTicker = time.NewTicker(24 * time.Hour)
@@ -404,7 +413,7 @@ func (dlm *DailyLogsManager) startRotationRoutine() {
 					fmt.Fprintf(os.Stderr, "failed to cleanup old logs: %v\n", err)
 				}
 
-			case <-dlm.rotationDone:
+			case <-dlm.rotationStop:
 				return
 			}
 		}
@@ -419,8 +428,10 @@ func (dlm *DailyLogsManager) Close() error {
 	// Stop rotation routine
 	if dlm.rotationTicker != nil {
 		dlm.rotationTicker.Stop()
-		close(dlm.rotationDone)
 	}
+	dlm.rotationStopOnce.Do(func() {
+		close(dlm.rotationStop)
+	})
 
 	// Close current file
 	dlm.flushAndCloseCurrentFile()

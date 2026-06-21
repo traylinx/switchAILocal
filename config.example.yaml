@@ -24,6 +24,12 @@ tls:
   key: ""
 
 # Stable public aliases. Provider/native model names are implementation details.
+# Virtual-model strategy uses smooth weighted round-robin per request class:
+#   weight 1 + 1 => A, B, A, B (50/50 over complete cycles)
+#   weight 3 + 2 => A, B, A, B, A (60/40 over five-request cycles)
+# `provider` is a lower-case opaque backend ID. It can represent a vendor,
+# subscription, local runtime, or proxy plugin as long as a matching provider is
+# configured.
 virtual-models:
   ail-compound:
     description: "Universal default assistant; capability-filtered pool"
@@ -43,12 +49,26 @@ virtual-models:
           output: [text]
           tools: true
           tool_history_replay: true
+          agentic_safe: true
           context: 1000000
           proof_required_for: [audio]
+      - id: compound-alibaba-glm52
+        provider: alibaba
+        model: glm-5.2
+        enabled: true
+        weight: 1
+        capabilities:
+          operations: [chat, chat_text_tools, chat_multiturn_tools]
+          input: [text]
+          output: [text]
+          tools: true
+          tool_history_replay: true
+          agentic_safe: true
+          context: 1000000
       - id: compound-deepseek-v4_pro
         provider: deepseek
         model: deepseek-v4-pro
-        enabled: true
+        enabled: false
         weight: 1
         capabilities:
           operations: [chat, chat_text_tools]
@@ -67,6 +87,50 @@ virtual-models:
           output: [text]
           tools: true
           context: 256000
+
+  # Hidden example pool for operators who want explicit weighted balancing
+  # between two backend IDs while preserving one public model name.
+  # Keep text-only members out of `chat_multiturn_tools` unless live replay
+  # proof exists. The router keeps `chat_text` and `chat_multiturn_tools`
+  # scheduler state separate, so capability metadata is the safety boundary.
+  #
+  # ail-example-weighted:
+  #   description: "Example hidden 60/40 text pool"
+  #   expose: false
+  #   strategy: weighted-round-robin
+  #   response_model: requested
+  #   members:
+  #     - id: subscription-a-text
+  #       provider: subscription-a
+  #       model: provider-native-model-a
+  #       enabled: true
+  #       weight: 3
+  #       capabilities:
+  #         operations: [chat, chat_text_tools]
+  #         input: [text]
+  #         output: [text]
+  #         tools: true
+  #     - id: subscription-b-text
+  #       provider: subscription-b
+  #       model: provider-native-model-b
+  #       enabled: true
+  #       weight: 2
+  #       capabilities:
+  #         operations: [chat, chat_text_tools]
+  #         input: [text]
+  #         output: [text]
+  #         tools: true
+  #     - id: subscription-a-agentic
+  #       provider: subscription-a
+  #       model: provider-native-agentic-model
+  #       enabled: true
+  #       weight: 1
+  #       capabilities:
+  #         operations: [chat_multiturn_tools]
+  #         input: [text]
+  #         output: [text]
+  #         tools: true
+  #         tool_history_replay: true
 
 
 # Authentication directory (supports ~ for home directory)
@@ -315,8 +379,21 @@ openai-compatibility:
     api-key-entries:
       - api-key: "sk-..."
     models:
-      - name: "qwen-plus"
-        alias: "alibaba:qwen-plus"
+      - name: "glm-5.2"
+        alias: "ail-compound-alibaba"
+        expose: false
+        visibility: private
+        capabilities: {operations: [chat, chat_text_tools, chat_multiturn_tools], input: [text], output: [text], tools: true, tool_history_replay: true, agentic_safe: true, context: 1000000}
+      - name: "glm-5.2"
+        alias: "alibaba:glm-5.2"
+        expose: false
+        visibility: private
+        capabilities: {operations: [chat, chat_text_tools, chat_multiturn_tools], input: [text], output: [text], tools: true, tool_history_replay: true, agentic_safe: true, context: 1000000}
+      - name: "qwen3.7-max"
+        alias: "alibaba:qwen3.7-max"
+        expose: false
+        visibility: private
+        capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true, context: 1000000}
       - name: "MiniMax-M2.5"
         alias: "alibaba:MiniMax-M2.5"
       - name: "glm-5"
@@ -655,13 +732,29 @@ superbrain:
 # =============================================================================
 
 # Apply default or override parameters to model payloads globally.
-# payload:
-#   default: # Only set if missing
-#     - models: [{name: "gemini-*", protocol: "gemini"}]
-#       params: {"generationConfig.thinkingConfig.thinkingBudget": 32768}
-#   override: # Always overwrite
-#     - models: [{name: "gpt-*", protocol: "openai"}]
-#       params: {"user": "switchAILocal-User"}
+# For agent pools, force thinking on for active compound backends. Alibaba GLM uses
+# OpenAI-compatible `enable_thinking`; MiniMax-M3 uses `thinking.type=adaptive`.
+payload:
+  default: []
+  override:
+    - models:
+        - name: "glm-5.2"
+          protocol: "openai"
+        - name: "alibaba:glm-5.2"
+          protocol: "openai"
+        - name: "ail-compound-alibaba"
+          protocol: "openai"
+      params:
+        "enable_thinking": true
+    - models:
+        - name: "MiniMax-M3"
+          protocol: "openai"
+        - name: "ail-compound-minimax"
+          protocol: "openai"
+        - name: "minimax:MiniMax-M3"
+          protocol: "openai"
+      params:
+        "thinking.type": "adaptive"
 
 # =============================================================================
 # 9. PROVIDER-SPECIFIC EXCLUSIONS

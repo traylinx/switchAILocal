@@ -97,8 +97,8 @@ switchAILocal supports these providers (all discoverable by the wizard):
 | Ollama | `ollama:` | `qwen3.5:cloud`, `kimi-k2.5:cloud` |
 | Groq | `groq:` | `gpt-oss-20b`, `llama-3.3-70b-versatile`, `whisper-large-v3` |
 | Xiaomi | `xiaomi:` | `mimo-v2-pro`, `mimo-v2-flash` |
-| Alibaba | `alibaba:` | `qwen-plus`, `MiniMax-M2.5`, `glm-5` |
-| MiniMax | `minimax:` | `ail-compound`, `image-01`, **`speech-2.8-hd`** |
+| Alibaba | `alibaba:` | `glm-5.2`, `qwen3.7-max`, `MiniMax-M2.5` |
+| MiniMax | `minimax:` | `MiniMax-M3`, `image-01`, **`speech-2.8-hd`** |
 | switchAI Cloud | `switchai:` | `switchai-reasoner`, `switchai-fast`, `switchai-embed` |
 | OpenAI | `openai:` | `gpt-5-mini`, `gpt-5.4` |
 
@@ -108,7 +108,7 @@ Use these endpoints directly — no special client needed. All accept OpenAI-com
 
 | Endpoint | What it does | Default model | Notes |
 |----------|--------------|---------------|-------|
-| `POST /v1/chat/completions` | Chat / reasoning / vision | `ail-compound` (via `model: "auto"`) | Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
+| `POST /v1/chat/completions` | Chat / reasoning / vision | `ail-compound` (via `model: "auto"`) | Stable public alias. Current pool load-balances MiniMax-M3 + Alibaba glm-5.2 with thinking enabled. Also supports built-in tools: `[{"type":"web_search"}]` for live web lookups (MiniMax native). Set `max_tokens >= 2000` when using web search — context inflates to 6k–13k tokens. |
 | `POST /v1/embeddings` | Vector embeddings | `qwen3-embedding:0.6b` (local ollama) | Fallbacks: `switchai-embed`, alibaba `text-embedding-v3`. All return dim=1024. |
 | `POST /v1/images/generations` | Image generation | `ail-image` | Prompt-to-image via MiniMax. Gateway rewrites upstream path `/v1/images/generations` → `/v1/image_generation` automatically. |
 | `POST /v1/audio/transcriptions` | Audio → text (ASR) | `whisper-large-v3` (groq-hosted) | Multipart upload, `file` field. Returns `{text: "..."}`. |

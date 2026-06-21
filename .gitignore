@@ -34,6 +34,8 @@ go.work
 !.env.example
 config.yaml
 config.yaml.bak*
+config.yaml.lastgood
+config-guardian.sh
 !config.example.yaml
 .context/
 .claude/
