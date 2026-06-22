@@ -219,3 +219,9 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE Event Emission in Translators
+**Learning:** In hot paths for SSE event building that return string, using `fmt.Sprintf` incurs reflection overhead and memory allocations per call.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`) to eliminate reflection and minimize memory allocations. The Go compiler optimizes `+` into a single allocation via `runtime.concatstrings`.
+## 2026-06-22 - Optimize SSE Event Emission in Translators
+**Learning:** In hot paths for SSE event building that return string, using `fmt.Sprintf` incurs reflection overhead and memory allocations per call.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`) to eliminate reflection and minimize memory allocations. The Go compiler optimizes `+` into a single allocation via `runtime.concatstrings`.
