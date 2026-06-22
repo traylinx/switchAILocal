@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,6 @@ func ensureCLISandbox() string {
 	})
 	return cliSandboxPath
 }
-
 
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
@@ -514,9 +514,15 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	url := strings.TrimSuffix(remoteHost, "/") + "/run"
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	// Ensure the URL has a valid HTTP/HTTPS scheme to prevent SSRF vulnerabilities (e.g. file:// protocol abuse)
+	rawurl := strings.TrimSuffix(remoteHost, "/") + "/run"
+	parsedURL, err := neturl.Parse(rawurl)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote bridge URL: must use http or https scheme")
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", parsedURL.String(), bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}
