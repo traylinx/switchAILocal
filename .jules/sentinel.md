@@ -354,6 +354,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 - Fix the HIGHEST priority one you can
 - Document others for future fixes
 
-Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
-
-**If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-23 - Prevent SSRF via URL Protocol Strictness
+**Vulnerability:** In `cli_executor.go`, the `REMOTE_COMMAND_HOST` was read from the environment and directly concatenated and used to construct a `http.NewRequestWithContext` URL without any validation, which could allow Server-Side Request Forgery (SSRF) and protocol abuse (like `file://`) via taint analysis.
+**Learning:** For remote bridge communication configured via environment variables, accepting a raw URL without validating its protocol creates SSRF and TOCTOU vulnerabilities, and can also lead to regressions if not properly parsing the scheme.
+**Prevention:** Explicitly use `url.Parse` to inspect the `rawurl` and enforce protocol strictness (`http` or `https`) before dispatching HTTP requests to externally-provided hosts.
