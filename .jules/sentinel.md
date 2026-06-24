@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-06-24 - High Severity: SSRF and TLS Certificate Verification Risks
+**Vulnerability:** Found two instances where `InsecureSkipVerify: true` was explicitly set during proxy configuration in `discover_models.go` and `test_provider.go`, rendering the HTTP client susceptible to Man-in-the-Middle (MitM) attacks. Furthermore, identified an SSRF vulnerability via taint analysis (G704) in `cli_executor.go` where `remoteHost` was directly concatenated into an HTTP request without protocol validation.
+**Learning:** Hardcoded `InsecureSkipVerify: true` disables essential TLS certificate validation, completely undermining HTTPS guarantees even in local or development environments. Additionally, dynamically building URLs using unverified variables exposes the system to Server-Side Request Forgery, permitting attackers to potentially manipulate requests (e.g. using `file://` or arbitrary schemes) to unauthorized internal resources.
+**Prevention:** Strictly enforce `InsecureSkipVerify: false` for all TLS configurations in production and development unless scoped within a controlled testing environment and behind a security gate. To mitigate SSRF, implement strict input validation on dynamic URLs by explicitly parsing them using `url.Parse` and enforcing accepted schemes (e.g., `http` and `https`) before executing HTTP client requests.
