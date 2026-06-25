@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-25 - Prevent SSRF in Remote Executions
+**Vulnerability:** The `executeRemote` function in the CLI executor took a `remoteHost` parameter and blindly constructed an HTTP URL without validating the scheme, making it vulnerable to Server-Side Request Forgery (SSRF) and protocol abuse (like `file://`).
+**Learning:** Even internal or admin-configured host strings must be treated as untrusted input. The `http.DefaultClient.Do` method will follow non-HTTP schemes if explicitly provided.
+**Prevention:** Always parse dynamic host/URL strings using `url.ParseRequestURI` and strictly enforce an explicit allowlist of safe schemes (e.g., `http`, `https`) before sending requests.
