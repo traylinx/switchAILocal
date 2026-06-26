@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-26 - Optimize SSE Event Serialization
+
+**Learning:** When building SSE event payloads in hot streaming paths where strings are constantly emitted, using direct string concatenation (`+`) is significantly faster than `fmt.Sprintf`. Direct concatenation eliminates the reflection overhead and allows the Go compiler to optimize allocations via `runtime.concatstrings`.
+**Action:** Always prefer direct string concatenation over `fmt.Sprintf` for simple, small numbers of known string operands in performance-critical loops or streaming data handlers.
