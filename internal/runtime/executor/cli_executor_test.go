@@ -5,6 +5,8 @@
 package executor
 
 import (
+	"context"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -270,15 +272,15 @@ func TestLocalCLIExecutor_ContainsFlag(t *testing.T) {
 // Note: In test environments, this will typically return false
 func TestLocalCLIExecutor_HasTTY(t *testing.T) {
 	e := &LocalCLIExecutor{}
-	
+
 	// In most test environments, there's no TTY
 	// This test just ensures the method doesn't panic
 	hasTTY := e.hasTTY()
-	
+
 	// We can't assert a specific value since it depends on the test environment
 	// But we can verify it returns a boolean
 	t.Logf("hasTTY() returned: %v", hasTTY)
-	
+
 	// The method should not panic and should return a boolean
 	if hasTTY {
 		t.Log("TTY detected in test environment (unusual but valid)")
@@ -633,5 +635,26 @@ func TestCLIExecutionError_StatusCode(t *testing.T) {
 	var statusErr interface{ StatusCode() int } = err
 	if statusErr.StatusCode() != 429 {
 		t.Errorf("interface StatusCode() = %d, want 429", statusErr.StatusCode())
+	}
+}
+
+func TestExecuteRemote_SSRF(t *testing.T) {
+	executor := &LocalCLIExecutor{}
+	ctx := context.Background()
+
+	// Test invalid scheme (file://)
+	_, err := executor.executeRemote(ctx, "file:///etc/passwd", "binary", []string{"arg"}, "model")
+	if err == nil {
+		t.Error("Expected error for invalid scheme, got nil")
+	} else if !strings.Contains(err.Error(), "invalid remote host scheme") {
+		t.Errorf("Expected invalid scheme error, got: %v", err)
+	}
+
+	// Test invalid URL parsing
+	_, err = executor.executeRemote(ctx, "http://192.168.0.%31/", "binary", []string{"arg"}, "model")
+	if err == nil {
+		t.Error("Expected error for invalid URL, got nil")
+	} else if !strings.Contains(err.Error(), "invalid remote host URL") {
+		t.Errorf("Expected invalid URL error, got: %v", err)
 	}
 }

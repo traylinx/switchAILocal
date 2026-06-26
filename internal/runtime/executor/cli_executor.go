@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,6 @@ func ensureCLISandbox() string {
 	})
 	return cliSandboxPath
 }
-
 
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
@@ -505,6 +505,15 @@ func (e *LocalCLIExecutor) Refresh(ctx context.Context, auth *sdkauth.Auth) (*sd
 func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary string, args []string, modelName string) (switchailocalexecutor.Response, error) {
 	log.Infof("Forwarding execution to remote bridge: %s", remoteHost)
 
+	// Sentinel: Validate URL scheme to prevent SSRF (e.g. file://)
+	parsedURL, err := url.Parse(remoteHost)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host scheme (must be http or https): %s", parsedURL.Scheme)
+	}
+
 	reqBody := struct {
 		Binary string   `json:"binary"`
 		Args   []string `json:"args"`
@@ -514,9 +523,9 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	url := strings.TrimSuffix(remoteHost, "/") + "/run"
+	rawurl := strings.TrimSuffix(remoteHost, "/") + "/run"
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", rawurl, bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}
