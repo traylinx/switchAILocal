@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,6 @@ func ensureCLISandbox() string {
 	})
 	return cliSandboxPath
 }
-
 
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
@@ -505,6 +505,21 @@ func (e *LocalCLIExecutor) Refresh(ctx context.Context, auth *sdkauth.Auth) (*sd
 func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary string, args []string, modelName string) (switchailocalexecutor.Response, error) {
 	log.Infof("Forwarding execution to remote bridge: %s", remoteHost)
 
+	rawurl := remoteHost
+	if !strings.Contains(rawurl, "://") {
+		rawurl = "http://" + rawurl
+	}
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid URL scheme: must be http or https")
+	}
+	if u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1" || u.Hostname() == "0.0.0.0" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("SSRF prevention: localhost loopback access blocked")
+	}
+
 	reqBody := struct {
 		Binary string   `json:"binary"`
 		Args   []string `json:"args"`
@@ -514,9 +529,9 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	url := strings.TrimSuffix(remoteHost, "/") + "/run"
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	finalURL := strings.TrimSuffix(u.String(), "/") + "/run"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", finalURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}

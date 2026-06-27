@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-27 - SSRF Vulnerability in CLI Executor
+**Vulnerability:** The `executeRemote` function in the local CLI executor (`LocalCLIExecutor`) read the `REMOTE_COMMAND_HOST` string directly into a URL for an HTTP request without validating the URL scheme (e.g. `file://`, `ftp://`) and without checking for loopback addresses (e.g. `localhost`, `127.0.0.1`), allowing for Server-Side Request Forgery (SSRF) and access to internal local network resources.
+**Learning:** External variables (such as environment variables defining host configurations) were implicitly trusted. It's critical to validate both the scheme and the hostname to prevent malicious internal access. Additionally, Go's default HTTP client allows loopback access, and simply checking `rawurl.Scheme` isn't enough; prepending `http://` if missing allows `url.Parse` to correctly extract the hostname for loopback checking.
+**Prevention:** Always parse untrusted URLs using `url.Parse`. Explicitly check that `u.Scheme` is either `http` or `https`, and explicitly block loopback addresses (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`) or use a custom `DialContext` to deny internal IP resolution before performing HTTP requests.
