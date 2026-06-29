@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Prevent SSRF in LocalCLIExecutor
+
+**Vulnerability:** Found a Server-Side Request Forgery (SSRF) vulnerability in `cli_executor.go` where `REMOTE_COMMAND_HOST` was used without scheme validation. This allowed an attacker to bypass intended remote host execution and abuse internal network communication via schemes like `file://`.
+**Learning:** `REMOTE_COMMAND_HOST` requires scheme validation (http/https) to prevent protocol abuse. Using `net/url` to parse and validate the URL scheme is essential.
+**Prevention:** Always validate URL schemes before constructing network requests, especially when using environment variables or configuration fields for destination hosts.
