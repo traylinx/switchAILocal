@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-06-30 - Prevent SSRF via protocol abuse in remote CLI execution
+**Vulnerability:** The `remoteHost` parameter in `executeRemote` (derived from the `REMOTE_COMMAND_HOST` environment variable) was passed directly to the HTTP client without validating the URL scheme, allowing non-HTTP protocol abuse (e.g., `file://`, `ftp://`) leading to potential Server-Side Request Forgery (SSRF).
+**Learning:** Even internal or admin-defined configuration endpoints (like remote command execution bridges) require strict input validation to enforce expected protocol bounds and prevent local file inclusion or unauthorized internal connections.
+**Prevention:** Always parse untrusted or externally configurable URLs using `net/url` and explicitly validate the scheme (e.g., strictly allowing only `http` and `https`) before passing them to `http.NewRequest` or other network clients.
