@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-30 - Optimize SSE event building
+**Learning:** Using `fmt.Sprintf` in hot paths for building SSE events introduces reflection overhead.
+**Action:** Direct string concatenation (`+`) is natively optimized by the Go compiler and should be preferred for small, deterministic strings.
