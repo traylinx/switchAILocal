@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,6 @@ func ensureCLISandbox() string {
 	})
 	return cliSandboxPath
 }
-
 
 // CLIExecutionError carries an HTTP status code through the executor → handler chain.
 // The handler layer checks for the StatusCode() interface to set the HTTP response status.
@@ -503,6 +503,15 @@ func (e *LocalCLIExecutor) Refresh(ctx context.Context, auth *sdkauth.Auth) (*sd
 
 // executeRemote forwards execution to a host-side bridge agent.
 func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary string, args []string, modelName string) (switchailocalexecutor.Response, error) {
+	// Validate remote host URL to prevent SSRF
+	rawurl, err := url.Parse(remoteHost)
+	if err != nil {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid REMOTE_COMMAND_HOST URL: %w", err)
+	}
+	if rawurl.Scheme != "http" && rawurl.Scheme != "https" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid scheme for REMOTE_COMMAND_HOST, must be http or https")
+	}
+
 	log.Infof("Forwarding execution to remote bridge: %s", remoteHost)
 
 	reqBody := struct {
