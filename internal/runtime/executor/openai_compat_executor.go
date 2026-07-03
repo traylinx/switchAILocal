@@ -577,14 +577,14 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 				log.Warnf("openai compat executor: SSE error detected: %v", sseErr)
 				recordAPIResponseError(ctx, e.cfg, sseErr)
 				reporter.publishFailure(ctx)
-				sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: sseErr})
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: sseErr})
 				return
 			}
 			// OpenAI-compatible streams are SSE: lines typically prefixed with "data: ".
 			// Pass through translator; it yields one or more chunks for the target schema.
 			chunks := sdktranslator.TranslateStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(line), &param)
 			for i := range chunks {
-				if !sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {
 					return
 				}
 			}
@@ -606,7 +606,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			}
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
-			sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: errScan})
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 		}
 		// Ensure we record the request if no usage chunk was ever seen
 		reporter.ensurePublished(ctx)

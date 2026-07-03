@@ -20,7 +20,19 @@ import (
 //
 // It returns false when the send was abandoned because ctx was done, signalling
 // the caller to stop producing and return so its deferred cleanup runs.
+//
+// Pass the request context (client-disconnect signal), NOT a watchdog-derived
+// child context: a stall watchdog cancels its child to interrupt the upstream
+// read, and the terminal stall/error chunk must still reach the failover layer.
+// Guarding that send on the already-cancelled child would randomly drop it.
+//
+// A nil ctx falls back to a plain blocking send, preserving the pre-existing
+// behaviour rather than panicking on ctx.Done().
 func sendStreamChunk(ctx context.Context, out chan<- switchailocalexecutor.StreamChunk, chunk switchailocalexecutor.StreamChunk) bool {
+	if ctx == nil {
+		out <- chunk
+		return true
+	}
 	select {
 	case out <- chunk:
 		return true

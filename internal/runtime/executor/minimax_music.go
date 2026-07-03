@@ -770,8 +770,8 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 				line = bytes.TrimRight(line, "\r\n")
 				if len(line) > 0 && bytes.HasPrefix(line, []byte("data:")) {
 					jsonPart := bytes.TrimSpace(line[len("data:"):])
-					if emitErr, gotBytes := e.handleMinimaxMusicFrame(streamCtx, jsonPart, out, sentFirstByte); emitErr != nil {
-						sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: emitErr})
+					if emitErr, gotBytes := e.handleMinimaxMusicFrame(ctx, jsonPart, out, sentFirstByte); emitErr != nil {
+						sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: emitErr})
 						return
 					} else if gotBytes {
 						sentFirstByte = true
@@ -791,10 +791,10 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 							timeout = firstByte
 						}
 					}
-					sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}})
+					sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}})
 					return
 				}
-				sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: err})
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: err})
 				return
 			}
 		}
