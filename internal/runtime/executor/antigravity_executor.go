@@ -302,12 +302,14 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 					reporter.publish(ctx, detail)
 				}
 
-				out <- switchailocalexecutor.StreamChunk{Payload: payload}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: payload}) {
+					return
+				}
 			}
 			if errScan := scanner.Err(); errScan != nil {
 				recordAPIResponseError(ctx, e.cfg, errScan)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: errScan}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 			} else {
 				reporter.ensurePublished(ctx)
 			}
@@ -642,17 +644,21 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *switchail
 
 				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(payload), &param)
 				for i := range chunks {
-					out <- switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}
+					if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {
+						return
+					}
 				}
 			}
 			tail := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, []byte("[DONE]"), &param)
 			for i := range tail {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(tail[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(tail[i])}) {
+					return
+				}
 			}
 			if errScan := scanner.Err(); errScan != nil {
 				recordAPIResponseError(ctx, e.cfg, errScan)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: errScan}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 			} else {
 				reporter.ensurePublished(ctx)
 			}

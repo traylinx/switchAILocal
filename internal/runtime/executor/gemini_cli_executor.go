@@ -363,19 +363,23 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 					if bytes.HasPrefix(line, dataTag) {
 						segments := sdktranslator.TranslateStream(respCtx, to, from, attempt, bytes.Clone(opts.OriginalRequest), reqBody, bytes.Clone(line), &param)
 						for i := range segments {
-							out <- switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}
+							if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}) {
+								return
+							}
 						}
 					}
 				}
 
 				segments := sdktranslator.TranslateStream(respCtx, to, from, attempt, bytes.Clone(opts.OriginalRequest), reqBody, bytes.Clone([]byte("[DONE]")), &param)
 				for i := range segments {
-					out <- switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}
+					if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}) {
+						return
+					}
 				}
 				if errScan := scanner.Err(); errScan != nil {
 					recordAPIResponseError(ctx, e.cfg, errScan)
 					reporter.publishFailure(ctx)
-					out <- switchailocalexecutor.StreamChunk{Err: errScan}
+					sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 				}
 				return
 			}
@@ -384,7 +388,7 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 			if errRead != nil {
 				recordAPIResponseError(ctx, e.cfg, errRead)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: errRead}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errRead})
 				return
 			}
 			appendAPIResponseChunk(ctx, e.cfg, data)
@@ -392,12 +396,16 @@ func (e *GeminiCLIExecutor) ExecuteStream(ctx context.Context, auth *switchailoc
 			var param any
 			segments := sdktranslator.TranslateStream(respCtx, to, from, attempt, bytes.Clone(opts.OriginalRequest), reqBody, data, &param)
 			for i := range segments {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}) {
+					return
+				}
 			}
 
 			segments = sdktranslator.TranslateStream(respCtx, to, from, attempt, bytes.Clone(opts.OriginalRequest), reqBody, bytes.Clone([]byte("[DONE]")), &param)
 			for i := range segments {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(segments[i])}) {
+					return
+				}
 			}
 		}(httpResp, append([]byte(nil), payload...), attemptModel)
 

@@ -406,7 +406,7 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 		url := fmt.Sprintf("%s/event", e.baseURL())
 		reqSSE, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to create SSE request: %w", err)}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to create SSE request: %w", err)})
 			close(readyChan)
 			return
 		}
@@ -415,7 +415,7 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 		client := &http.Client{Timeout: 0}
 		resp, err := client.Do(reqSSE)
 		if err != nil {
-			out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to connect to SSE: %w", err)}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to connect to SSE: %w", err)})
 			close(readyChan)
 			return
 		}
@@ -446,14 +446,14 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 		for {
 			select {
 			case <-ctx.Done():
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")})
 				return
 			case err := <-errs:
-				out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("SSE read error: %w", err)}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("SSE read error: %w", err)})
 				return
 			case line, ok := <-lines:
 				if !ok {
-					out <- switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+					sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")})
 					return
 				}
 
@@ -487,7 +487,9 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 							},
 						}
 						b, _ := json.Marshal(chunk)
-						out <- switchailocalexecutor.StreamChunk{Payload: b}
+						if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: b}) {
+							return
+						}
 					}
 
 					if eventType == "message.completed" || eventType == "assistant.complete" {

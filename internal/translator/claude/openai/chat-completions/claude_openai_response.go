@@ -177,7 +177,7 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 				params := (*param).(*ConvertAnthropicResponseToOpenAIParams)
 
 				if acc, ok := params.ToolCallsAccumulator[index]; ok {
-					if args := delta.Get("input_json"); args.Exists() {
+					if args := delta.Get("partial_json"); args.Exists() {
 						acc.InputJSON += args.String()
 
 						openAIIndex := params.ToolCallIndexMap[index]
@@ -348,7 +348,7 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 					}
 				case "input_json_delta":
 					// Accumulate tool call arguments
-					if inputJSON := delta.Get("input_json"); inputJSON.Exists() {
+					if inputJSON := delta.Get("partial_json"); inputJSON.Exists() {
 						index := int(root.Get("index").Int())
 						if accumulator, exists := toolCallsAccumulator[index]; exists {
 							accumulator.InputJSON += inputJSON.String()

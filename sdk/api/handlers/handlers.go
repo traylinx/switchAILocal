@@ -916,7 +916,16 @@ streamReady:
 				}
 				if len(chunk.Payload) > 0 {
 					sentPayload = true
-					dataChan <- rewritePublicModel(chunk.Payload, metadata)
+					payload := rewritePublicModel(chunk.Payload, metadata)
+					if ctx != nil {
+						select {
+						case dataChan <- payload:
+						case <-ctx.Done():
+							return
+						}
+					} else {
+						dataChan <- payload
+					}
 				}
 			}
 		}

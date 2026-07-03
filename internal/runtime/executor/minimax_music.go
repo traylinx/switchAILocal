@@ -770,8 +770,8 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 				line = bytes.TrimRight(line, "\r\n")
 				if len(line) > 0 && bytes.HasPrefix(line, []byte("data:")) {
 					jsonPart := bytes.TrimSpace(line[len("data:"):])
-					if emitErr, gotBytes := e.handleMinimaxMusicFrame(jsonPart, out, sentFirstByte); emitErr != nil {
-						out <- switchailocalexecutor.StreamChunk{Err: emitErr}
+					if emitErr, gotBytes := e.handleMinimaxMusicFrame(streamCtx, jsonPart, out, sentFirstByte); emitErr != nil {
+						sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: emitErr})
 						return
 					} else if gotBytes {
 						sentFirstByte = true
@@ -791,10 +791,10 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 							timeout = firstByte
 						}
 					}
-					out <- switchailocalexecutor.StreamChunk{Err: &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}}
+					sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: &stallError{Provider: e.Identifier(), Phase: phase, Timeout: timeout}})
 					return
 				}
-				out <- switchailocalexecutor.StreamChunk{Err: err}
+				sendStreamChunk(streamCtx, out, switchailocalexecutor.StreamChunk{Err: err})
 				return
 			}
 		}
@@ -809,7 +809,7 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 // Returns (err, emittedBytes). err != nil aborts the stream; emittedBytes
 // tells the caller whether we crossed the pre-first-byte boundary (used to
 // decide if an upstream application error is still retryable).
-func (e *OpenAICompatExecutor) handleMinimaxMusicFrame(jsonPart []byte, out chan<- switchailocalexecutor.StreamChunk, alreadySentBytes bool) (error, bool) {
+func (e *OpenAICompatExecutor) handleMinimaxMusicFrame(ctx context.Context, jsonPart []byte, out chan<- switchailocalexecutor.StreamChunk, alreadySentBytes bool) (error, bool) {
 	var frame minimaxMusicResponse
 	if err := json.Unmarshal(jsonPart, &frame); err != nil {
 		// Malformed frames are logged and skipped rather than killing the
@@ -853,7 +853,12 @@ func (e *OpenAICompatExecutor) handleMinimaxMusicFrame(jsonPart []byte, out chan
 	if len(audioBytes) == 0 {
 		return nil, false
 	}
-	out <- switchailocalexecutor.StreamChunk{Payload: audioBytes}
+	// Cancellation (e.g. client disconnect) means nobody is reading; treat it as
+	// "nothing emitted" and let the read loop unwind on its next error instead of
+	// blocking forever on this send.
+	if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: audioBytes}) {
+		return nil, false
+	}
 	return nil, true
 }
 

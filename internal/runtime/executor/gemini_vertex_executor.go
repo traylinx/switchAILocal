@@ -431,17 +431,21 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			}
 			lines := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
 			for i := range lines {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}) {
+					return
+				}
 			}
 		}
 		lines := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, []byte("[DONE]"), &param)
 		for i := range lines {
-			out <- switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}
+			if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}) {
+				return
+			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
-			out <- switchailocalexecutor.StreamChunk{Err: errScan}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 		}
 	}()
 	return stream, nil
@@ -551,17 +555,21 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			}
 			lines := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
 			for i := range lines {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}) {
+					return
+				}
 			}
 		}
 		lines := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, []byte("[DONE]"), &param)
 		for i := range lines {
-			out <- switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}
+			if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(lines[i])}) {
+				return
+			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
-			out <- switchailocalexecutor.StreamChunk{Err: errScan}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 		}
 	}()
 	return stream, nil
