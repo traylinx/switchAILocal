@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -50,7 +51,7 @@ type oaiToResponsesState struct {
 var responseIDCounter uint64
 
 func emitRespEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertOpenAIChatCompletionsResponseToOpenAIResponses converts OpenAI Chat Completions streaming chunks
@@ -173,14 +174,14 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						item := `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"in_progress","content":[],"role":"assistant"}}`
 						item, _ = sjson.Set(item, "sequence_number", nextSeq())
 						item, _ = sjson.Set(item, "output_index", idx)
-						item, _ = sjson.Set(item, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+						item, _ = sjson.Set(item, "item.id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 						out = append(out, emitRespEvent("response.output_item.added", item))
 						st.MsgItemAdded[idx] = true
 					}
 					if !st.MsgContentAdded[idx] {
 						part := `{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`
 						part, _ = sjson.Set(part, "sequence_number", nextSeq())
-						part, _ = sjson.Set(part, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+						part, _ = sjson.Set(part, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 						part, _ = sjson.Set(part, "output_index", idx)
 						part, _ = sjson.Set(part, "content_index", 0)
 						out = append(out, emitRespEvent("response.content_part.added", part))
@@ -189,7 +190,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 
 					msg := `{"type":"response.output_text.delta","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"delta":"","logprobs":[]}`
 					msg, _ = sjson.Set(msg, "sequence_number", nextSeq())
-					msg, _ = sjson.Set(msg, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+					msg, _ = sjson.Set(msg, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 					msg, _ = sjson.Set(msg, "output_index", idx)
 					msg, _ = sjson.Set(msg, "content_index", 0)
 					msg, _ = sjson.Set(msg, "delta", c.String())
@@ -239,7 +240,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						}
 						done := `{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}`
 						done, _ = sjson.Set(done, "sequence_number", nextSeq())
-						done, _ = sjson.Set(done, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+						done, _ = sjson.Set(done, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 						done, _ = sjson.Set(done, "output_index", idx)
 						done, _ = sjson.Set(done, "content_index", 0)
 						done, _ = sjson.Set(done, "text", fullText)
@@ -247,7 +248,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 
 						partDone := `{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`
 						partDone, _ = sjson.Set(partDone, "sequence_number", nextSeq())
-						partDone, _ = sjson.Set(partDone, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+						partDone, _ = sjson.Set(partDone, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 						partDone, _ = sjson.Set(partDone, "output_index", idx)
 						partDone, _ = sjson.Set(partDone, "content_index", 0)
 						partDone, _ = sjson.Set(partDone, "part.text", fullText)
@@ -256,7 +257,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						itemDone := `{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}`
 						itemDone, _ = sjson.Set(itemDone, "sequence_number", nextSeq())
 						itemDone, _ = sjson.Set(itemDone, "output_index", idx)
-						itemDone, _ = sjson.Set(itemDone, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
+						itemDone, _ = sjson.Set(itemDone, "item.id", "msg_"+st.ResponseID+"_"+strconv.Itoa(idx))
 						itemDone, _ = sjson.Set(itemDone, "item.content.0.text", fullText)
 						out = append(out, emitRespEvent("response.output_item.done", itemDone))
 						st.MsgItemDone[idx] = true
@@ -289,7 +290,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							o := `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`
 							o, _ = sjson.Set(o, "sequence_number", nextSeq())
 							o, _ = sjson.Set(o, "output_index", stIdx)
-							o, _ = sjson.Set(o, "item.id", fmt.Sprintf("fc_%s", effectiveCallID))
+							o, _ = sjson.Set(o, "item.id", "fc_"+effectiveCallID)
 							o, _ = sjson.Set(o, "item.call_id", effectiveCallID)
 							name := st.FuncNames[stIdx]
 							o, _ = sjson.Set(o, "item.name", name)
@@ -311,7 +312,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							if refCallID != "" {
 								ad := `{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`
 								ad, _ = sjson.Set(ad, "sequence_number", nextSeq())
-								ad, _ = sjson.Set(ad, "item_id", fmt.Sprintf("fc_%s", refCallID))
+								ad, _ = sjson.Set(ad, "item_id", "fc_"+refCallID)
 								ad, _ = sjson.Set(ad, "output_index", stIdx)
 								ad, _ = sjson.Set(ad, "delta", args.String())
 								out = append(out, emitRespEvent("response.function_call_arguments.delta", ad))
@@ -348,7 +349,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							}
 							done := `{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}`
 							done, _ = sjson.Set(done, "sequence_number", nextSeq())
-							done, _ = sjson.Set(done, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
+							done, _ = sjson.Set(done, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(i))
 							done, _ = sjson.Set(done, "output_index", i)
 							done, _ = sjson.Set(done, "content_index", 0)
 							done, _ = sjson.Set(done, "text", fullText)
@@ -356,7 +357,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 
 							partDone := `{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`
 							partDone, _ = sjson.Set(partDone, "sequence_number", nextSeq())
-							partDone, _ = sjson.Set(partDone, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
+							partDone, _ = sjson.Set(partDone, "item_id", "msg_"+st.ResponseID+"_"+strconv.Itoa(i))
 							partDone, _ = sjson.Set(partDone, "output_index", i)
 							partDone, _ = sjson.Set(partDone, "content_index", 0)
 							partDone, _ = sjson.Set(partDone, "part.text", fullText)
@@ -365,7 +366,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							itemDone := `{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}`
 							itemDone, _ = sjson.Set(itemDone, "sequence_number", nextSeq())
 							itemDone, _ = sjson.Set(itemDone, "output_index", i)
-							itemDone, _ = sjson.Set(itemDone, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
+							itemDone, _ = sjson.Set(itemDone, "item.id", "msg_"+st.ResponseID+"_"+strconv.Itoa(i))
 							itemDone, _ = sjson.Set(itemDone, "item.content.0.text", fullText)
 							out = append(out, emitRespEvent("response.output_item.done", itemDone))
 							st.MsgItemDone[i] = true
@@ -411,7 +412,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						}
 						fcDone := `{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`
 						fcDone, _ = sjson.Set(fcDone, "sequence_number", nextSeq())
-						fcDone, _ = sjson.Set(fcDone, "item_id", fmt.Sprintf("fc_%s", callID))
+						fcDone, _ = sjson.Set(fcDone, "item_id", "fc_"+callID)
 						fcDone, _ = sjson.Set(fcDone, "output_index", i)
 						fcDone, _ = sjson.Set(fcDone, "arguments", args)
 						out = append(out, emitRespEvent("response.function_call_arguments.done", fcDone))
@@ -419,7 +420,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						itemDone := `{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`
 						itemDone, _ = sjson.Set(itemDone, "sequence_number", nextSeq())
 						itemDone, _ = sjson.Set(itemDone, "output_index", i)
-						itemDone, _ = sjson.Set(itemDone, "item.id", fmt.Sprintf("fc_%s", callID))
+						itemDone, _ = sjson.Set(itemDone, "item.id", "fc_"+callID)
 						itemDone, _ = sjson.Set(itemDone, "item.arguments", args)
 						itemDone, _ = sjson.Set(itemDone, "item.call_id", callID)
 						itemDone, _ = sjson.Set(itemDone, "item.name", st.FuncNames[i])
@@ -523,7 +524,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							txt = b.String()
 						}
 						item := `{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`
-						item, _ = sjson.Set(item, "id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
+						item, _ = sjson.Set(item, "id", "msg_"+st.ResponseID+"_"+strconv.Itoa(i))
 						item, _ = sjson.Set(item, "content.0.text", txt)
 						outputsWrapper, _ = sjson.SetRaw(outputsWrapper, "arr.-1", item)
 					}
@@ -549,7 +550,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						callID := st.FuncCallIDs[i]
 						name := st.FuncNames[i]
 						item := `{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`
-						item, _ = sjson.Set(item, "id", fmt.Sprintf("fc_%s", callID))
+						item, _ = sjson.Set(item, "id", "fc_"+callID)
 						item, _ = sjson.Set(item, "arguments", args)
 						item, _ = sjson.Set(item, "call_id", callID)
 						item, _ = sjson.Set(item, "name", name)
@@ -706,7 +707,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Co
 				// Text message part
 				if c := msg.Get("content"); c.Exists() && c.String() != "" {
 					item := `{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`
-					item, _ = sjson.Set(item, "id", fmt.Sprintf("msg_%s_%d", id, int(choice.Get("index").Int())))
+					item, _ = sjson.Set(item, "id", "msg_"+id+"_"+strconv.Itoa(int(choice.Get("index").Int())))
 					item, _ = sjson.Set(item, "content.0.text", c.String())
 					outputsWrapper, _ = sjson.SetRaw(outputsWrapper, "arr.-1", item)
 				}
@@ -718,7 +719,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Co
 						name := tc.Get("function.name").String()
 						args := tc.Get("function.arguments").String()
 						item := `{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`
-						item, _ = sjson.Set(item, "id", fmt.Sprintf("fc_%s", callID))
+						item, _ = sjson.Set(item, "id", "fc_"+callID)
 						item, _ = sjson.Set(item, "arguments", args)
 						item, _ = sjson.Set(item, "call_id", callID)
 						item, _ = sjson.Set(item, "name", name)
