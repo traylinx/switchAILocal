@@ -406,7 +406,7 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 		url := fmt.Sprintf("%s/event", e.baseURL())
 		reqSSE, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to create SSE request: %w", err)}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to create SSE request: %w", err)})
 			close(readyChan)
 			return
 		}
@@ -415,7 +415,7 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 		client := &http.Client{Timeout: 0}
 		resp, err := client.Do(reqSSE)
 		if err != nil {
-			out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to connect to SSE: %w", err)}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("failed to connect to SSE: %w", err)})
 			close(readyChan)
 			return
 		}
@@ -425,9 +425,15 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 
 		reader := bufio.NewReader(resp.Body)
 
-		// Use goroutine with channels for proper context cancellation
+		// Use goroutine with channels for proper context cancellation.
+		// readerDone is closed when this outer goroutine returns for ANY reason
+		// (ctx cancel, SSE error, [DONE], or message.completed); the reader
+		// selects on it so it can never be stranded blocking on an unbuffered
+		// `lines <- line` send once nobody is reading.
 		lines := make(chan string)
 		errs := make(chan error, 1)
+		readerDone := make(chan struct{})
+		defer close(readerDone)
 
 		go func() {
 			defer close(lines)
@@ -435,25 +441,29 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err != io.EOF {
-						errs <- err
+						errs <- err // buffered (cap 1): never blocks
 					}
 					return
 				}
-				lines <- line
+				select {
+				case lines <- line:
+				case <-readerDone:
+					return
+				}
 			}
 		}()
 
 		for {
 			select {
 			case <-ctx.Done():
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")})
 				return
 			case err := <-errs:
-				out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("SSE read error: %w", err)}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("SSE read error: %w", err)})
 				return
 			case line, ok := <-lines:
 				if !ok {
-					out <- switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+					sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")})
 					return
 				}
 
@@ -487,7 +497,9 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 							},
 						}
 						b, _ := json.Marshal(chunk)
-						out <- switchailocalexecutor.StreamChunk{Payload: b}
+						if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: b}) {
+							return
+						}
 					}
 
 					if eventType == "message.completed" || eventType == "assistant.complete" {

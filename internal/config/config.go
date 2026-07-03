@@ -782,6 +782,19 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, []string{"remote-management", "secret-key"}, hashed)
 	}
 
+	// Fail closed: refuse to start a remotely-reachable management API with no secret.
+	// When remote-management.secret-key is empty and no MANAGEMENT_PASSWORD is set, the
+	// management middleware bypasses authentication entirely; combined with allow-remote
+	// this exposes config read/write and provider-key dump to any remote host. The
+	// localhost-only default (allow-remote: false) is unaffected. The "disabled" sentinel
+	// is not empty, so it stays permitted (it rejects remote callers via hash mismatch).
+	if cfg.RemoteManagement.AllowRemote && cfg.RemoteManagement.SecretKey == "" &&
+		strings.TrimSpace(os.Getenv("MANAGEMENT_PASSWORD")) == "" {
+		return nil, fmt.Errorf("remote-management.allow-remote is true but no secret is set: " +
+			"set remote-management.secret-key or the MANAGEMENT_PASSWORD environment variable, " +
+			"or disable allow-remote")
+	}
+
 	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
 	if cfg.RemoteManagement.PanelGitHubRepository == "" {
 		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository

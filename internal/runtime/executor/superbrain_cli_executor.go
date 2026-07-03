@@ -468,7 +468,12 @@ func (se *SuperbrainCLIExecutor) executeStreamWithMonitoring(ctx context.Context
 			if len(chunk.Payload) > 0 {
 				owCtx.RecordOutput(string(chunk.Payload))
 			}
-			wrappedCh <- chunk
+			// Client disconnect stops the downstream reader; bail out so the
+			// deferred StopMonitoring/close run. The base producer unwinds on
+			// the same ctx, so chunks drains itself.
+			if !sendStreamChunk(ctx, wrappedCh, chunk) {
+				return
+			}
 		}
 	}()
 

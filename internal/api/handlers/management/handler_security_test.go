@@ -109,3 +109,37 @@ remote-management:
 		})
 	}
 }
+
+// Resetting the secret must also drop allow-remote: an empty secret makes the
+// middleware bypass auth, so keeping remote access enabled would fail-open the
+// management API to any remote host (and the persisted config would then be
+// rejected by the fail-closed startup guard).
+func TestResetSecret_DisablesRemoteAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpFile, err := os.CreateTemp("", "config-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.WriteString("remote-management:\n  secret-key: somehash\n  allow-remote: true\n")
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	cfg := &config.Config{
+		RemoteManagement: config.RemoteManagement{
+			SecretKey:   "somehash",
+			AllowRemote: true,
+		},
+	}
+	h := NewHandler(cfg, tmpFile.Name(), nil)
+
+	r := gin.New()
+	r.POST("/reset", h.ResetSecret)
+	req, _ := http.NewRequest("POST", "/reset", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, cfg.RemoteManagement.SecretKey, "secret must be cleared")
+	assert.False(t, cfg.RemoteManagement.AllowRemote, "allow-remote must be dropped with the secret")
+}
