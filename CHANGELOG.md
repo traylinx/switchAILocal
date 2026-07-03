@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## v0.5.25 - 2026-07-03
+
+- Fix streaming goroutine/connection leak on client disconnect: all executor stream sends (and the wsrelay/AI Studio producer and Superbrain CLI monitor wrapper) are now context-guarded via `sendStreamChunk`, so producers unwind and close upstream bodies instead of blocking forever on abandoned channels.
+- Fix Claude→OpenAI tool-call translation: read `partial_json` (not `input_json`) from `input_json_delta` events, restoring streamed and non-streamed `tool_calls[].function.arguments` that were previously dropped.
+- Fail closed on remote management misconfiguration: refuse startup when `remote-management.allow-remote` is true with no `secret-key` and no `MANAGEMENT_PASSWORD`; management `ResetSecret` now also disables `allow-remote` so clearing the secret cannot fail-open a running instance.
+
+## v0.5.24 - 2026-06-21
+
+- Harden virtual model load balancing: weighted round-robin member selection with per-model/request-class state, virtual alias routing ahead of legacy provider inference, opaque lower-case backend IDs, and best-effort pool state persistence.
+
 ## v0.5.23 - 2026-06-07
 
 - Add strict OpenAI-compatible image namespace for third-party clients: `/openai/v1/images/generations` and `/openai/v1/images/edits` normalize gateway-native image payloads into OpenAI `data:[{url|b64_json}]` shape while preserving legacy `/v1/images/*` behavior.
