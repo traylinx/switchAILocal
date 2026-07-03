@@ -415,6 +415,12 @@ func (h *Handler) ResetSecret(c *gin.Context) {
 	}
 
 	h.cfg.RemoteManagement.SecretKey = ""
+	// An empty secret makes the middleware bypass auth entirely. InitializeSecret
+	// turns allow-remote on, so leaving it on here would fail-open the management
+	// API to remote hosts on the running process — and the persisted config would
+	// be rejected by the fail-closed guard on next startup. Reset means local-only
+	// until a new secret is configured.
+	h.cfg.RemoteManagement.AllowRemote = false
 
 	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})

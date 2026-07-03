@@ -128,32 +128,51 @@ func (m *Manager) Stream(ctx context.Context, provider string, req *HTTPRequest)
 	out := make(chan StreamEvent)
 	go func() {
 		defer close(out)
+		// The consumer (executor goroutine) stops reading when the request ctx
+		// is cancelled, so every send must be guarded on the same ctx or this
+		// goroutine strands forever on the unbuffered channel.
+		send := func(ev StreamEvent) bool {
+			select {
+			case out <- ev:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		for {
 			select {
 			case <-ctx.Done():
-				out <- StreamEvent{Err: ctx.Err()}
+				// ctx is already done here: deliver best-effort, never block.
+				select {
+				case out <- StreamEvent{Err: ctx.Err()}:
+				default:
+				}
 				return
 			case msg, ok := <-respCh:
 				if !ok {
-					out <- StreamEvent{Err: errors.New("wsrelay: stream closed")}
+					send(StreamEvent{Err: errors.New("wsrelay: stream closed")})
 					return
 				}
 				switch msg.Type {
 				case MessageTypeStreamStart:
 					resp := decodeResponse(msg.Payload)
-					out <- StreamEvent{Type: MessageTypeStreamStart, Status: resp.Status, Headers: resp.Headers}
+					if !send(StreamEvent{Type: MessageTypeStreamStart, Status: resp.Status, Headers: resp.Headers}) {
+						return
+					}
 				case MessageTypeStreamChunk:
 					chunk := decodeChunk(msg.Payload)
-					out <- StreamEvent{Type: MessageTypeStreamChunk, Payload: chunk}
+					if !send(StreamEvent{Type: MessageTypeStreamChunk, Payload: chunk}) {
+						return
+					}
 				case MessageTypeStreamEnd:
-					out <- StreamEvent{Type: MessageTypeStreamEnd}
+					send(StreamEvent{Type: MessageTypeStreamEnd})
 					return
 				case MessageTypeError:
-					out <- StreamEvent{Type: MessageTypeError, Err: decodeError(msg.Payload)}
+					send(StreamEvent{Type: MessageTypeError, Err: decodeError(msg.Payload)})
 					return
 				case MessageTypeHTTPResp:
 					resp := decodeResponse(msg.Payload)
-					out <- StreamEvent{Type: MessageTypeHTTPResp, Status: resp.Status, Headers: resp.Headers, Payload: resp.Body}
+					send(StreamEvent{Type: MessageTypeHTTPResp, Status: resp.Status, Headers: resp.Headers, Payload: resp.Body})
 					return
 				default:
 				}
