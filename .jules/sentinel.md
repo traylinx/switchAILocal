@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-07-03 - Prevent SSRF in Bridge Agent Communication
+**Vulnerability:** The `executeRemote` function constructed HTTP requests using raw `remoteHost` values without scheme validation, leading to potential SSRF (G704).
+**Learning:** Even internal or admin-defined URLs should enforce protocol strictness. Path string manipulation does not guarantee safe URL construction.
+**Prevention:** Always parse the URL string via `net/url` and explicitly check that `parsedURL.Scheme` equals "http" or "https" before making outbound network requests.
