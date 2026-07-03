@@ -220,12 +220,19 @@ func TestReloadConfigIfChanged_TriggersOnChangeAndSkipsUnchanged(t *testing.T) {
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	writeConfig := func(port int, allowRemote bool) {
+		rm := config.RemoteManagement{AllowRemote: allowRemote}
+		if allowRemote {
+			// allow-remote without a secret is rejected by the fail-closed guard
+			// in LoadConfigOptional; a valid remote config needs one. Keep the
+			// secret out of the allow-remote:false writes — a plaintext secret is
+			// bcrypt-hashed and written back to the file on load, which would
+			// defeat the unchanged-hash skip this test also asserts.
+			rm.SecretKey = "watcher-test-secret"
+		}
 		cfg := &config.Config{
-			Port:    port,
-			AuthDir: authDir,
-			RemoteManagement: config.RemoteManagement{
-				AllowRemote: allowRemote,
-			},
+			Port:             port,
+			AuthDir:          authDir,
+			RemoteManagement: rm,
 		}
 		data, err := yaml.Marshal(cfg)
 		if err != nil {
