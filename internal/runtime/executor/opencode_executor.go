@@ -425,9 +425,15 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 
 		reader := bufio.NewReader(resp.Body)
 
-		// Use goroutine with channels for proper context cancellation
+		// Use goroutine with channels for proper context cancellation.
+		// readerDone is closed when this outer goroutine returns for ANY reason
+		// (ctx cancel, SSE error, [DONE], or message.completed); the reader
+		// selects on it so it can never be stranded blocking on an unbuffered
+		// `lines <- line` send once nobody is reading.
 		lines := make(chan string)
 		errs := make(chan error, 1)
+		readerDone := make(chan struct{})
+		defer close(readerDone)
 
 		go func() {
 			defer close(lines)
@@ -435,11 +441,15 @@ func (e *OpenCodeExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err != io.EOF {
-						errs <- err
+						errs <- err // buffered (cap 1): never blocks
 					}
 					return
 				}
-				lines <- line
+				select {
+				case lines <- line:
+				case <-readerDone:
+					return
+				}
 			}
 		}()
 

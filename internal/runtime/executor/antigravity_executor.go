@@ -302,14 +302,17 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 					reporter.publish(ctx, detail)
 				}
 
-				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: payload}) {
-					return
-				}
+				// Plain sends here: this is the non-stream aggregation path. `out`
+				// is drained by the loop below in this same function, and `ctx` is
+				// the provider-timeout context. Guarding on ctx.Done() would let a
+				// fired timeout randomly drop the terminal error chunk, so the
+				// aggregator would return a truncated response as success.
+				out <- switchailocalexecutor.StreamChunk{Payload: payload}
 			}
 			if errScan := scanner.Err(); errScan != nil {
 				recordAPIResponseError(ctx, e.cfg, errScan)
 				reporter.publishFailure(ctx)
-				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
+				out <- switchailocalexecutor.StreamChunk{Err: errScan}
 			} else {
 				reporter.ensurePublished(ctx)
 			}

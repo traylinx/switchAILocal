@@ -6,6 +6,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -31,8 +32,12 @@ func TestLoadConfig_RejectsRemoteManagementWithoutSecret(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 	path := writeTempConfig(t, "remote-management:\n  allow-remote: true\n  secret-key: \"\"\n")
 
-	if _, err := LoadConfig(path); err == nil {
+	_, err := LoadConfig(path)
+	if err == nil {
 		t.Fatal("expected error for allow-remote with no secret, got nil")
+	}
+	if !strings.Contains(err.Error(), "allow-remote") {
+		t.Fatalf("expected the guard error to mention allow-remote, got: %v", err)
 	}
 }
 
