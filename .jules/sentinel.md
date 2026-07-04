@@ -357,3 +357,8 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+
+## 2026-07-04 - Prevent SSRF in LocalCLIExecutor's executeRemote
+**Vulnerability:** Server-Side Request Forgery (SSRF) in the `executeRemote` function, allowing requests to non-HTTP/HTTPS schemes (e.g., `file://`, `ftp://`).
+**Learning:** Dynamic URLs used in `http.NewRequest` without scheme validation can be manipulated into executing unauthorized actions against internal or local protocols.
+**Prevention:** Always parse dynamic URLs using `url.Parse` and explicitly enforce `http` or `https` scheme validation before initiating outbound network requests.
