@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE string concatenation in Claude streaming responses
+**Learning:** `fmt.Sprintf` is slower and allocates more memory compared to direct string concatenation (`+`) when constructing simple streaming events in hot paths like `ConvertGeminiResponseToClaudeStream`.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`) when building SSE payloads in high-throughput streaming response paths to reduce allocations and latency.
