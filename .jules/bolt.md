@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-07-05 - Pooling ResponseWriter Buffers in Hot Path
+**Learning:** The API gateway allocated a new `bytes.Buffer` for every non-streaming HTTP request to capture response bodies for logging. This resulted in significant memory allocation overhead in the hot path.
+**Action:** Always utilize `sync.Pool` for dynamically allocated buffers (like `bytes.Buffer`) within critical HTTP middleware paths to recycle memory, substantially reducing garbage collection pressure and per-request latency.
