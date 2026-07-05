@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-07-05 - Fix SSRF in remote CLI execution
+**Vulnerability:** SSRF via taint analysis due to direct string concatenation of `remoteHost` in `executeRemote` without validation.
+**Learning:** Trusting configuration or user-provided hostnames blindly can lead to protocol abuse (e.g. `file://`).
+**Prevention:** Always parse URLs and enforce strict protocol whitelists (e.g., `http` and `https`) before making outbound requests.
