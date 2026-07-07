@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-07-07 - Prevent SSRF in Remote Command Execution
+**Vulnerability:** The `REMOTE_COMMAND_HOST` environment variable in `cli_executor.go` was used directly to construct HTTP requests without validation (SSRF risk).
+**Learning:** External or user-configurable endpoints used in internal gateways must have strict protocol and format validation to prevent abuse like `file://` protocol access.
+**Prevention:** Always parse URLs and explicitly validate the scheme (e.g., enforcing `http` or `https`) before using them in HTTP clients.
