@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -129,6 +130,22 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		target := targetBase
+
+		// Validate that the target is a safe local route or trusted provider
+		parsedURL, err := url.Parse(target)
+		if err != nil {
+			http.Error(w, "Invalid redirect target", http.StatusBadRequest)
+			return
+		}
+
+		isLocalhost := parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1"
+		isRelative := !parsedURL.IsAbs() && strings.HasPrefix(target, "/") && !strings.HasPrefix(target, "//")
+
+		if !isLocalhost && !isRelative {
+			http.Error(w, "Invalid redirect target", http.StatusBadRequest)
+			return
+		}
+
 		if raw := r.URL.RawQuery; raw != "" {
 			if strings.Contains(target, "?") {
 				target = target + "&" + raw

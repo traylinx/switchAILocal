@@ -230,7 +230,7 @@ func TestNormalizeMultimodal_EmptyAndMalformed(t *testing.T) {
 		``,
 		`{}`,
 		`{"messages":[]}`,
-		`{"messages":[{"role":"user"}]}`,                          // no content
+		`{"messages":[{"role":"user"}]}`, // no content
 		`{"messages":[{"role":"user","content":null}]}`,           // null content
 		`{"messages":[{"role":"user","content":[{"type":"x"}]}]}`, // unknown type
 	}
