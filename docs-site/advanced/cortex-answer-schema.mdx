@@ -1,0 +1,80 @@
+---
+title: Cortex Answer Schema Plugin
+description: Interim compatibility shim that lets the Cortex grounded-answer pipeline run through small/local models
+icon: shield-check
+---
+
+**Cortex Answer Schema Steering** (`plugins/cortex-answer-schema`) is a minimal Lua
+plugin that makes the [Cortex](https://github.com/traylinx/cortex) grounded-answer
+pipeline work through switchAILocal when the terminal model is a small or local
+model such as `gpt-oss:20b` served by Ollama.
+
+It is an **interim proxy-side shim** for a defect on the Cortex side, not a general
+feature. It is inert for any request that is not a Cortex answer/grounding call.
+
+## The problem it solves
+
+Cortex's generic answer prompt asks the model to emit a `classification_code` per
+statement but never lists the allowed values, while the Cortex gateway hard-validates
+each code against a fixed enum:
+
+```
+SUPPORTED · PARTIALLY_SUPPORTED · CONFLICTING · ABSTAINED
+```
+
+Without the vocabulary the model guesses (`"FACT"`, `"factual"`, …), the gateway
+rejects the answer, and its regeneration loop retries until Cortex's 10-second
+client read-lease expires. The caller sees `AUTH_REVOKED` and gets no answer.
+
+## How it works
+
+The plugin's `on_request` hook uses `switchai.json_inject` to prepend a system
+message, gated on marker substrings so ordinary traffic is untouched:
+
+```lua
+function Plugin:on_request(req)
+    if not req.body then return req end
+    if string.find(req.body, "classification_code", 1, true) then
+        req.body = switchai.json_inject(req.body, STEER)   -- enum + abstention + Reasoning: low
+    elseif string.find(req.body, "material statement", 1, true)
+        or string.find(req.body, "Identify contradictions", 1, true) then
+        req.body = switchai.json_inject(req.body, LEAN)    -- Reasoning: low only
+    end
+    return req
+end
+```
+
+The injected steering does three things:
+
+1. **Supplies the four classification codes** the prompt omits, so validation passes
+   on the first attempt (no regeneration loop).
+2. **Corrects abstention** — abstain by returning `{"statements": []}`, because a
+   statement with an empty `citation_ids` list is schema-invalid (`min_length: 1`).
+3. **Sets `Reasoning: low`** — the harmony control token for `gpt-oss`. It drops
+   output from ~600 reasoning tokens (>10 s) to ~300 tokens (~3.5 s), keeping the
+   full generate + verify chain inside the client lease.
+
+## Measured effect
+
+Against a 6-document corpus, `Cortex → switchAILocal (ail-compound) → Ollama
+gpt-oss:20b`:
+
+| Case | Result | Latency (p50) |
+|---|---|---|
+| On-corpus question | Grounded answer, 1 citation | ~6.8 s |
+| Off-corpus question | Correct abstention | ~2.5 s |
+
+## Enable
+
+```yaml
+plugin:
+  enabled: true
+  enabled-plugins:
+    - "cortex-answer-schema"
+```
+
+## Lifecycle
+
+Once the Cortex answer prompt carries its own classification vocabulary, remove the
+plugin from `enabled-plugins`. See [Lua Plugins](/advanced/lua-plugins) and
+[Payload Injection](/advanced/payload-injection) for the underlying primitives.
