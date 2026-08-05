@@ -567,7 +567,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -638,8 +638,15 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	// Reject separators and the "." / ".." path elements: filepath.Base("..")
+	// is still ".." and would resolve to the parent of AuthDir. Requiring the
+	// .json suffix (as Upload/Download do) keeps this to auth leaf files.
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".json") {
+		c.JSON(400, gin.H{"error": "name must end with .json"})
 		return
 	}
 	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
