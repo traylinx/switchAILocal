@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## v0.5.26 - 2026-08-05
+
+- Add `cortex-answer-schema` Lua plugin: a tightly-scoped compatibility shim for the Cortex grounded-answer pipeline. It fires only on requests carrying a Cortex answer/grounding marker (`classification_code`, `material statement`, `Identify contradictions`) and injects the classification vocabulary the Cortex prompt omits (`SUPPORTED`/`PARTIALLY_SUPPORTED`/`CONFLICTING`/`ABSTAINED`), the correct abstention shape (`{"statements": []}`, since an empty `citation_ids` list is schema-invalid), and `Reasoning: low` so a small model's generate+verify chain fits inside Cortex's 10s read-lease. Inert for all other traffic; remove once the Cortex prompt carries its own vocabulary.
+
 ## v0.5.25 - 2026-07-03
 
 - Fix streaming goroutine/connection leak on client disconnect: all executor stream sends (and the wsrelay/AI Studio producer and Superbrain CLI monitor wrapper) are now context-guarded via `sendStreamChunk`, so producers unwind and close upstream bodies instead of blocking forever on abandoned channels.

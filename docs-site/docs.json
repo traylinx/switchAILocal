@@ -63,6 +63,7 @@
             "pages": [
               "advanced/payload-injection",
               "advanced/lua-plugins",
+              "advanced/cortex-answer-schema",
               "advanced/failover",
               "advanced/state-box"
             ]
