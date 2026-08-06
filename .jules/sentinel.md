@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-06 - Fix Overly Permissive File Permissions (G306)
+**Vulnerability:** Found overly permissive file write permissions (`0644`) on sensitive cache and registry files in `internal/discovery/cache.go` and `internal/intelligence/discovery/service.go`.
+**Learning:** Using `0644` for cache and registry files allows any user on the system to read potentially sensitive application state data.
+**Prevention:** Always restrict directory creation permissions to `0750` or less (`os.MkdirAll`) and file write permissions to `0600` or less (`os.WriteFile`) when handling sensitive internal caches and journals.
