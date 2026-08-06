@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-06 - Optimize string concatenation in hot paths
+**Learning:** Direct string concatenation (`+`) is substantially faster and avoids reflection overhead compared to `fmt.Sprintf` for simple string building in hot paths, leading to reduced CPU usage and allocations per operation.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation for high-frequency string building operations, especially in streaming event emitters.
