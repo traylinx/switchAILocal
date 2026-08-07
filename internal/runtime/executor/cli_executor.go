@@ -521,7 +521,20 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, must use http or https scheme")
 	}
 
-	rawurl := strings.TrimSuffix(remoteHost, "/") + "/run"
+	// Prevent Host spoofing and Open Redirect bypasses by ensuring the host isn't empty or manipulated.
+	if parsedURL.Host == "" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, missing host")
+	}
+
+	// Strictly construct the target URL from the parsed components to sanitize the input.
+	// This ensures that the user cannot inject arbitrary paths or query parameters that might
+	// bypass the intended endpoint or trigger unintended SSRF behavior on the remote host.
+	safeURL := url.URL{
+		Scheme: parsedURL.Scheme,
+		Host:   parsedURL.Host,
+		Path:   strings.TrimSuffix(parsedURL.Path, "/") + "/run",
+	}
+	rawurl := safeURL.String()
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", rawurl, bytes.NewReader(jsonBody))
 	if err != nil {
