@@ -11,11 +11,18 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
+
+var responseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -53,9 +60,12 @@ type ResponseWriterWrapper struct {
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+	buf := responseBodyPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           buf,
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -301,7 +311,15 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		return nil
 	}
 
-	return w.logRequest(finalStatusCode, w.cloneHeaders(), w.body.Bytes(), w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+	bodyBytes := w.body.Bytes()
+
+	err := w.logRequest(finalStatusCode, w.cloneHeaders(), bodyBytes, w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+
+	if w.body.Cap() <= 128*1024 {
+		responseBodyPool.Put(w.body)
+	}
+
+	return err
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
