@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-08 - Prevent SSRF via URL Component Reconstruction
+**Vulnerability:** Raw string concatenation used to build remote command URLs, allowing injection of paths or query parameters.
+**Learning:** Parsing with `net/url` and verifying the scheme is insufficient if the target URL is reconstructed via string concatenation, bypassing host and path checks.
+**Prevention:** Always reconstruct destination URLs safely using a strict `url.URL{}` struct literal, extracting only validated components.

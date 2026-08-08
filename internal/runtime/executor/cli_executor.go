@@ -520,8 +520,16 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, must use http or https scheme")
 	}
+	if parsedURL.Host == "" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, host cannot be empty")
+	}
 
-	rawurl := strings.TrimSuffix(remoteHost, "/") + "/run"
+	safeURL := url.URL{
+		Scheme: parsedURL.Scheme,
+		Host:   parsedURL.Host,
+		Path:   strings.TrimSuffix(parsedURL.Path, "/") + "/run",
+	}
+	rawurl := safeURL.String()
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", rawurl, bytes.NewReader(jsonBody))
 	if err != nil {
