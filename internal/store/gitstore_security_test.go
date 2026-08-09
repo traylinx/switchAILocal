@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,8 @@ func (*gitLegacyOnlyTokenStorage) SaveTokenToFile(string) error { return nil }
 
 const gitSecurityTestScheme = "m001-git-test"
 
+var registerGitSecurityTestTransport sync.Once
+
 type gitSecurityTestTransport struct{}
 
 func (gitSecurityTestTransport) NewSession(storage.Storer, *transport.Endpoint, transport.AuthMethod) (transport.Session, error) {
@@ -68,7 +71,9 @@ func (gitSecurityTestSession) Handshake(_ context.Context, service transport.Ser
 
 func newSecurityTestGitStore(t *testing.T) (*GitTokenStore, string) {
 	t.Helper()
-	transport.Register(gitSecurityTestScheme, gitSecurityTestTransport{})
+	registerGitSecurityTestTransport.Do(func() {
+		transport.Register(gitSecurityTestScheme, gitSecurityTestTransport{})
+	})
 	remoteURL := gitSecurityTestScheme + "://unit/repository"
 	repoDir := filepath.Join(t.TempDir(), "worktree")
 	repo, err := git.PlainInit(repoDir, false)
