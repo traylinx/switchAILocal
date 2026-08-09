@@ -6,17 +6,35 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/traylinx/switchAILocal/internal/authid"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
+
+const (
+	fileStoreAtomicTempPrefix = ".tmp-"
+	fileStoreTempMaxAge       = time.Hour
+)
+
+// TokenMarshaler serializes token storage without performing path-based I/O.
+// FileTokenStore requires this interface so credential writes remain confined
+// to its os.Root boundary. A nil byte slice means the storage intentionally has
+// no file payload, preserving no-op storage implementations.
+type TokenMarshaler interface {
+	MarshalToken() ([]byte, error)
+}
 
 // FileTokenStore persists token records and auth metadata using the filesystem as backing storage.
 type FileTokenStore struct {
@@ -43,80 +61,230 @@ func (s *FileTokenStore) Save(ctx context.Context, auth *switchailocalauth.Auth)
 	if auth == nil {
 		return "", fmt.Errorf("auth filestore: auth is nil")
 	}
-
-	path, err := s.resolveAuthPath(auth)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-	if path == "" {
-		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
-	}
-
-	if auth.Disabled {
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			return "", nil
-		}
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return "", fmt.Errorf("auth filestore: directory not configured")
+	}
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
 	}
+	if err := os.Chmod(baseDir, 0o700); err != nil {
+		return "", fmt.Errorf("auth filestore: secure root dir failed: %w", err)
+	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("auth filestore: open root failed: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err = sweepStaleStoreTemps(ctx, root, time.Now()); err != nil {
+		return "", err
+	}
 
+	id, err := s.resolveAuthID(auth, baseDir)
+	if err != nil {
+		return "", err
+	}
+	exists, err := validateStorePath(root, id)
+	if err != nil {
+		return "", err
+	}
+	if auth.Disabled && !exists {
+		return "", nil
+	}
+
+	filePath, err := authid.ToFSPath(baseDir, id)
+	if err != nil {
+		return "", fmt.Errorf("auth filestore: resolve auth id: %w", err)
+	}
+
+	var raw []byte
 	switch {
 	case auth.Storage != nil:
-		if err = auth.Storage.SaveTokenToFile(path); err != nil {
-			return "", err
+		marshaler, ok := auth.Storage.(TokenMarshaler)
+		if !ok {
+			return "", fmt.Errorf("auth filestore: token storage %T does not implement root-safe MarshalToken", auth.Storage)
+		}
+		if isNilTokenMarshaler(marshaler) {
+			return "", fmt.Errorf("auth filestore: token storage %T is nil", auth.Storage)
+		}
+		raw, err = marshaler.MarshalToken()
+		if err != nil {
+			return "", fmt.Errorf("auth filestore: marshal token: %w", err)
 		}
 	case auth.Metadata != nil:
-		raw, errMarshal := json.Marshal(auth.Metadata)
-		if errMarshal != nil {
-			return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
+		raw, err = json.Marshal(auth.Metadata)
+		if err != nil {
+			return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", err)
 		}
-		if existing, errRead := os.ReadFile(path); errRead == nil {
+		if existing, errRead := root.ReadFile(filepath.FromSlash(id)); errRead == nil {
 			// Use metadataEqualIgnoringTimestamps to skip writes when only timestamp fields change.
 			// This prevents the token refresh loop caused by timestamp/expired/expires_in changes.
 			if metadataEqualIgnoringTimestamps(existing, raw) {
-				return path, nil
+				setStoredAuthPath(auth, id, filePath)
+				return filePath, nil
 			}
 		} else if !os.IsNotExist(errRead) {
 			return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
-		}
-		tmp := path + ".tmp"
-		if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
-			return "", fmt.Errorf("auth filestore: write temp failed: %w", errWrite)
-		}
-		if errRename := os.Rename(tmp, path); errRename != nil {
-			return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
 		}
 	default:
 		return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
 	}
 
+	if raw != nil {
+		if err = writeRootFileAtomic(root, id, raw); err != nil {
+			return "", err
+		}
+	}
+
+	setStoredAuthPath(auth, id, filePath)
+
+	return filePath, nil
+}
+
+func setStoredAuthPath(auth *switchailocalauth.Auth, id, filePath string) {
 	if auth.Attributes == nil {
 		auth.Attributes = make(map[string]string)
 	}
-	auth.Attributes["path"] = path
-
+	auth.Attributes["path"] = filePath
 	if strings.TrimSpace(auth.FileName) == "" {
-		auth.FileName = auth.ID
+		auth.FileName = id
 	}
+}
 
-	return path, nil
+func isNilTokenMarshaler(marshaler TokenMarshaler) bool {
+	value := reflect.ValueOf(marshaler)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func writeRootFileAtomic(root *os.Root, id string, raw []byte) error {
+	rootID := filepath.FromSlash(id)
+	parent := filepath.Dir(rootID)
+	if parent != "." {
+		if err := root.MkdirAll(parent, 0o700); err != nil {
+			return fmt.Errorf("auth filestore: create parent dirs: %w", err)
+		}
+		if err := secureRootParents(root, parent); err != nil {
+			return err
+		}
+	}
+	tempName, err := randomStoreName(fileStoreAtomicTempPrefix)
+	if err != nil {
+		return fmt.Errorf("auth filestore: create temp name: %w", err)
+	}
+	tempID := filepath.Join(parent, tempName)
+	f, err := root.OpenFile(tempID, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("auth filestore: create temp file: %w", err)
+	}
+	removeTemp := true
+	defer func() {
+		_ = f.Close()
+		if removeTemp {
+			_ = root.Remove(tempID)
+		}
+	}()
+	if _, err = f.Write(raw); err != nil {
+		return fmt.Errorf("auth filestore: write temp file: %w", err)
+	}
+	if err = f.Sync(); err != nil {
+		return fmt.Errorf("auth filestore: sync temp file: %w", err)
+	}
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("auth filestore: close temp file: %w", err)
+	}
+	if err = root.Rename(tempID, rootID); err != nil {
+		return fmt.Errorf("auth filestore: replace auth file: %w", err)
+	}
+	removeTemp = false
+	return nil
+}
+
+func secureRootParents(root *os.Root, parent string) error {
+	current := ""
+	for _, segment := range strings.Split(filepath.ToSlash(parent), "/") {
+		if segment == "" || segment == "." {
+			continue
+		}
+		current = filepath.Join(current, filepath.FromSlash(segment))
+		if err := root.Chmod(current, 0o700); err != nil {
+			return fmt.Errorf("auth filestore: secure parent dir %q: %w", filepath.ToSlash(current), err)
+		}
+	}
+	return nil
+}
+
+func randomStoreName(prefix string) (string, error) {
+	var suffix [12]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(suffix[:]), nil
+}
+
+func sweepStaleStoreTemps(ctx context.Context, root *os.Root, now time.Time) error {
+	return fs.WalkDir(root.FS(), ".", func(id string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !isAtomicStoreTempName(entry.Name()) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if now.Sub(info.ModTime()) < fileStoreTempMaxAge {
+			return nil
+		}
+		if err = root.Remove(filepath.FromSlash(id)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("auth filestore: remove stale temp %q: %w", id, err)
+		}
+		return nil
+	})
+}
+
+func isAtomicStoreTempName(name string) bool {
+	if !strings.HasPrefix(name, fileStoreAtomicTempPrefix) || len(name) != len(fileStoreAtomicTempPrefix)+24 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(name, fileStoreAtomicTempPrefix))
+	return err == nil
 }
 
 // List enumerates all auth JSON files under the configured directory.
 func (s *FileTokenStore) List(ctx context.Context) ([]*switchailocalauth.Auth, error) {
-	dir := s.baseDirSnapshot()
-	if dir == "" {
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
 		return nil, fmt.Errorf("auth filestore: directory not configured")
 	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("auth filestore: open root failed: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
 	entries := make([]*switchailocalauth.Auth, 0)
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), ".", func(id string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if errContext := ctx.Err(); errContext != nil {
+			return errContext
 		}
 		if d.IsDir() {
 			return nil
@@ -124,8 +292,11 @@ func (s *FileTokenStore) List(ctx context.Context) ([]*switchailocalauth.Auth, e
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
 			return nil
 		}
-		auth, err := s.readAuthFile(path, dir)
-		if err != nil {
+		if errValidate := authid.Validate(id); errValidate != nil {
+			return nil
+		}
+		auth, errRead := s.readAuthFile(root, baseDir, id)
+		if errRead != nil {
 			return nil
 		}
 		if auth != nil {
@@ -141,33 +312,111 @@ func (s *FileTokenStore) List(ctx context.Context) ([]*switchailocalauth.Auth, e
 
 // Delete removes the auth file.
 func (s *FileTokenStore) Delete(ctx context.Context, id string) error {
-	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("auth filestore: id is empty")
 	}
-	path, err := s.resolveDeletePath(id)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return fmt.Errorf("auth filestore: directory not configured")
+	}
+	root, err := os.OpenRoot(baseDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("auth filestore: open root failed: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	canonicalID, err := canonicalStoreID(baseDir, id)
+	if err != nil {
+		return fmt.Errorf("auth filestore: invalid delete id: %w", err)
+	}
+
+	exists, err := validateStorePath(root, canonicalID)
 	if err != nil {
 		return err
 	}
-	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if !exists {
+		return nil
+	}
+	if err = root.Remove(filepath.FromSlash(canonicalID)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("auth filestore: delete failed: %w", err)
 	}
 	return nil
 }
 
-func (s *FileTokenStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
-		return id, nil
+func canonicalStoreID(baseDir, candidate string) (string, error) {
+	var id string
+	var err error
+	if filepath.IsAbs(candidate) {
+		id, err = authid.FromFSPath(baseDir, candidate)
+	} else {
+		if err = authid.Validate(candidate); err == nil {
+			_, err = authid.ToFSPath(baseDir, candidate)
+		}
+		id = candidate
 	}
-	dir := s.baseDirSnapshot()
-	if dir == "" {
-		return "", fmt.Errorf("auth filestore: directory not configured")
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(dir, id), nil
+	if !strings.HasSuffix(strings.ToLower(path.Base(id)), ".json") {
+		return "", fmt.Errorf("auth id must end in .json")
+	}
+	return id, nil
 }
 
-func (s *FileTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.Auth, error) {
-	data, err := os.ReadFile(path)
+func validateStorePath(root *os.Root, id string) (bool, error) {
+	parts := strings.Split(id, "/")
+	parent := "."
+	for i, segment := range parts {
+		entries, err := fs.ReadDir(root.FS(), parent)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("auth filestore: inspect %q: %w", parent, err)
+		}
+		candidateKey, err := authid.FoldKey(segment)
+		if err != nil {
+			return false, fmt.Errorf("auth filestore: invalid id segment %q: %w", segment, err)
+		}
+		var exact fs.DirEntry
+		for _, entry := range entries {
+			if entry.Name() == segment {
+				exact = entry
+				continue
+			}
+			existingKey, errKey := authid.FoldKey(entry.Name())
+			if errKey == nil && existingKey == candidateKey {
+				return false, fmt.Errorf("auth filestore: id segment %q collides with existing %q", segment, entry.Name())
+			}
+		}
+		if exact == nil {
+			return false, nil
+		}
+		if i < len(parts)-1 {
+			if exact.Type()&fs.ModeSymlink != 0 {
+				return false, fmt.Errorf("auth filestore: intermediate id segment %q is a symlink", segment)
+			}
+			if !exact.IsDir() {
+				return false, fmt.Errorf("auth filestore: intermediate id segment %q is not a directory", segment)
+			}
+			parent = path.Join(parent, segment)
+		}
+	}
+	return true, nil
+}
+
+func (s *FileTokenStore) readAuthFile(root *os.Root, baseDir, id string) (*switchailocalauth.Auth, error) {
+	rootID := filepath.FromSlash(id)
+	data, err := root.ReadFile(rootID)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
@@ -182,18 +431,21 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.
 	if provider == "" {
 		provider = "unknown"
 	}
-	info, err := os.Stat(path)
+	info, err := root.Stat(rootID)
 	if err != nil {
 		return nil, fmt.Errorf("stat file: %w", err)
 	}
-	id := s.idFor(path, baseDir)
+	filePath, err := authid.ToFSPath(baseDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("resolve file path: %w", err)
+	}
 	auth := &switchailocalauth.Auth{
 		ID:               id,
 		Provider:         provider,
 		FileName:         id,
 		Label:            s.labelFor(metadata),
 		Status:           switchailocalauth.StatusActive,
-		Attributes:       map[string]string{"path": path},
+		Attributes:       map[string]string{"path": filePath},
 		Metadata:         metadata,
 		CreatedAt:        info.ModTime(),
 		UpdatedAt:        info.ModTime(),
@@ -206,46 +458,34 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.
 	return auth, nil
 }
 
-func (s *FileTokenStore) idFor(path, baseDir string) string {
-	if baseDir == "" {
-		return path
-	}
-	rel, err := filepath.Rel(baseDir, path)
-	if err != nil {
-		return path
-	}
-	return rel
-}
-
-func (s *FileTokenStore) resolveAuthPath(auth *switchailocalauth.Auth) (string, error) {
+func (s *FileTokenStore) resolveAuthID(auth *switchailocalauth.Auth, baseDir string) (string, error) {
 	if auth == nil {
 		return "", fmt.Errorf("auth filestore: auth is nil")
 	}
 	if auth.Attributes != nil {
-		if p := strings.TrimSpace(auth.Attributes["path"]); p != "" {
-			return p, nil
+		if candidate := auth.Attributes["path"]; candidate != "" {
+			id, err := canonicalStoreID(baseDir, candidate)
+			if err != nil {
+				return "", fmt.Errorf("auth filestore: invalid path attribute: %w", err)
+			}
+			return id, nil
 		}
 	}
-	if fileName := strings.TrimSpace(auth.FileName); fileName != "" {
-		if filepath.IsAbs(fileName) {
-			return fileName, nil
+	if auth.FileName != "" {
+		id, err := canonicalStoreID(baseDir, auth.FileName)
+		if err != nil {
+			return "", fmt.Errorf("auth filestore: invalid file name: %w", err)
 		}
-		if dir := s.baseDirSnapshot(); dir != "" {
-			return filepath.Join(dir, fileName), nil
-		}
-		return fileName, nil
+		return id, nil
 	}
 	if auth.ID == "" {
 		return "", fmt.Errorf("auth filestore: missing id")
 	}
-	if filepath.IsAbs(auth.ID) {
-		return auth.ID, nil
+	id, err := canonicalStoreID(baseDir, auth.ID)
+	if err != nil {
+		return "", fmt.Errorf("auth filestore: invalid id: %w", err)
 	}
-	dir := s.baseDirSnapshot()
-	if dir == "" {
-		return "", fmt.Errorf("auth filestore: directory not configured")
-	}
-	return filepath.Join(dir, auth.ID), nil
+	return id, nil
 }
 
 func (s *FileTokenStore) labelFor(metadata map[string]any) string {

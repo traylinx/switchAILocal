@@ -5,6 +5,7 @@
 package iflow
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,16 @@ import (
 
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *IFlowTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "iflow"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // IFlowTokenStorage persists iFlow OAuth credentials alongside the derived API key.
 type IFlowTokenStorage struct {

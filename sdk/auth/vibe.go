@@ -37,6 +37,10 @@ type VibeTokenStorage struct {
 	AccessToken string `json:"access_token"`
 }
 
+func (s *VibeTokenStorage) MarshalToken() ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
+}
+
 func (s *VibeTokenStorage) SaveTokenToFile(path string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

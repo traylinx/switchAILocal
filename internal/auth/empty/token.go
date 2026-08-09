@@ -28,3 +28,9 @@ func (ts *EmptyStorage) SaveTokenToFile(_ string) error {
 	ts.Type = "empty"
 	return nil
 }
+
+// MarshalToken serializes the empty marker without performing path-based I/O.
+func (ts *EmptyStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "empty"
+	return nil, nil
+}
