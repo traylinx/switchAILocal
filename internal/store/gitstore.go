@@ -347,6 +347,7 @@ func (s *GitTokenStore) List(ctx context.Context) ([]*switchailocalauth.Auth, er
 
 // Delete removes the auth file.
 func (s *GitTokenStore) Delete(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("auth filestore: id is empty")
 	}
@@ -361,6 +362,9 @@ func (s *GitTokenStore) Delete(ctx context.Context, id string) error {
 	defer s.mu.Unlock()
 
 	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return fmt.Errorf("auth filestore: directory not configured")
+	}
 	root, err := os.OpenRoot(baseDir)
 	if err != nil {
 		return fmt.Errorf("auth filestore: open root: %w", err)
@@ -374,12 +378,16 @@ func (s *GitTokenStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return nil
-	}
 	filePath, err := authid.ToFSPath(baseDir, canonicalID)
 	if err != nil {
 		return err
+	}
+	if !exists {
+		rel, errRel := s.relativeToRepo(filePath)
+		if errRel != nil {
+			return errRel
+		}
+		return s.commitAndPushLocked(fmt.Sprintf("Delete auth %s", canonicalID), rel)
 	}
 	if err = root.Remove(filepath.FromSlash(canonicalID)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("auth filestore: delete failed: %w", err)
@@ -567,6 +575,12 @@ func (s *GitTokenStore) commitAndPushLocked(message string, relPaths ...string) 
 				// The path was never tracked (for example, an injected final
 				// symlink removed safely by Delete), so there is no git mutation
 				// to stage.
+				diskPath := filepath.Join(repoDir, filepath.FromSlash(rel))
+				if _, statErr := os.Lstat(diskPath); statErr == nil {
+					return fmt.Errorf("git token store: add %s: %w", rel, err)
+				} else if !os.IsNotExist(statErr) {
+					return fmt.Errorf("git token store: inspect %s: %w", rel, statErr)
+				}
 				continue
 			}
 			if errors.Is(err, os.ErrNotExist) {

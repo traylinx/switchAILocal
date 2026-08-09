@@ -151,6 +151,7 @@ func TestGitTokenStoreRejectsInvalidIDsWithoutMutation(t *testing.T) {
 		"provider\\outside.json",
 		"provider/\x00.json",
 		"provider/token.txt",
+		"provider/.json",
 	} {
 		t.Run(strings.ReplaceAll(id, "/", "_"), func(t *testing.T) {
 			store, authDir := newSecurityTestGitStore(t)
@@ -249,6 +250,68 @@ func TestGitTokenStoreFinalSymlinksStayContained(t *testing.T) {
 	}
 }
 
+func TestGitTokenStoreRejectsFinalDirectory(t *testing.T) {
+	store, authDir := newSecurityTestGitStore(t)
+	dirPath := filepath.Join(authDir, "provider", "token.json")
+	if err := os.MkdirAll(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(context.Background(), gitMetadataAuth("provider/token.json", "bad")); err == nil {
+		t.Fatal("Save over final directory unexpectedly succeeded")
+	}
+	if err := store.Delete(context.Background(), "provider/token.json"); err == nil {
+		t.Fatal("Delete of final directory unexpectedly succeeded")
+	}
+	if info, err := os.Stat(dirPath); err != nil || !info.IsDir() {
+		t.Fatalf("final directory mutated: %v, %v", info, err)
+	}
+}
+
+func TestGitTokenStoreDeleteCommitsAlreadyMissingTrackedFile(t *testing.T) {
+	store, authDir := newSecurityTestGitStore(t)
+	id := "provider/token.json"
+	filePath, err := store.Save(context.Background(), gitMetadataAuth(id, "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(filePath); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Delete(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := git.PlainOpen(filepath.Dir(authDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := worktree.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.IsClean() {
+		t.Fatalf("already-missing tracked Delete left dirty worktree: %s", status.String())
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tree.File(filepath.ToSlash(filepath.Join("auths", filepath.FromSlash(id)))); err == nil {
+		t.Fatal("already-missing credential remains in git HEAD")
+	}
+}
+
 func TestGitTokenStoreUsesRootSafeMarshalerAndPreservesEmptySemantics(t *testing.T) {
 	store, authDir := newSecurityTestGitStore(t)
 	want := []byte("{\"type\":\"recording\",\"token\":\"secret\"}\n")
@@ -276,6 +339,15 @@ func TestGitTokenStoreUsesRootSafeMarshalerAndPreservesEmptySemantics(t *testing
 	}
 	if _, err = os.Stat(filepath.Join(authDir, "provider", "legacy.json")); !os.IsNotExist(err) {
 		t.Fatalf("path-only storage left file: %v", err)
+	}
+	if _, err = store.Save(context.Background(), &switchailocalauth.Auth{
+		ID:      "provider/zero.json",
+		Storage: &gitRecordingTokenStorage{raw: []byte{}},
+	}); err == nil || !strings.Contains(err.Error(), "empty payload") {
+		t.Fatalf("empty non-nil payload error = %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(authDir, "provider", "zero.json")); !os.IsNotExist(err) {
+		t.Fatalf("empty non-nil payload left file: %v", err)
 	}
 
 	empty := &switchailocalauth.Auth{ID: "provider/empty.json", Storage: &emptyauth.EmptyStorage{}}

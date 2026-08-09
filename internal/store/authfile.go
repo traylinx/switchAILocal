@@ -57,7 +57,8 @@ func canonicalStoredAuthID(baseDir, candidate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasSuffix(strings.ToLower(path.Base(id)), ".json") {
+	base := path.Base(id)
+	if len(base) <= len(".json") || !strings.HasSuffix(strings.ToLower(base), ".json") {
 		return "", fmt.Errorf("auth id must end in .json")
 	}
 	return id, nil
@@ -100,6 +101,8 @@ func validateStoredAuthPath(root *os.Root, id string) (bool, error) {
 				return false, fmt.Errorf("auth store: intermediate id segment %q is not a directory", segment)
 			}
 			parent = path.Join(parent, segment)
+		} else if exact.IsDir() {
+			return false, fmt.Errorf("auth store: final id segment %q is a directory", segment)
 		}
 	}
 	return true, nil
@@ -126,6 +129,9 @@ func marshalStoredAuth(auth *switchailocalauth.Auth) ([]byte, error) {
 	raw, err := marshaler.MarshalToken()
 	if err != nil {
 		return nil, fmt.Errorf("auth store: marshal token: %w", err)
+	}
+	if raw != nil && len(raw) == 0 {
+		return nil, fmt.Errorf("auth store: token storage %T returned an empty payload", auth.Storage)
 	}
 	return raw, nil
 }
