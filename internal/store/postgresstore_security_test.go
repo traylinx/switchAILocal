@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -243,15 +244,55 @@ func TestPostgresStoreSaveUnchangedMetadataStillUpsertsDatabase(t *testing.T) {
 	store, mock, _ := newPostgresSecurityTestStore(t)
 	id := "provider/token.json"
 	expectPostgresSaveUpsert(mock, id)
-	if _, err := store.Save(context.Background(), postgresMetadataAuth(id, "test")); err != nil {
+	filePath, err := store.Save(context.Background(), postgresMetadataAuth(id, "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldModTime := time.Unix(1_700_000_000, 0)
+	if err = os.Chtimes(filePath, oldModTime, oldModTime); err != nil {
 		t.Fatal(err)
 	}
 	expectPostgresAuthMutationStart(mock)
 	expectPostgresAuthFoldScan(mock, id)
 	expectPostgresAuthUpsert(mock, id)
 	mock.ExpectCommit()
-	if _, err := store.Save(context.Background(), postgresMetadataAuth(id, "test")); err != nil {
+	if _, err = store.Save(context.Background(), postgresMetadataAuth(id, "test")); err != nil {
 		t.Fatal(err)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil || !info.ModTime().Equal(oldModTime) {
+		t.Fatalf("unchanged mirror was rewritten: %v, %v; want mtime %v", info, err, oldModTime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreSaveRepairsLooseUnchangedMirrorMode(t *testing.T) {
+	store, mock, _ := newPostgresSecurityTestStore(t)
+	id := "provider/token.json"
+	expectPostgresSaveUpsert(mock, id)
+	filePath, err := store.Save(context.Background(), postgresMetadataAuth(id, "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldModTime := time.Unix(1_700_000_000, 0)
+	if err = os.Chmod(filePath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(filePath, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+	expectPostgresAuthMutationStart(mock)
+	expectPostgresAuthFoldScan(mock, id)
+	expectPostgresAuthUpsert(mock, id)
+	mock.ExpectCommit()
+	if _, err = store.Save(context.Background(), postgresMetadataAuth(id, "test")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil || info.Mode().Perm() != 0o600 || info.ModTime().Equal(oldModTime) {
+		t.Fatalf("loose mirror was not repaired: %v, %v", info, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -317,6 +358,7 @@ func TestPostgresStoreRejectsDatabaseFoldCollisionWithoutMirrorMutation(t *testi
 		{name: "leaf case", existing: "github/alice.json", candidate: "github/Alice.json"},
 		{name: "directory case", existing: "GitHub/bob.json", candidate: "github/bob.json"},
 		{name: "unicode normalization", existing: "github/caf\u00e9.json", candidate: "github/cafe\u0301.json"},
+		{name: "legacy suffix", existing: "github/alice", candidate: "github/Alice.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, mock, authDir := newPostgresSecurityTestStore(t)
@@ -714,6 +756,21 @@ func TestPostgresStoreSymlinksStayContained(t *testing.T) {
 	if got, errRead := os.ReadFile(targetPath); errRead != nil || string(got) != string(targetBefore) {
 		t.Fatalf("contained symlink target changed: %q, %v", got, errRead)
 	}
+	danglingPath := filepath.Join(authDir, "provider", "dangling-storage.json")
+	requirePostgresSymlink(t, "missing-storage.json", danglingPath)
+	expectPostgresSaveUpsert(mock, "provider/dangling-storage.json")
+	if _, err = store.Save(context.Background(), &switchailocalauth.Auth{
+		ID:      "provider/dangling-storage.json",
+		Storage: &postgresRecordingTokenStorage{raw: []byte(`{"type":"storage"}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if info, errLstat := os.Lstat(danglingPath); errLstat != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("contained dangling symlink was not replaced: %v, %v", info, errLstat)
+	}
+	if _, err = os.Stat(filepath.Join(authDir, "provider", "missing-storage.json")); !os.IsNotExist(err) {
+		t.Fatalf("dangling target unexpectedly materialized: %v", err)
+	}
 
 	outFile := filepath.Join(outDir, "outside.json")
 	outBefore := []byte(`{"type":"outside"}`)
@@ -724,6 +781,16 @@ func TestPostgresStoreSymlinksStayContained(t *testing.T) {
 	requirePostgresSymlink(t, outFile, escapePath)
 	_, err = store.Save(context.Background(), postgresMetadataAuth("provider/escape.json", "bad"))
 	requirePostgresErrorContains(t, err, "inspect final symlink target")
+	storageEscapePath := filepath.Join(authDir, "provider", "storage-escape.json")
+	requirePostgresSymlink(t, outFile, storageEscapePath)
+	_, err = store.Save(context.Background(), &switchailocalauth.Auth{
+		ID:      "provider/storage-escape.json",
+		Storage: &postgresRecordingTokenStorage{raw: []byte(`{"type":"bad"}`)},
+	})
+	requirePostgresErrorContains(t, err, "inspect final symlink target")
+	if info, errLstat := os.Lstat(storageEscapePath); errLstat != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("storage-backed escaping symlink changed: %v, %v", info, errLstat)
+	}
 	expectPostgresDeleteMutation(mock, "provider/escape.json")
 	if err = store.Delete(context.Background(), "provider/escape.json"); err != nil {
 		t.Fatal(err)
@@ -907,13 +974,33 @@ func TestPostgresStoreListSkipsInvalidDatabaseIDs(t *testing.T) {
 		AddRow("../outside.json", []byte(`{"type":"bad"}`), now, now).
 		AddRow("/absolute.json", []byte(`{"type":"bad"}`), now, now).
 		AddRow("provider/token.txt", []byte(`{"type":"bad"}`), now, now)
-	mock.ExpectQuery(`SELECT id, content, created_at, updated_at FROM "auth_store" ORDER BY id`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT id, content, created_at, updated_at FROM "auth_store" ORDER BY id COLLATE "C"`).WillReturnRows(rows)
 	auths, err := store.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(auths) != 1 || auths[0].ID != "provider/token.json" || auths[0].Attributes["path"] != filepath.Join(authDir, "provider", "token.json") {
 		t.Fatalf("List() = %#v", auths)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreListSkipsPortableDatabaseAliases(t *testing.T) {
+	store, mock, _ := newPostgresSecurityTestStore(t)
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{"id", "content", "created_at", "updated_at"}).
+		AddRow("github/Alice.json", []byte(`{"type":"first"}`), now, now).
+		AddRow("github/alice.json", []byte(`{"type":"second"}`), now, now).
+		AddRow("provider/token.json", []byte(`{"type":"distinct"}`), now, now)
+	mock.ExpectQuery(`SELECT id, content, created_at, updated_at FROM "auth_store" ORDER BY id COLLATE "C"`).WillReturnRows(rows)
+	auths, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auths) != 2 || auths[0].ID != "github/Alice.json" || auths[1].ID != "provider/token.json" {
+		t.Fatalf("List portable aliases = %#v", auths)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -933,7 +1020,7 @@ func TestSyncAuthFromDatabaseSkipsInvalidDatabaseIDs(t *testing.T) {
 		AddRow("/absolute.json", `{"type":"bad"}`).
 		AddRow("provider/token.txt", `{"type":"bad"}`).
 		AddRow("provider//duplicate.json", `{"type":"bad"}`)
-	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id LIMIT 100`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id COLLATE "C" LIMIT 100`).WillReturnRows(rows)
 	if err := store.syncAuthFromDatabase(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -961,6 +1048,142 @@ func TestSyncAuthFromDatabaseSkipsInvalidDatabaseIDs(t *testing.T) {
 	}
 }
 
+func TestSyncAuthFromDatabaseSkipsPortableAliasesAndUnsafeLocalEntries(t *testing.T) {
+	store, mock, authDir := newPostgresSecurityTestStore(t)
+	rows := sqlmock.NewRows([]string{"id", "content"}).
+		AddRow("github/Alice.json", `{"type":"first"}`).
+		AddRow("github/alice.json", `{"type":"second"}`).
+		AddRow("provider/directory.json", `{"type":"parent"}`).
+		AddRow("provider/directory.json/child.json", `{"type":"unsafe"}`).
+		AddRow("provider/good.json", `{"type":"good"}`)
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id COLLATE "C" LIMIT 100`).WillReturnRows(rows)
+	if err := store.syncAuthFromDatabase(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{
+		"github/Alice.json",
+		"provider/directory.json",
+		"provider/good.json",
+	}
+	if files := postgresAuthTreeFiles(t, authDir); strings.Join(files, "\n") != strings.Join(wantFiles, "\n") {
+		t.Fatalf("sync alias/unsafe files = %v, want %v", files, wantFiles)
+	}
+	if got, err := os.ReadFile(filepath.Join(authDir, "github", "Alice.json")); err != nil || string(got) != `{"type":"first"}` {
+		t.Fatalf("first portable alias = %q, %v", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncAuthFromDatabaseAdvancesPastSkippedLastRowAcrossBatches(t *testing.T) {
+	store, mock, authDir := newPostgresSecurityTestStore(t)
+	firstBatch := sqlmock.NewRows([]string{"id", "content"})
+	for i := 0; i < 98; i++ {
+		id := fmt.Sprintf("auth/%03d.json", i)
+		firstBatch.AddRow(id, fmt.Sprintf(`{"type":"%03d"}`, i))
+	}
+	firstBatch.
+		AddRow("github/Alice.json", `{"type":"first"}`).
+		AddRow("github/alice.json", `{"type":"skipped"}`)
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id COLLATE "C" LIMIT 100`).
+		WillReturnRows(firstBatch)
+	secondBatch := sqlmock.NewRows([]string{"id", "content"}).
+		AddRow("provider/good.json", `{"type":"good"}`)
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" WHERE id COLLATE "C" > \$1 ORDER BY id COLLATE "C" LIMIT 100`).
+		WithArgs("github/alice.json").
+		WillReturnRows(secondBatch)
+	if err := store.syncAuthFromDatabase(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	files := postgresAuthTreeFiles(t, authDir)
+	if len(files) != 100 || files[98] != "github/Alice.json" || files[99] != "provider/good.json" {
+		t.Fatalf("cross-batch sync files = %v", files)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreMigratesLegacyAuthIDs(t *testing.T) {
+	store, mock, _ := newPostgresSecurityTestStore(t)
+	expectPostgresAuthMutationStart(mock)
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow("already.JSON").
+		AddRow("github/Alice.json").
+		AddRow("github/alice.json").
+		AddRow("legacy").
+		AddRow("nested/token.txt")
+	mock.ExpectQuery(`SELECT id FROM "auth_store" ORDER BY id COLLATE "C"`).WillReturnRows(rows)
+	mock.ExpectExec(`UPDATE "auth_store" SET id = \$1 WHERE id = \$2`).
+		WithArgs("legacy.json", "legacy").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE "auth_store" SET id = \$1 WHERE id = \$2`).
+		WithArgs("nested/token.txt.json", "nested/token.txt").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := store.migrateLegacyAuthIDs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreBootstrapMigratesLegacyIDsBeforeMirrorSync(t *testing.T) {
+	store, mock, authDir := newPostgresSecurityTestStore(t)
+	store.configPath = filepath.Join(store.spoolRoot, "config", "config.yaml")
+	legacyMirror := filepath.Join(authDir, "legacy")
+	if err := os.WriteFile(legacyMirror, []byte(`{"type":"legacy"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS "config_store"`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS "auth_store"`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectPostgresAuthMutationStart(mock)
+	mock.ExpectQuery(`SELECT id FROM "auth_store" ORDER BY id COLLATE "C"`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("legacy"))
+	mock.ExpectExec(`UPDATE "auth_store" SET id = \$1 WHERE id = \$2`).
+		WithArgs("legacy.json", "legacy").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT content FROM "config_store" WHERE id = \$1`).
+		WithArgs(defaultConfigKey).
+		WillReturnRows(sqlmock.NewRows([]string{"content"}).AddRow("service: test\n"))
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id COLLATE "C" LIMIT 100`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content"}).AddRow("legacy.json", `{"type":"legacy"}`))
+	if err := store.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyMirror); !os.IsNotExist(err) {
+		t.Fatalf("legacy mirror remains after bootstrap: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(authDir, "legacy.json")); err != nil || string(got) != `{"type":"legacy"}` {
+		t.Fatalf("migrated mirror = %q, %v", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreLegacyAuthIDMigrationRejectsPortableCollision(t *testing.T) {
+	store, mock, _ := newPostgresSecurityTestStore(t)
+	expectPostgresAuthMutationStart(mock)
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow("github/Alice").
+		AddRow("github/alice.json")
+	mock.ExpectQuery(`SELECT id FROM "auth_store" ORDER BY id COLLATE "C"`).WillReturnRows(rows)
+	mock.ExpectRollback()
+	err := store.migrateLegacyAuthIDs(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "migration conflict") {
+		t.Fatalf("legacy migration collision error = %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSyncAuthFromDatabaseReplacesSymlinkedRootWithoutTouchingTarget(t *testing.T) {
 	store, mock, authDir := newPostgresSecurityTestStore(t)
 	outDir := t.TempDir()
@@ -973,7 +1196,7 @@ func TestSyncAuthFromDatabaseReplacesSymlinkedRootWithoutTouchingTarget(t *testi
 	}
 	requirePostgresSymlink(t, outDir, authDir)
 	rows := sqlmock.NewRows([]string{"id", "content"}).AddRow("provider/token.json", `{"type":"valid"}`)
-	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id LIMIT 100`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT id, content FROM "auth_store" ORDER BY id COLLATE "C" LIMIT 100`).WillReturnRows(rows)
 	if err := store.syncAuthFromDatabase(context.Background()); err != nil {
 		t.Fatal(err)
 	}

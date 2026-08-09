@@ -162,6 +162,11 @@ func (s *PostgresStore) Bootstrap(ctx context.Context, exampleConfigPath string)
 	if err := s.EnsureSchema(ctx); err != nil {
 		return err
 	}
+	// Run the data migration only inside Bootstrap, where the following database-to-
+	// mirror sync removes any legacy-named credential files before rehydration.
+	if err := s.migrateLegacyAuthIDs(ctx); err != nil {
+		return err
+	}
 	if err := s.syncConfigFromDatabase(ctx, exampleConfigPath); err != nil {
 		return err
 	}
@@ -256,31 +261,29 @@ func (s *PostgresStore) Save(ctx context.Context, auth *switchailocalauth.Auth) 
 		return "", err
 	}
 	writeRequired := raw != nil
-	if auth.Metadata != nil && auth.Storage == nil {
-		rootID := filepath.FromSlash(id)
-		info, errLstat := root.Lstat(rootID)
-		switch {
-		case errLstat == nil && info.Mode()&os.ModeSymlink != 0:
-			// A contained final symlink is replaced as a link. An escaping link is
-			// rejected before the database mutation rather than followed or replaced.
-			if _, errStat := root.Stat(rootID); errStat != nil {
-				return "", fmt.Errorf("postgres store: inspect final symlink target: %w", errStat)
-			}
-			writeRequired = true
-		case errLstat == nil:
-			existing, errRead := root.ReadFile(rootID)
-			if errRead != nil {
-				return "", fmt.Errorf("postgres store: read existing metadata: %w", errRead)
-			}
-			writeRequired = !jsonEqual(existing, raw)
-		case !errors.Is(errLstat, fs.ErrNotExist):
-			return "", fmt.Errorf("postgres store: inspect existing metadata: %w", errLstat)
-		}
-	}
 	if raw == nil {
 		// EmptyStorage intentionally has no file or database representation.
 		setStoredAuthLocation(auth, id, filePath)
 		return filePath, nil
+	}
+	rootID := filepath.FromSlash(id)
+	info, errLstat := root.Lstat(rootID)
+	switch {
+	case errLstat == nil && info.Mode()&os.ModeSymlink != 0:
+		// A contained final symlink is replaced as a link. An escaping link is
+		// rejected before the database mutation rather than followed or replaced.
+		if _, errStat := root.Stat(rootID); errStat != nil && !errors.Is(errStat, fs.ErrNotExist) {
+			return "", fmt.Errorf("postgres store: inspect final symlink target: %w", errStat)
+		}
+		writeRequired = true
+	case auth.Metadata != nil && auth.Storage == nil && errLstat == nil:
+		existing, errRead := root.ReadFile(rootID)
+		if errRead != nil {
+			return "", fmt.Errorf("postgres store: read existing metadata: %w", errRead)
+		}
+		writeRequired = !jsonEqual(existing, raw) || info.Mode().Perm() != 0o600
+	case errLstat != nil && !errors.Is(errLstat, fs.ErrNotExist):
+		return "", fmt.Errorf("postgres store: inspect existing metadata: %w", errLstat)
 	}
 	if tx == nil {
 		tx, err = s.beginAuthMutation(ctx)
@@ -308,7 +311,7 @@ func (s *PostgresStore) Save(ctx context.Context, auth *switchailocalauth.Auth) 
 
 // List enumerates all auth records stored in PostgreSQL.
 func (s *PostgresStore) List(ctx context.Context) ([]*switchailocalauth.Auth, error) {
-	query := fmt.Sprintf("SELECT id, content, created_at, updated_at FROM %s ORDER BY id", s.fullTableName(s.cfg.AuthTable))
+	query := fmt.Sprintf(`SELECT id, content, created_at, updated_at FROM %s ORDER BY id COLLATE "C"`, s.fullTableName(s.cfg.AuthTable))
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: list auth: %w", err)
@@ -316,6 +319,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]*switchailocalauth.Auth, er
 	defer rows.Close()
 
 	auths := make([]*switchailocalauth.Auth, 0, 32)
+	seenFoldKeys := make(map[string]string)
 	for rows.Next() {
 		var (
 			id        string
@@ -339,6 +343,10 @@ func (s *PostgresStore) List(ctx context.Context) ([]*switchailocalauth.Auth, er
 		metadata := make(map[string]any)
 		if err = json.Unmarshal(payload, &metadata); err != nil {
 			log.WithError(err).Warnf("postgres store: skipping auth %s with invalid json", id)
+			continue
+		}
+		if errID = rememberStoredDatabaseAuthID(seenFoldKeys, canonicalID); errID != nil {
+			log.WithError(errID).Warnf("postgres store: skipping colliding auth id %s", id)
 			continue
 		}
 		provider := strings.TrimSpace(valueAsString(metadata["type"]))
@@ -533,6 +541,7 @@ func (s *PostgresStore) syncAuthFromDatabase(ctx context.Context) error {
 	const batchSize = 100
 	var lastID string
 	firstBatch := true
+	seenFoldKeys := make(map[string]string)
 
 	for {
 		var (
@@ -541,10 +550,10 @@ func (s *PostgresStore) syncAuthFromDatabase(ctx context.Context) error {
 		)
 
 		if firstBatch {
-			query := fmt.Sprintf("SELECT id, content FROM %s ORDER BY id LIMIT %d", s.fullTableName(s.cfg.AuthTable), batchSize)
+			query := fmt.Sprintf(`SELECT id, content FROM %s ORDER BY id COLLATE "C" LIMIT %d`, s.fullTableName(s.cfg.AuthTable), batchSize)
 			rows, err = s.db.QueryContext(ctx, query)
 		} else {
-			query := fmt.Sprintf("SELECT id, content FROM %s WHERE id > $1 ORDER BY id LIMIT %d", s.fullTableName(s.cfg.AuthTable), batchSize)
+			query := fmt.Sprintf(`SELECT id, content FROM %s WHERE id COLLATE "C" > $1 ORDER BY id COLLATE "C" LIMIT %d`, s.fullTableName(s.cfg.AuthTable), batchSize)
 			rows, err = s.db.QueryContext(ctx, query, lastID)
 		}
 
@@ -570,9 +579,13 @@ func (s *PostgresStore) syncAuthFromDatabase(ctx context.Context) error {
 				log.WithError(errID).Warnf("postgres store: skipping invalid auth id %s", id)
 				continue
 			}
+			if errID = rememberStoredDatabaseAuthID(seenFoldKeys, canonicalID); errID != nil {
+				log.WithError(errID).Warnf("postgres store: skipping colliding auth id %s", id)
+				continue
+			}
 			if _, err = validateStoredAuthPath(root, canonicalID); err != nil {
-				rows.Close()
-				return err
+				log.WithError(err).Warnf("postgres store: skipping unsafe auth mirror path %s", id)
+				continue
 			}
 			if err = writeStoredAuthAtomic(root, canonicalID, []byte(payload)); err != nil {
 				rows.Close()
@@ -626,6 +639,88 @@ func (s *PostgresStore) beginAuthMutation(ctx context.Context) (*sql.Tx, error) 
 	return tx, nil
 }
 
+func (s *PostgresStore) migrateLegacyAuthIDs(ctx context.Context) error {
+	tx, err := s.beginAuthMutation(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres store: begin legacy auth id migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	query := fmt.Sprintf(`SELECT id FROM %s ORDER BY id COLLATE "C"`, s.fullTableName(s.cfg.AuthTable))
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("postgres store: query legacy auth ids: %w", err)
+	}
+	ids := make([]string, 0, 32)
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("postgres store: scan legacy auth id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err = rows.Close(); err != nil {
+		return fmt.Errorf("postgres store: close legacy auth ids: %w", err)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("postgres store: iterate legacy auth ids: %w", err)
+	}
+
+	type migration struct{ from, to string }
+	migrations := make([]migration, 0)
+	type seenTarget struct {
+		source         string
+		needsMigration bool
+	}
+	seenTargetsByFoldKey := make(map[string]seenTarget, len(ids))
+	for _, id := range ids {
+		targetID, errID := canonicalStoredDatabaseAuthID(id)
+		needsMigration := errID != nil
+		if errID != nil {
+			targetID, errID = migratedLegacyAuthID(id)
+			if errID != nil {
+				log.WithError(errID).Warnf("postgres store: cannot migrate invalid database auth id %s", id)
+				continue
+			}
+		}
+		foldKey, errFold := authid.FoldKey(targetID)
+		if errFold != nil {
+			return fmt.Errorf("postgres store: fold migrated auth id %q: %w", targetID, errFold)
+		}
+		if existing, ok := seenTargetsByFoldKey[foldKey]; ok && existing.source != id {
+			if existing.needsMigration || needsMigration {
+				return fmt.Errorf("postgres store: legacy auth id migration conflict: %q and %q map to portable aliases", existing.source, id)
+			}
+			log.Warnf("postgres store: existing database auth ids %q and %q are portable aliases; read paths will keep the first C-collated row", existing.source, id)
+			continue
+		}
+		seenTargetsByFoldKey[foldKey] = seenTarget{source: id, needsMigration: needsMigration}
+		if targetID != id {
+			migrations = append(migrations, migration{from: id, to: targetID})
+		}
+	}
+
+	update := fmt.Sprintf("UPDATE %s SET id = $1 WHERE id = $2", s.fullTableName(s.cfg.AuthTable))
+	for _, item := range migrations {
+		result, errExec := tx.ExecContext(ctx, update, item.to, item.from)
+		if errExec != nil {
+			return fmt.Errorf("postgres store: migrate auth id %q to %q: %w", item.from, item.to, errExec)
+		}
+		affected, errAffected := result.RowsAffected()
+		if errAffected != nil {
+			return fmt.Errorf("postgres store: count migrated auth id %q: %w", item.from, errAffected)
+		}
+		if affected != 1 {
+			return fmt.Errorf("postgres store: migrate auth id %q affected %d rows, want 1", item.from, affected)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("postgres store: commit legacy auth id migration: %w", err)
+	}
+	return nil
+}
+
 func lockPostgresAuthMutations(ctx context.Context, exec DBExecutor) error {
 	// Row locks do not block inserts of a new, fold-colliding ID. A single
 	// transaction-scoped lock serializes the small global auth-ID set across replicas.
@@ -663,11 +758,15 @@ func (s *PostgresStore) ensureDatabaseAuthIDAvailable(ctx context.Context, exec 
 		if existingID == id {
 			continue
 		}
-		if _, errExisting := canonicalStoredDatabaseAuthID(existingID); errExisting != nil {
-			log.WithError(errExisting).Warnf("postgres store: ignoring invalid database auth id %s during collision check", existingID)
-			continue
+		existingCanonicalID, errExisting := canonicalStoredDatabaseAuthID(existingID)
+		if errExisting != nil {
+			existingCanonicalID, errExisting = migratedLegacyAuthID(existingID)
+			if errExisting != nil {
+				log.WithError(errExisting).Warnf("postgres store: ignoring invalid database auth id %s during collision check", existingID)
+				continue
+			}
 		}
-		existingKey, errFold := authid.FoldKey(existingID)
+		existingKey, errFold := authid.FoldKey(existingCanonicalID)
 		if errFold != nil {
 			log.WithError(errFold).Warnf("postgres store: cannot fold database auth id %s during collision check", existingID)
 			continue
@@ -767,6 +866,32 @@ func canonicalStoredDatabaseAuthID(id string) (string, error) {
 		return "", fmt.Errorf("auth id must end in .json")
 	}
 	return id, nil
+}
+
+func migratedLegacyAuthID(id string) (string, error) {
+	if filepath.IsAbs(id) {
+		return "", fmt.Errorf("postgres store: database auth id must be relative")
+	}
+	if err := authid.Validate(id); err != nil {
+		return "", err
+	}
+	base := filepath.Base(filepath.FromSlash(id))
+	if len(base) > len(".json") && strings.HasSuffix(strings.ToLower(base), ".json") {
+		return "", fmt.Errorf("postgres store: database auth id %q already has a JSON suffix", id)
+	}
+	return canonicalStoredDatabaseAuthID(id + ".json")
+}
+
+func rememberStoredDatabaseAuthID(seen map[string]string, id string) error {
+	key, err := authid.FoldKey(id)
+	if err != nil {
+		return err
+	}
+	if existingID, ok := seen[key]; ok && existingID != id {
+		return fmt.Errorf("database auth id %q collides with %q", id, existingID)
+	}
+	seen[key] = id
+	return nil
 }
 
 func (s *PostgresStore) fullTableName(name string) string {

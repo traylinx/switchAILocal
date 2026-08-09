@@ -47,7 +47,7 @@ func TestSyncAuthFromDatabase(t *testing.T) {
 		AddRow("auth1.json", `{"id":"auth1","type":"test"}`).
 		AddRow("nested/auth2.json", `{"id":"auth2","type":"test"}`)
 
-	query := fmt.Sprintf("SELECT id, content FROM %s ORDER BY id LIMIT 100", store.fullTableName(cfg.AuthTable))
+	query := fmt.Sprintf(`SELECT id, content FROM %s ORDER BY id COLLATE "C" LIMIT 100`, store.fullTableName(cfg.AuthTable))
 	mock.ExpectQuery(query).WillReturnRows(rows)
 
 	// Run sync
@@ -115,10 +115,10 @@ func TestSyncAuthFromDatabase_Pagination(t *testing.T) {
 	rows2 := sqlmock.NewRows([]string{"id", "content"}).
 		AddRow("auth101.json", `{"id":"auth101"}`)
 
-	query1 := fmt.Sprintf("SELECT id, content FROM %s ORDER BY id LIMIT 100", store.fullTableName(cfg.AuthTable))
+	query1 := fmt.Sprintf(`SELECT id, content FROM %s ORDER BY id COLLATE "C" LIMIT 100`, store.fullTableName(cfg.AuthTable))
 	mock.ExpectQuery(query1).WillReturnRows(rows1)
 
-	query2 := fmt.Sprintf("SELECT id, content FROM %s WHERE id > \\$1 ORDER BY id LIMIT 100", store.fullTableName(cfg.AuthTable))
+	query2 := fmt.Sprintf(`SELECT id, content FROM %s WHERE id COLLATE "C" > \$1 ORDER BY id COLLATE "C" LIMIT 100`, store.fullTableName(cfg.AuthTable))
 	// Note: sqlmock uses regex matching. $1 needs escaping in regex if it was interpreted as such, but ExpectQuery takes a string which is converted to regex?
 	// Wait, ExpectQuery expects a regex string. $ is end of line anchor. So $1 needs to be escaped.
 	// Actually sqlmock usually escapes the expected string for us? No, we provide regex.
