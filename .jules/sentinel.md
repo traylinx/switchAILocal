@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-09 - Open Redirect via string concatenation in redirect targets
+**Vulnerability:** Open redirect (G710) in `auth_files.go` due to raw string concatenation for URL reconstruction.
+**Learning:** Even if the base target is validated, appending raw query parameters via string concatenation can be bypassed or misinterpreted, leading to open redirects via taint analysis.
+**Prevention:** Always parse untrusted URLs and reconstruct them securely using a `url.URL` struct literal and its `.String()` method instead of manual string concatenation.

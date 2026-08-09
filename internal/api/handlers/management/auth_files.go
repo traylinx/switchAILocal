@@ -146,15 +146,29 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 			return
 		}
 
+		safeURL := url.URL{
+			Scheme:     parsedURL.Scheme,
+			Opaque:     parsedURL.Opaque,
+			User:       parsedURL.User,
+			Host:       parsedURL.Host,
+			Path:       parsedURL.Path,
+			RawPath:    parsedURL.RawPath,
+			ForceQuery: parsedURL.ForceQuery,
+			RawQuery:   parsedURL.RawQuery,
+			Fragment:   parsedURL.Fragment,
+		}
+
 		if raw := r.URL.RawQuery; raw != "" {
-			if strings.Contains(target, "?") {
-				target = target + "&" + raw
+			if safeURL.RawQuery == "" {
+				safeURL.RawQuery = raw
 			} else {
-				target = target + "?" + raw
+				safeURL.RawQuery = safeURL.RawQuery + "&" + raw
 			}
 		}
+
 		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, target, http.StatusFound)
+		// Validate remote host URL to prevent open redirect
+		http.Redirect(w, r, safeURL.String(), http.StatusFound)
 	})
 
 	srv := &http.Server{
