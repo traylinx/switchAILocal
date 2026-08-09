@@ -443,19 +443,27 @@ func (s *Service) Shutdown(ctx context.Context) error {
 }
 
 func (s *Service) ensureAuthDir() error {
+	created := false
 	info, err := os.Stat(s.cfg.AuthDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if mkErr := os.MkdirAll(s.cfg.AuthDir, 0o755); mkErr != nil {
+			if mkErr := os.MkdirAll(s.cfg.AuthDir, 0o700); mkErr != nil {
 				return fmt.Errorf("switchailocal: failed to create auth directory %s: %w", s.cfg.AuthDir, mkErr)
 			}
-			log.Infof("created missing auth directory: %s", s.cfg.AuthDir)
-			return nil
+			created = true
+		} else {
+			return fmt.Errorf("switchailocal: error checking auth directory %s: %w", s.cfg.AuthDir, err)
 		}
-		return fmt.Errorf("switchailocal: error checking auth directory %s: %w", s.cfg.AuthDir, err)
-	}
-	if !info.IsDir() {
+	} else if !info.IsDir() {
 		return fmt.Errorf("switchailocal: auth path exists but is not a directory: %s", s.cfg.AuthDir)
+	}
+	if err := os.Chmod(s.cfg.AuthDir, 0o700); err != nil {
+		// Credential files are independently forced to 0600. Do not make an
+		// operator-owned/NFS auth root a fatal startup regression.
+		log.WithError(err).WithField("path", s.cfg.AuthDir).Warn("failed to tighten auth directory")
+	}
+	if created {
+		log.Infof("created missing auth directory: %s", s.cfg.AuthDir)
 	}
 	return nil
 }

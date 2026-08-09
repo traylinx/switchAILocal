@@ -140,11 +140,14 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	}
 	defer srcFile.Close()
 
-	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	dstFile, err := openPrivateBackup(dst, perm)
 	if err != nil {
-		return fmt.Errorf("failed to create destination file: %w", err)
+		return err
 	}
 	defer dstFile.Close()
+	if err := dstFile.Truncate(0); err != nil {
+		return fmt.Errorf("failed to truncate destination file: %w", err)
+	}
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy file content: %w", err)
@@ -155,6 +158,31 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	}
 
 	return nil
+}
+
+func openPrivateBackup(dst string, perm os.FileMode) (*os.File, error) {
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE, perm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destination file: %w", err)
+	}
+	// OpenFile does not apply perm to an existing backup. Tighten it before
+	// truncation. If ownership prevents chmod, replace the stale backup inode;
+	// backup failures remain non-fatal to the primary SecureWrite operation.
+	if err = dstFile.Chmod(perm); err == nil {
+		return dstFile, nil
+	}
+	chmodErr := err
+	if closeErr := dstFile.Close(); closeErr != nil {
+		return nil, fmt.Errorf("failed to close insecure destination after chmod failure: %w", closeErr)
+	}
+	if removeErr := os.Remove(dst); removeErr != nil {
+		return nil, fmt.Errorf("failed to replace insecure destination after chmod failure (%v): %w", chmodErr, removeErr)
+	}
+	dstFile, err = os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recreate private destination after chmod failure (%v): %w", chmodErr, err)
+	}
+	return dstFile, nil
 }
 
 // syncDir syncs a directory to ensure metadata changes are persisted.

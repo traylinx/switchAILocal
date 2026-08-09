@@ -10,10 +10,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
 
@@ -68,22 +66,12 @@ func (s *VertexCredentialStorage) SaveTokenToFile(authFilePath string) error {
 	// Ensure we tag the file with the provider type.
 	s.Type = "vertex"
 
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0o700); err != nil {
-		return fmt.Errorf("vertex credential: create directory failed: %w", err)
-	}
-	f, err := os.Create(authFilePath)
+	data, err := s.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("vertex credential: create file failed: %w", err)
-	}
-	defer func() {
-		if errClose := f.Close(); errClose != nil {
-			log.Errorf("vertex credential: failed to close file: %v", errClose)
-		}
-	}()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err = enc.Encode(s); err != nil {
 		return fmt.Errorf("vertex credential: encode failed: %w", err)
+	}
+	if err = credentialfile.Write(authFilePath, data); err != nil {
+		return fmt.Errorf("vertex credential: %w", err)
 	}
 	return nil
 }

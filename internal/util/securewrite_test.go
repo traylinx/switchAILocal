@@ -131,6 +131,39 @@ func TestSecureWrite_BackupCreation(t *testing.T) {
 	}
 }
 
+func TestSecureWrite_TightensExistingBackupPermissions(t *testing.T) {
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, "registry.json")
+	t.Setenv("SWITCHAI_STATE_DIR", tempDir)
+	t.Setenv("SWITCHAI_READONLY", "0")
+	sb, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("NewStateBox() failed: %v", err)
+	}
+	requireData := []byte("current")
+	if err := SecureWrite(sb, testFile, requireData, nil); err != nil {
+		t.Fatalf("initial SecureWrite() failed: %v", err)
+	}
+	backupPath := testFile + ".bak"
+	if err := os.WriteFile(backupPath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("failed to create stale backup: %v", err)
+	}
+	if err := os.Chmod(backupPath, 0o644); err != nil {
+		t.Fatalf("failed to set stale backup mode: %v", err)
+	}
+
+	if err := SecureWrite(sb, testFile, []byte("next"), &SecureWriteOptions{CreateBackup: true, Permissions: 0o600}); err != nil {
+		t.Fatalf("replacement SecureWrite() failed: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatalf("failed to stat backup: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("backup mode = %04o, want 0600", got)
+	}
+}
+
 func TestSecureWrite_Permissions(t *testing.T) {
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "test.txt")
@@ -284,4 +317,3 @@ func TestSecureWrite_NilStateBox(t *testing.T) {
 		t.Errorf("Expected content %s, got %s", testData, content)
 	}
 }
-

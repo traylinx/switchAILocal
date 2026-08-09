@@ -95,7 +95,7 @@ func HardenPermissions(sb *StateBox) error {
 	}
 
 	rootPath := sb.RootPath()
-	
+
 	// Check if root path exists
 	if _, err := os.Stat(rootPath); os.IsNotExist(err) {
 		log.Warnf("permission hardening: State Box root does not exist: %s", rootPath)
@@ -132,11 +132,11 @@ func HardenPermissions(sb *StateBox) error {
 		if currentMode != requiredMode {
 			// Attempt to correct permissions
 			if chmodErr := os.Chmod(path, requiredMode); chmodErr != nil {
-				log.Warnf("permission hardening: failed to chmod %s from %04o to %04o: %v", 
+				log.Warnf("permission hardening: failed to chmod %s from %04o to %04o: %v",
 					path, currentMode, requiredMode, chmodErr)
 				errorCount++
 			} else {
-				log.Infof("security audit: corrected permissions for %s from %04o to %04o", 
+				log.Infof("security audit: corrected permissions for %s from %04o to %04o",
 					path, currentMode, requiredMode)
 				correctionCount++
 			}
@@ -164,8 +164,12 @@ func HardenPermissions(sb *StateBox) error {
 }
 
 // isSensitiveFile returns true if the file should have restricted permissions (0600).
-// Currently checks for .db and .json file extensions.
+// State Box backups contain the same data as their primaries and must follow
+// the same rule.
 func isSensitiveFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".db" || ext == ".json"
+	lowerPath := strings.ToLower(path)
+	return strings.HasSuffix(lowerPath, ".db") ||
+		strings.HasSuffix(lowerPath, ".json") ||
+		strings.HasSuffix(lowerPath, ".db.bak") ||
+		strings.HasSuffix(lowerPath, ".json.bak")
 }

@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/traylinx/switchAILocal/internal/autoroute"
+	"github.com/traylinx/switchAILocal/internal/privatefile"
 )
 
 const DefaultPanelGitHubRepository = "https://github.com/traylinx/switchAILocal-Management-Center"
@@ -1390,11 +1391,6 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	normalizeCollectionNodeStyles(original.Content[0])
 
 	// Write back.
-	f, err := os.Create(configFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -1406,8 +1402,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 		return err
 	}
 	data = NormalizeCommentIndentation(buf.Bytes())
-	_, err = f.Write(data)
-	return err
+	return privatefile.WriteAnchored(configFile, data)
 }
 
 func sanitizeConfigForPersist(cfg *Config) *Config {
@@ -1452,11 +1447,6 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 			node = next
 		}
 	}
-	f, err := os.Create(configFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -1468,8 +1458,7 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 		return err
 	}
 	data = NormalizeCommentIndentation(buf.Bytes())
-	_, err = f.Write(data)
-	return err
+	return privatefile.WriteAnchored(configFile, data)
 }
 
 // NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.

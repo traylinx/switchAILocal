@@ -11,11 +11,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
 
@@ -64,21 +62,11 @@ type GeminiTokenStorage struct {
 func (ts *GeminiTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "gemini"
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	f, err := os.Create(authFilePath)
+	data, err := ts.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
+		return fmt.Errorf("failed to encode token: %w", err)
 	}
-	defer func() {
-		if errClose := f.Close(); errClose != nil {
-			log.Errorf("failed to close file: %v", errClose)
-		}
-	}()
-
-	if err = json.NewEncoder(f).Encode(ts); err != nil {
+	if err = credentialfile.Write(authFilePath, data); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}
 	return nil
