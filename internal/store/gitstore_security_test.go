@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	emptyauth "github.com/traylinx/switchAILocal/internal/auth/empty"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
@@ -85,7 +86,14 @@ func gitHeadFileState(t *testing.T, authDir, id string) (plumbing.Hash, bool) {
 		t.Fatal(err)
 	}
 	_, err = tree.File(filepath.ToSlash(rel))
-	return head.Hash(), err == nil
+	if err == nil {
+		return head.Hash(), true
+	}
+	if errors.Is(err, object.ErrFileNotFound) {
+		return head.Hash(), false
+	}
+	t.Fatal(err)
+	return plumbing.ZeroHash, false
 }
 
 func TestGitTokenStoreNestedSaveListAndContainedAbsoluteDelete(t *testing.T) {
@@ -421,6 +429,15 @@ func TestGitTokenStoreUsesRootSafeMarshalerAndPreservesEmptySemantics(t *testing
 	if _, err = os.Stat(filepath.Join(authDir, "provider", "error.json")); !os.IsNotExist(err) {
 		t.Fatalf("marshal failure left file: %v", err)
 	}
+	providerEntries, err := os.ReadDir(filepath.Join(authDir, "provider"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range providerEntries {
+		if isStoredAuthTempName(entry.Name()) {
+			t.Fatalf("marshal failure left atomic temp %q", entry.Name())
+		}
+	}
 
 	empty := &switchailocalauth.Auth{ID: "provider/empty.json", Storage: &emptyauth.EmptyStorage{}}
 	emptyPath, err := store.Save(context.Background(), empty)
@@ -516,6 +533,10 @@ func TestGitTokenStoreOverwriteRestoresCredentialMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("overwritten credential mode = %o", info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil || !strings.Contains(string(raw), `"second"`) {
+		t.Fatalf("overwritten credential payload = %q, %v", raw, err)
 	}
 }
 
