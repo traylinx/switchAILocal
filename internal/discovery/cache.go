@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/privatefile"
 	"github.com/traylinx/switchAILocal/internal/registry"
 )
 
@@ -44,8 +46,15 @@ func NewCache(dir string) (*Cache, error) {
 		dir = filepath.Join(home, dir[1:])
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	// MkdirAll does not change an existing directory. Tighten the cache leaf so
+	// upgrades migrate previously created 0755 directories as well.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		// Files remain 0600 even when an operator-owned/NFS cache leaf cannot be
+		// chmodded. Preserve read/cache-miss behavior rather than failing startup.
+		log.WithError(err).WithField("path", dir).Warn("failed to tighten discovery cache directory")
 	}
 
 	return &Cache{
@@ -201,7 +210,9 @@ func (c *Cache) saveToDisk(entry *CacheEntry) error {
 	}
 
 	path := c.filePath(entry.ProviderID)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Atomic replacement is the permission migration: os.WriteFile with 0600
+	// would leave an already-existing 0644 cache file world-readable.
+	if err := privatefile.Write(path, data); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

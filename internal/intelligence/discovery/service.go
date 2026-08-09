@@ -9,7 +9,6 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,10 +45,10 @@ type ProviderStatus struct {
 
 // DiscoveryRegistry represents the complete discovery output.
 type DiscoveryRegistry struct {
-	Providers    []*ProviderStatus   `json:"providers"`
-	Models       []*DiscoveredModel  `json:"models"`
-	GeneratedAt  time.Time           `json:"generated_at"`
-	TotalModels  int                 `json:"total_models"`
+	Providers   []*ProviderStatus  `json:"providers"`
+	Models      []*DiscoveredModel `json:"models"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	TotalModels int                `json:"total_models"`
 }
 
 // Service wraps the existing discovery.Discoverer and provides
@@ -77,7 +76,7 @@ func NewService(cacheDir string, stateBox *util.StateBox) (*Service, error) {
 	// If StateBox is provided, use it for path resolution
 	if stateBox != nil {
 		cacheDir = stateBox.DiscoveryDir()
-		
+
 		// Ensure the discovery directory exists
 		if err := stateBox.EnsureDir(cacheDir); err != nil {
 			return nil, fmt.Errorf("failed to create discovery directory: %w", err)
@@ -93,10 +92,8 @@ func NewService(cacheDir string, stateBox *util.StateBox) (*Service, error) {
 			cacheDir = filepath.Join(home, cacheDir[1:])
 		}
 
-		// Create cache directory if it doesn't exist
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create cache directory: %w", err)
-		}
+		// NewDiscoverer creates and migrates this leaf to the canonical 0700
+		// discovery-cache mode. It never changes an arbitrary parent directory.
 	}
 
 	// Create the underlying discoverer
@@ -133,7 +130,7 @@ func (s *Service) DiscoverAll(ctx context.Context) error {
 
 	// Run discovery using the existing discoverer
 	providerModels, err := s.discoverer.DiscoverAll(discoveryCtx)
-	
+
 	// Even if there's an error, we may have partial results
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,7 +166,7 @@ func (s *Service) DiscoverAll(ctx context.Context) error {
 				IsAvailable:  true,
 				DiscoveredAt: now,
 			}
-			
+
 			// Analyze capabilities using the capability analyzer
 			// Convert to capability.DiscoveredModel for analysis
 			capModel := &capability.DiscoveredModel{
@@ -178,14 +175,14 @@ func (s *Service) DiscoverAll(ctx context.Context) error {
 				DisplayName: discovered.DisplayName,
 			}
 			discovered.Capabilities = s.analyzer.Analyze(capModel)
-			
+
 			s.models = append(s.models, discovered)
 			totalModels++
 		}
 	}
 
 	duration := time.Since(startTime)
-	log.Infof("Discovery completed in %v: %d models from %d providers", 
+	log.Infof("Discovery completed in %v: %d models from %d providers",
 		duration, totalModels, len(s.providers))
 
 	if err != nil {
@@ -297,12 +294,7 @@ func (s *Service) WriteRegistry(path string) error {
 		}
 	} else {
 		// Legacy write for backward compatibility
-		data, err := json.MarshalIndent(registry, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal registry: %w", err)
-		}
-
-		if err := os.WriteFile(path, data, 0644); err != nil {
+		if err := util.SecureWriteJSON(nil, path, registry, &util.SecureWriteOptions{Permissions: 0o600}); err != nil {
 			return fmt.Errorf("failed to write registry file: %w", err)
 		}
 	}
@@ -319,12 +311,12 @@ func (s *Service) WriteRegistry(path string) error {
 func (s *Service) SetStateBox(sb *util.StateBox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.stateBox = sb
 	if sb != nil {
 		// Update cacheDir to use StateBox discovery directory
 		s.cacheDir = sb.DiscoveryDir()
-		
+
 		// Ensure the discovery directory exists
 		if err := sb.EnsureDir(s.cacheDir); err != nil {
 			log.Warnf("Failed to create discovery directory: %v", err)

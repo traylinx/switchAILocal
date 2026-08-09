@@ -11,9 +11,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
 
@@ -59,19 +58,11 @@ type QwenTokenStorage struct {
 func (ts *QwenTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "qwen"
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	f, err := os.Create(authFilePath)
+	data, err := ts.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
+		return fmt.Errorf("failed to encode token: %w", err)
 	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if err = json.NewEncoder(f).Encode(ts); err != nil {
+	if err = credentialfile.Write(authFilePath, data); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}
 	return nil

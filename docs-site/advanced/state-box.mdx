@@ -42,6 +42,21 @@ The State Box is automatically initialized on first startup. No manual configura
 - Directories: `0700` (owner read/write/execute only)
 - Files: `0600` (owner read/write only)
 
+Discovery cache entries follow the same rule. A cache entry can persist a
+dynamically configured source URL, so it is treated as sensitive even when the
+current source has no credentials. Model registries contain only provider and
+capability inventory, but remain `0600` for one auditable State Box invariant.
+Discovery cache and registry writes prefer atomic replacement, which also
+migrates files created by older versions with broader permissions; filesystems
+that reject replacement fall back to chmod-before-truncate. Existing credential
+and config targets use chmod-before-truncate directly so bind mounts, symlinks,
+hard links, and read-only parent directories preserve inode semantics. The file
+owner must still be allowed to apply `0600`; cross-UID mounts that reject chmod
+fail closed rather than keeping a broad mode. Only the switchAILocal-owned
+discovery/auth leaf is tightened, on a best-effort basis; a custom parent keeps
+its operator-selected mode. These numeric mode guarantees apply to supported
+POSIX release targets (Linux and macOS).
+
 ## Configuration
 
 ### Environment Variables
