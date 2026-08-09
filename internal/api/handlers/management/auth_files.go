@@ -110,6 +110,28 @@ func isWebUIRequest(c *gin.Context) bool {
 	}
 }
 
+func buildCallbackRedirectTarget(targetBase, rawQuery string) (string, error) {
+	parsedURL, err := url.Parse(targetBase)
+	if err != nil {
+		return "", fmt.Errorf("invalid redirect target: %w", err)
+	}
+
+	isLocalhost := parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1"
+	isRelative := !parsedURL.IsAbs() && strings.HasPrefix(targetBase, "/") && !strings.HasPrefix(targetBase, "//")
+	if !isLocalhost && !isRelative {
+		return "", fmt.Errorf("invalid redirect target")
+	}
+
+	if rawQuery != "" {
+		if parsedURL.RawQuery == "" {
+			parsedURL.RawQuery = rawQuery
+		} else {
+			parsedURL.RawQuery += "&" + rawQuery
+		}
+	}
+	return parsedURL.String(), nil
+}
+
 func startCallbackForwarder(port int, provider, targetBase string) (*callbackForwarder, error) {
 	callbackForwardersMu.Lock()
 	prev := callbackForwarders[port]
@@ -129,29 +151,10 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		target := targetBase
-
-		// Validate that the target is a safe local route or trusted provider
-		parsedURL, err := url.Parse(target)
+		target, err := buildCallbackRedirectTarget(targetBase, r.URL.RawQuery)
 		if err != nil {
 			http.Error(w, "Invalid redirect target", http.StatusBadRequest)
 			return
-		}
-
-		isLocalhost := parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1"
-		isRelative := !parsedURL.IsAbs() && strings.HasPrefix(target, "/") && !strings.HasPrefix(target, "//")
-
-		if !isLocalhost && !isRelative {
-			http.Error(w, "Invalid redirect target", http.StatusBadRequest)
-			return
-		}
-
-		if raw := r.URL.RawQuery; raw != "" {
-			if strings.Contains(target, "?") {
-				target = target + "&" + raw
-			} else {
-				target = target + "?" + raw
-			}
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, target, http.StatusFound)
