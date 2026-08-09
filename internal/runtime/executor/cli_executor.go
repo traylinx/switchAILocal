@@ -515,15 +515,19 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 
 	jsonBody, _ := json.Marshal(reqBody)
 
-	// Validate remote host URL to prevent SSRF
+	// Reject non-HTTP schemes and host-less URLs before constructing /run.
 	parsedURL, err := url.Parse(remoteHost)
-	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, must use http or https scheme")
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, must use http or https scheme and include a host")
 	}
 
-	rawurl := strings.TrimSuffix(remoteHost, "/") + "/run"
+	targetURL := *parsedURL
+	targetURL.Path = strings.TrimSuffix(targetURL.Path, "/") + "/run"
+	targetURL.RawPath = ""
+	targetURL.Fragment = ""
+	targetURL.RawFragment = ""
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", rawurl, bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL.String(), bytes.NewReader(jsonBody))
 	if err != nil {
 		return switchailocalexecutor.Response{}, fmt.Errorf("failed to create bridge request: %w", err)
 	}

@@ -5,12 +5,98 @@
 package executor
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLocalCLIExecutor_ExecuteRemoteBuildsRunURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseURL   func(string) string
+		wantPath  string
+		wantQuery string
+		wantUser  string
+		wantPass  string
+	}{
+		{name: "bare host", baseURL: func(serverURL string) string { return serverURL }, wantPath: "/run"},
+		{name: "trailing slash", baseURL: func(serverURL string) string { return serverURL + "/" }, wantPath: "/run"},
+		{name: "base path", baseURL: func(serverURL string) string { return serverURL + "/api" }, wantPath: "/api/run"},
+		{name: "fragment", baseURL: func(serverURL string) string { return serverURL + "#ignored" }, wantPath: "/run"},
+		{name: "query", baseURL: func(serverURL string) string { return serverURL + "/?a=b" }, wantPath: "/run", wantQuery: "a=b"},
+		{
+			name: "userinfo",
+			baseURL: func(serverURL string) string {
+				return strings.Replace(serverURL, "http://", "http://user:pass@", 1)
+			},
+			wantPath: "/run",
+			wantUser: "user",
+			wantPass: "pass",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotQuery, gotUser, gotPass string
+			var gotBasicAuth bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotQuery = r.URL.RawQuery
+				gotUser, gotPass, gotBasicAuth = r.BasicAuth()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"stdout": "ok", "exit_code": 0})
+			}))
+			defer server.Close()
+
+			executor := &LocalCLIExecutor{}
+			_, err := executor.executeRemote(context.Background(), tc.baseURL(server.URL), "tool", []string{"arg"}, "test-model")
+			if err != nil {
+				t.Fatalf("executeRemote() error = %v", err)
+			}
+			if gotPath != tc.wantPath {
+				t.Errorf("request path = %q, want %q", gotPath, tc.wantPath)
+			}
+			if gotQuery != tc.wantQuery {
+				t.Errorf("request query = %q, want %q", gotQuery, tc.wantQuery)
+			}
+			if tc.wantUser == "" {
+				if gotBasicAuth {
+					t.Errorf("unexpected basic auth for base URL without userinfo")
+				}
+			} else if !gotBasicAuth || gotUser != tc.wantUser || gotPass != tc.wantPass {
+				t.Errorf("basic auth = (%q, %q, %v), want (%q, %q, true)", gotUser, gotPass, gotBasicAuth, tc.wantUser, tc.wantPass)
+			}
+		})
+	}
+}
+
+func TestLocalCLIExecutor_ExecuteRemoteRejectsInvalidURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteHost string
+	}{
+		{name: "opaque HTTP URL", remoteHost: "http:relative"},
+		{name: "HTTP URL without host", remoteHost: "http:///run"},
+		{name: "FTP scheme", remoteHost: "ftp://example.com"},
+		{name: "scheme relative URL", remoteHost: "//example.com/run"},
+		{name: "empty URL", remoteHost: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			executor := &LocalCLIExecutor{}
+			_, err := executor.executeRemote(context.Background(), tc.remoteHost, "tool", nil, "test-model")
+			if err == nil || !strings.Contains(err.Error(), "include a host") {
+				t.Fatalf("executeRemote() error = %v, want invalid-URL rejection", err)
+			}
+		})
+	}
+}
 
 func TestLocalCLIExecutor_ExtractContent(t *testing.T) {
 	tests := []struct {
