@@ -10,8 +10,12 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v6"
+	gitconfig "github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/protocol"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/storage"
 	emptyauth "github.com/traylinx/switchAILocal/internal/auth/empty"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
@@ -38,15 +42,44 @@ type gitLegacyOnlyTokenStorage struct{}
 
 func (*gitLegacyOnlyTokenStorage) SaveTokenToFile(string) error { return nil }
 
+const gitSecurityTestScheme = "m001-git-test"
+
+type gitSecurityTestTransport struct{}
+
+func (gitSecurityTestTransport) NewSession(storage.Storer, *transport.Endpoint, transport.AuthMethod) (transport.Session, error) {
+	return gitSecurityTestSession{}, nil
+}
+
+func (gitSecurityTestTransport) SupportedProtocols() []protocol.Version {
+	return []protocol.Version{protocol.V0}
+}
+
+type gitSecurityTestSession struct{}
+
+func (gitSecurityTestSession) Handshake(_ context.Context, service transport.Service, _ ...string) (transport.Connection, error) {
+	// Store security tests exercise local staging/commit behavior, not go-git's
+	// pack transport. Returning its no-change sentinel keeps -race coverage on
+	// our code without inheriting the pinned go-git pack stderr-buffer race.
+	if service == transport.UploadPackService {
+		return nil, transport.ErrEmptyRemoteRepository
+	}
+	return nil, git.NoErrAlreadyUpToDate
+}
+
 func newSecurityTestGitStore(t *testing.T) (*GitTokenStore, string) {
 	t.Helper()
-	remoteDir := filepath.Join(t.TempDir(), "remote.git")
-	if _, err := git.PlainInit(remoteDir, true); err != nil {
+	transport.Register(gitSecurityTestScheme, gitSecurityTestTransport{})
+	remoteURL := gitSecurityTestScheme + "://unit/repository"
+	repoDir := filepath.Join(t.TempDir(), "worktree")
+	repo, err := git.PlainInit(repoDir, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	repoDir := filepath.Join(t.TempDir(), "worktree")
+	if _, err = repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{remoteURL}}); err != nil {
+		t.Fatal(err)
+	}
 	authDir := filepath.Join(repoDir, "auths")
-	store := NewGitTokenStore(remoteDir, "", "")
+	store := NewGitTokenStore(remoteURL, "", "")
 	store.SetBaseDir(authDir)
 	if err := store.EnsureRepository(); err != nil {
 		t.Fatal(err)
