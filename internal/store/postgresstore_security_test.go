@@ -1183,6 +1183,8 @@ func TestPostgresStoreLegacyAuthIDMigrationQuarantinesPortableCollision(t *testi
 	store, mock, _ := newPostgresSecurityTestStore(t)
 	expectPostgresAuthMutationStart(mock)
 	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow("git/Bob").
+		AddRow("git/bob").
 		AddRow("github/Alice").
 		AddRow("github/alice.json").
 		AddRow("provider/safe")
