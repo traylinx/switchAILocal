@@ -72,3 +72,23 @@ If the verification ping succeeds, confirm to the user that their environment is
 2. **Always include the prefix.** `geminicli:gemini-2.5-pro` is correct. `gemini-2.5-pro` will fail if the user is expecting CLI-based access.
 3. **Shell Environment:** `set-provider.py` alters `~/.zshrc`. Remind the user they might need to restart their terminal if they intend to spawn new tabs, though Claude Code will pick up the `settings.json` changes immediately.
 4. **Use `auto` for Smart Routing:** If the user isn't sure which model to use, recommend the `auto` model ID to enable Cortex Auto-Routing.
+5. **On Makakoo VPS / Tytus droplets, prefer the stable `ail-*` aliases** (below) and **never hardcode upstream provider model IDs.** Calling a raw id the droplet doesn't serve (e.g. `kimi:kimi-k2.6`, `qwen3-embedding:0.6b`) returns `400 unknown provider for model` and silently degrades the feature.
+
+---
+
+## 🛰️ Stable Droplet AIL Aliases (Makakoo VPS / Tytus)
+
+One stable alias per modality. The upstream model behind an alias may change; the alias is the contract. Confirm what's live with `GET /v1/models` — an alias only appears if its provider key is set.
+
+| Alias            | Modality — endpoint                                       | Provider key needed |
+| ---------------- | --------------------------------------------------------- | ------------------- |
+| `ail-compound`   | chat + tools + vision — `/v1/chat/completions`            | MiniMax / Alibaba   |
+| `ail-vision`     | image understanding — `/v1/chat/completions` (`image_url`)| Alibaba / MiniMax   |
+| `ail-embed`      | embeddings — `/v1/embeddings`                             | local / Alibaba     |
+| `ail-transcribe` | speech→text (ASR) — `/v1/audio/transcriptions` (multipart)| Alibaba (qwen3-asr) |
+| `ail-speech`     | text→speech (TTS) — `/v1/audio/speech`                    | MiniMax             |
+| `ail-image`      | image generation — `/v1/images/generations`              | MiniMax             |
+
+`ail-compound` is the stable public contract. Current production pool is weighted 50/50 across `MiniMax-M3` and Alibaba `glm-5.2`, both declared with 1M context and thinking enabled for agent work. `ail-fast` may exist as a hidden compatibility alias on older clients, but do not teach new agents to depend on it.
+
+Point env knobs at aliases, never raw ids: `EMBEDDING_MODEL=ail-embed`, `OMNI_MODEL=ail-compound`, `AIL_TRANSCRIBE_MODEL=ail-transcribe`, `AIL_VISION_MODEL=ail-vision`.

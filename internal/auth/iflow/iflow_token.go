@@ -5,13 +5,23 @@
 package iflow
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *IFlowTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "iflow"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // IFlowTokenStorage persists iFlow OAuth credentials alongside the derived API key.
 type IFlowTokenStorage struct {
@@ -31,18 +41,12 @@ type IFlowTokenStorage struct {
 func (ts *IFlowTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "iflow"
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0o700); err != nil {
-		return fmt.Errorf("iflow token: create directory failed: %w", err)
-	}
-
-	f, err := os.Create(authFilePath)
+	data, err := ts.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("iflow token: create file failed: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if err = json.NewEncoder(f).Encode(ts); err != nil {
 		return fmt.Errorf("iflow token: encode token failed: %w", err)
+	}
+	if err = credentialfile.Write(authFilePath, data); err != nil {
+		return fmt.Errorf("iflow token: %w", err)
 	}
 	return nil
 }

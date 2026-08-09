@@ -22,6 +22,17 @@ func TestValidateVirtualModels(t *testing.T) {
 	}
 }
 
+func TestValidateVirtualModelsAcceptsOpaqueProviderIDs(t *testing.T) {
+	cfg := baseConfigForVirtualModels()
+	cfg.VirtualModels = map[string]VirtualModelConfig{"ail-compound": {Expose: true, Members: []VirtualModelMemberConfig{
+		{ID: "backend-a", Provider: "opaque-provider-a", Model: "native-model-a", Weight: 3, Enabled: vmBool(true)},
+		{ID: "backend-b", Provider: "opaque-provider-b", Model: "native-model-b", Weight: 2, Enabled: vmBool(true)},
+	}}}
+	if err := cfg.ValidateVirtualModels(); err != nil {
+		t.Fatalf("opaque providers should be accepted: %v", err)
+	}
+}
+
 func TestValidateVirtualModelsRejectsBadConfig(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -30,8 +41,8 @@ func TestValidateVirtualModelsRejectsBadConfig(t *testing.T) {
 		{"duplicate", func(c *Config) {
 			c.VirtualModels = map[string]VirtualModelConfig{"ail-compound": {Expose: true, Members: []VirtualModelMemberConfig{{ID: "x", Provider: "minimax", Model: "a"}, {ID: "x", Provider: "deepseek", Model: "b"}}}}
 		}},
-		{"unknown provider", func(c *Config) {
-			c.VirtualModels = map[string]VirtualModelConfig{"ail-compound": {Expose: true, Members: []VirtualModelMemberConfig{{ID: "x", Provider: "kimi", Model: "k"}}}}
+		{"missing provider", func(c *Config) {
+			c.VirtualModels = map[string]VirtualModelConfig{"ail-compound": {Expose: true, Members: []VirtualModelMemberConfig{{ID: "x", Model: "k"}}}}
 		}},
 		{"bad weight", func(c *Config) {
 			c.VirtualModels = map[string]VirtualModelConfig{"ail-compound": {Expose: true, Members: []VirtualModelMemberConfig{{ID: "x", Provider: "minimax", Model: "m", Weight: -1}}}}

@@ -707,7 +707,14 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 					}
 					m.MarkResult(streamCtx, Result{AuthID: streamAuth.ID, Provider: streamProvider, Model: routeModel, Success: false, Error: rerr})
 				}
-				out <- chunk
+				// Abort forwarding if the client disconnected; otherwise this send
+				// blocks forever on the downstream channel and stalls the upstream
+				// producer behind it (goroutine + connection leak).
+				select {
+				case out <- chunk:
+				case <-streamCtx.Done():
+					return
+				}
 			}
 			if !failed {
 				m.MarkResult(streamCtx, Result{AuthID: streamAuth.ID, Provider: streamProvider, Model: routeModel, Success: true})

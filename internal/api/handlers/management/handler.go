@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/buildinfo"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/usage"
-	"github.com/traylinx/switchAILocal/internal/autoroute"
 	sdkAuth "github.com/traylinx/switchAILocal/sdk/auth"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	"golang.org/x/crypto/bcrypt"
@@ -320,7 +320,7 @@ func (h *Handler) GetSetupStatus(c *gin.Context) {
 	if h.cfg != nil {
 		secretHash = h.cfg.RemoteManagement.SecretKey
 	}
-	
+
 	isConfigured := secretHash != "" || h.envSecret != ""
 	authDisabled := false
 
@@ -415,6 +415,12 @@ func (h *Handler) ResetSecret(c *gin.Context) {
 	}
 
 	h.cfg.RemoteManagement.SecretKey = ""
+	// An empty secret makes the middleware bypass auth entirely. InitializeSecret
+	// turns allow-remote on, so leaving it on here would fail-open the management
+	// API to remote hosts on the running process — and the persisted config would
+	// be rejected by the fail-closed guard on next startup. Reset means local-only
+	// until a new secret is configured.
+	h.cfg.RemoteManagement.AllowRemote = false
 
 	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})

@@ -7,14 +7,31 @@
 package vertex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (s *VertexCredentialStorage) MarshalToken() ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("vertex credential: storage is nil")
+	}
+	if s.ServiceAccount == nil {
+		return nil, fmt.Errorf("vertex credential: service account content is empty")
+	}
+	s.Type = "vertex"
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // VertexCredentialStorage stores the service account JSON for Vertex AI access.
 // The content is persisted verbatim under the "service_account" key, together with
@@ -49,22 +66,12 @@ func (s *VertexCredentialStorage) SaveTokenToFile(authFilePath string) error {
 	// Ensure we tag the file with the provider type.
 	s.Type = "vertex"
 
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0o700); err != nil {
-		return fmt.Errorf("vertex credential: create directory failed: %w", err)
-	}
-	f, err := os.Create(authFilePath)
+	data, err := s.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("vertex credential: create file failed: %w", err)
-	}
-	defer func() {
-		if errClose := f.Close(); errClose != nil {
-			log.Errorf("vertex credential: failed to close file: %v", errClose)
-		}
-	}()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err = enc.Encode(s); err != nil {
 		return fmt.Errorf("vertex credential: encode failed: %w", err)
+	}
+	if err = credentialfile.Write(authFilePath, data); err != nil {
+		return fmt.Errorf("vertex credential: %w", err)
 	}
 	return nil
 }

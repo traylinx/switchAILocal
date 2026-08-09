@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/traylinx/switchAILocal/internal/autoroute"
+	"github.com/traylinx/switchAILocal/internal/privatefile"
 )
 
 const DefaultPanelGitHubRepository = "https://github.com/traylinx/switchAILocal-Management-Center"
@@ -782,6 +783,19 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, []string{"remote-management", "secret-key"}, hashed)
 	}
 
+	// Fail closed: refuse to start a remotely-reachable management API with no secret.
+	// When remote-management.secret-key is empty and no MANAGEMENT_PASSWORD is set, the
+	// management middleware bypasses authentication entirely; combined with allow-remote
+	// this exposes config read/write and provider-key dump to any remote host. The
+	// localhost-only default (allow-remote: false) is unaffected. The "disabled" sentinel
+	// is not empty, so it stays permitted (it rejects remote callers via hash mismatch).
+	if cfg.RemoteManagement.AllowRemote && cfg.RemoteManagement.SecretKey == "" &&
+		strings.TrimSpace(os.Getenv("MANAGEMENT_PASSWORD")) == "" {
+		return nil, fmt.Errorf("remote-management.allow-remote is true but no secret is set: " +
+			"set remote-management.secret-key or the MANAGEMENT_PASSWORD environment variable, " +
+			"or disable allow-remote")
+	}
+
 	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
 	if cfg.RemoteManagement.PanelGitHubRepository == "" {
 		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
@@ -957,36 +971,6 @@ func (cfg *Config) ValidateVirtualModels() error {
 		return nil
 	}
 
-	knownProviders := make(map[string]struct{})
-	for i := range cfg.OpenAICompatibility {
-		name := strings.ToLower(strings.TrimSpace(cfg.OpenAICompatibility[i].Name))
-		if name != "" {
-			knownProviders[name] = struct{}{}
-		}
-	}
-	if len(cfg.SwitchAIKey) > 0 {
-		knownProviders["switchai"] = struct{}{}
-	}
-	if len(cfg.GeminiKey) > 0 {
-		knownProviders["gemini"] = struct{}{}
-	}
-	if len(cfg.ClaudeKey) > 0 {
-		knownProviders["claude"] = struct{}{}
-	}
-	if len(cfg.CodexKey) > 0 {
-		knownProviders["codex"] = struct{}{}
-	}
-	if len(cfg.VertexCompatAPIKey) > 0 {
-		knownProviders["vertex"] = struct{}{}
-		knownProviders["vertex-compat"] = struct{}{}
-	}
-	if cfg.Ollama.Enabled {
-		knownProviders["ollama"] = struct{}{}
-	}
-	if cfg.LMStudio.Enabled {
-		knownProviders["lmstudio"] = struct{}{}
-	}
-
 	normalized := make(map[string]VirtualModelConfig, len(cfg.SDKConfig.VirtualModels))
 	for rawID, pool := range cfg.SDKConfig.VirtualModels {
 		poolID := strings.TrimSpace(rawID)
@@ -1023,9 +1007,10 @@ func (cfg *Config) ValidateVirtualModels() error {
 			if member.Provider == "" {
 				return fmt.Errorf("virtual-models.%s member %s missing provider", poolID, member.ID)
 			}
-			if _, ok := knownProviders[member.Provider]; !ok && len(knownProviders) > 0 {
-				return fmt.Errorf("virtual-models.%s member %s references unknown provider %q", poolID, member.ID, member.Provider)
-			}
+			// Provider identifiers are lower-case opaque backend IDs for virtual
+			// pools. They may be supplied by runtime/provider plugins, so
+			// validation only enforces shape here and leaves resolution to
+			// request time.
 			if member.Model == "" {
 				return fmt.Errorf("virtual-models.%s member %s missing model", poolID, member.ID)
 			}
@@ -1406,11 +1391,6 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	normalizeCollectionNodeStyles(original.Content[0])
 
 	// Write back.
-	f, err := os.Create(configFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -1422,8 +1402,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 		return err
 	}
 	data = NormalizeCommentIndentation(buf.Bytes())
-	_, err = f.Write(data)
-	return err
+	return privatefile.WriteAnchored(configFile, data)
 }
 
 func sanitizeConfigForPersist(cfg *Config) *Config {
@@ -1468,11 +1447,6 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 			node = next
 		}
 	}
-	f, err := os.Create(configFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -1484,8 +1458,7 @@ func SaveConfigPreserveCommentsUpdateNestedScalar(configFile string, path []stri
 		return err
 	}
 	data = NormalizeCommentIndentation(buf.Bytes())
-	_, err = f.Write(data)
-	return err
+	return privatefile.WriteAnchored(configFile, data)
 }
 
 // NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.

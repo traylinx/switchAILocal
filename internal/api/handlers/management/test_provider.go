@@ -5,7 +5,6 @@
 package management
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -99,9 +98,19 @@ func (h *Handler) testLocalProvider(c *gin.Context, providerID string, config ma
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_config", "message": "Base URL not provided"})
 		return
 	}
+	parsedBaseURL, err := parseProviderHTTPURL(baseURL, "base-url")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+		return
+	}
 
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(baseURL)
+	client := providerHTTPClient(3*time.Second, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, parsedBaseURL.String(), nil)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+		return
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "error",
@@ -129,6 +138,29 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 	baseURL, _ := config["base-url"].(string)
 	proxyURL, _ := config["proxy-url"].(string)
 	modelsURL, _ := config["models-url"].(string)
+	var err error
+	var parsedBaseURL, parsedModelsURL, parsedProxyURL *url.URL
+	if baseURL != "" {
+		parsedBaseURL, err = parseProviderHTTPURL(baseURL, "base-url")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+			return
+		}
+	}
+	if modelsURL != "" {
+		parsedModelsURL, err = parseProviderHTTPURL(modelsURL, "models-url")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+			return
+		}
+	}
+	if proxyURL != "" {
+		parsedProxyURL, err = parseProviderHTTPURL(proxyURL, "proxy-url")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+			return
+		}
+	}
 
 	if apiKey == "" && providerID != "ollama" && providerID != "lmstudio" { // specific check?
 		// for cloud, key usually required
@@ -147,43 +179,38 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 	}
 
 	// 1. Test Base URL Reachability
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := providerHTTPClient(10*time.Second, parsedProxyURL)
 
 	// Configure Proxy
-	if proxyURL != "" {
-		pURL, err := url.Parse(proxyURL)
-		if err != nil {
-			tests["proxy"] = gin.H{"passed": false, "message": fmt.Sprintf("Invalid Proxy URL: %v", err)}
-		} else {
-			client.Transport = &http.Transport{
-				Proxy:           http.ProxyURL(pURL),
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}
-			tests["proxy"] = gin.H{"passed": true, "message": "Proxy configured"}
-		}
+	if parsedProxyURL != nil {
+		tests["proxy"] = gin.H{"passed": true, "message": "Proxy configured"}
 	}
 
-	if baseURL != "" {
+	if parsedBaseURL != nil {
 		// Try to reach base URL (often returns 404 or welcome message, establishing connectivity)
-		req, _ := http.NewRequest("GET", baseURL, nil)
-		if strings.Contains(baseURL, "openai.com") {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		start := time.Now()
-		resp, err := client.Do(req)
-		latency := time.Since(start).Milliseconds()
-
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, parsedBaseURL.String(), nil)
 		if err != nil {
-			tests["baseUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Unreachable: %v", err)}
+			tests["baseUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Invalid request: %v", err)}
 		} else {
-			defer resp.Body.Close()
-			msg := fmt.Sprintf("Reachable (Status: %d, %dms)", resp.StatusCode, latency)
-			tests["baseUrl"] = gin.H{"passed": true, "message": msg, "latency": latency}
+			if providerUsesOpenAIBearerAuth(parsedBaseURL) {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
 
-			// If status is 401, API key is invalid
-			if resp.StatusCode == 401 {
-				tests["apiKey"] = gin.H{"passed": false, "message": "Unauthorized (Invalid API Key)"}
+			start := time.Now()
+			resp, err := client.Do(req)
+			latency := time.Since(start).Milliseconds()
+
+			if err != nil {
+				tests["baseUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Unreachable: %v", err)}
+			} else {
+				defer resp.Body.Close()
+				msg := fmt.Sprintf("Reachable (Status: %d, %dms)", resp.StatusCode, latency)
+				tests["baseUrl"] = gin.H{"passed": true, "message": msg, "latency": latency}
+
+				// If status is 401, API key is invalid
+				if resp.StatusCode == 401 {
+					tests["apiKey"] = gin.H{"passed": false, "message": "Unauthorized (Invalid API Key)"}
+				}
 			}
 		}
 	} else {
@@ -191,18 +218,22 @@ func (h *Handler) testCloudProvider(c *gin.Context, providerID string, config ma
 	}
 
 	// 2. Test Models URL if provided
-	if modelsURL != "" {
-		req, _ := http.NewRequest("GET", modelsURL, nil)
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		resp, err := client.Do(req)
+	if parsedModelsURL != nil {
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, parsedModelsURL.String(), nil)
 		if err != nil {
-			tests["modelsUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Failed to fetch models: %v", err)}
+			tests["modelsUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Invalid request: %v", err)}
 		} else {
-			defer resp.Body.Close()
-			if resp.StatusCode == 200 {
-				tests["modelsUrl"] = gin.H{"passed": true, "message": "Successfully fetched models"}
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			resp, err := client.Do(req)
+			if err != nil {
+				tests["modelsUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Failed to fetch models: %v", err)}
 			} else {
-				tests["modelsUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Failed with status %d", resp.StatusCode)}
+				defer resp.Body.Close()
+				if resp.StatusCode == 200 {
+					tests["modelsUrl"] = gin.H{"passed": true, "message": "Successfully fetched models"}
+				} else {
+					tests["modelsUrl"] = gin.H{"passed": false, "message": fmt.Sprintf("Failed with status %d", resp.StatusCode)}
+				}
 			}
 		}
 	}

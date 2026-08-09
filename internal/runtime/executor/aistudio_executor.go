@@ -199,7 +199,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 			if event.Err != nil {
 				recordAPIResponseError(ctx, e.cfg, event.Err)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("wsrelay: %v", event.Err)}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("wsrelay: %v", event.Err)})
 				return false
 			}
 			switch event.Type {
@@ -217,7 +217,9 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 					}
 					lines := sdktranslator.TranslateStream(ctx, body.toFormat, opts.SourceFormat, req.Model, bytes.Clone(opts.OriginalRequest), translatedReq, bytes.Clone(filtered), &param)
 					for i := range lines {
-						out <- switchailocalexecutor.StreamChunk{Payload: ensureColonSpacedJSON([]byte(lines[i]))}
+						if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: ensureColonSpacedJSON([]byte(lines[i]))}) {
+							return false
+						}
 					}
 					break
 				}
@@ -233,14 +235,16 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *switchailoca
 				}
 				lines := sdktranslator.TranslateStream(ctx, body.toFormat, opts.SourceFormat, req.Model, bytes.Clone(opts.OriginalRequest), translatedReq, bytes.Clone(event.Payload), &param)
 				for i := range lines {
-					out <- switchailocalexecutor.StreamChunk{Payload: ensureColonSpacedJSON([]byte(lines[i]))}
+					if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: ensureColonSpacedJSON([]byte(lines[i]))}) {
+						return false
+					}
 				}
 				reporter.publish(ctx, parseGeminiUsage(event.Payload))
 				return false
 			case wsrelay.MessageTypeError:
 				recordAPIResponseError(ctx, e.cfg, event.Err)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: fmt.Errorf("wsrelay: %v", event.Err)}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: fmt.Errorf("wsrelay: %v", event.Err)})
 				return false
 			}
 			return true

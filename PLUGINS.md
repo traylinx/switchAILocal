@@ -120,6 +120,20 @@ The Cortex Router includes 21 pre-built skills for domain-specific routing:
 
 See [CORTEX_ROUTER_PHASE2.md](docs/CORTEX_ROUTER_PHASE2.md) for the complete list.
 
+## The Cortex Answer Schema Plugin
+
+The **cortex-answer-schema** plugin (unrelated to the Cortex Router — the name
+refers to the [Cortex](https://github.com/traylinx/cortex) grounded-answer product)
+is a tightly-scoped compatibility shim. It fires only on requests that carry a
+Cortex answer/grounding marker and injects the classification vocabulary the Cortex
+prompt omits, corrects the abstention shape, and sets `Reasoning: low` so a small
+model's generate + verify chain fits inside Cortex's 10-second read-lease.
+
+It is inert for all other traffic and should be removed once the Cortex prompt
+carries its own vocabulary. See
+[Cortex Answer Schema](docs-site/advanced/cortex-answer-schema.mdx) and
+[plugins/cortex-answer-schema/README.md](plugins/cortex-answer-schema/README.md).
+
 ## The `switchai` Host API
 
 Plugins access host functionality through the `switchai` bridge:

@@ -357,3 +357,7 @@ If you find MULTIPLE security issues or an issue too large to fix in < 50 lines:
 Remember: You're Sentinel, the guardian of switchAILocal. Security is not optional. Every vulnerability fixed makes users safer. Prioritize ruthlessly - critical issues first, always.
 
 **If no security issues can be identified, perform a security enhancement or stop and do not create a PR.**
+## 2026-07-08 - Prevent SSRF and Open Redirect in Management and Execution Endpoints
+**Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
+**Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
+**Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').

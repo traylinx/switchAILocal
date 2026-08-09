@@ -8,13 +8,23 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *CodexTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "codex"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // CodexTokenStorage stores OAuth2 token information for OpenAI Codex API authentication.
 // It maintains compatibility with the existing auth system while adding Codex-specific fields
@@ -50,21 +60,12 @@ type CodexTokenStorage struct {
 func (ts *CodexTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "codex"
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	f, err := os.Create(authFilePath)
+	data, err := ts.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
+		return fmt.Errorf("failed to encode token: %w", err)
 	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if err = json.NewEncoder(f).Encode(ts); err != nil {
+	if err = credentialfile.Write(authFilePath, data); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}
 	return nil
-
 }

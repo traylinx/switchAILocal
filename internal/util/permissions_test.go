@@ -225,6 +225,69 @@ func TestHardenPermissions_DBFileCorrection(t *testing.T) {
 	}
 }
 
+func TestHardenPermissions_BackupFileCorrection(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("SWITCHAI_STATE_DIR", tempDir)
+	t.Setenv("SWITCHAI_READONLY", "0")
+	sb, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("Failed to create StateBox: %v", err)
+	}
+	discoveryDir := sb.DiscoveryDir()
+	if err := os.MkdirAll(discoveryDir, 0o700); err != nil {
+		t.Fatalf("Failed to create discovery directory: %v", err)
+	}
+	backupPath := filepath.Join(discoveryDir, "registry.json.bak")
+	if err := os.WriteFile(backupPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("Failed to create backup: %v", err)
+	}
+	if err := os.Chmod(backupPath, 0o644); err != nil {
+		t.Fatalf("Failed to set backup mode: %v", err)
+	}
+
+	if err := HardenPermissions(sb); err != nil {
+		t.Fatalf("HardenPermissions failed: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatalf("Failed to stat backup: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("backup mode = %04o, want 0600", got)
+	}
+}
+
+func TestHardenPermissionsLeavesNonStateYAMLModeUnchanged(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("SWITCHAI_STATE_DIR", tempDir)
+	t.Setenv("SWITCHAI_READONLY", "0")
+	sb, err := NewStateBox()
+	if err != nil {
+		t.Fatalf("Failed to create StateBox: %v", err)
+	}
+	if err := os.MkdirAll(sb.RootPath(), 0o700); err != nil {
+		t.Fatalf("Failed to create StateBox root: %v", err)
+	}
+	yamlPath := filepath.Join(sb.RootPath(), "operator-asset.yaml")
+	if err := os.WriteFile(yamlPath, []byte("enabled: true\n"), 0o644); err != nil {
+		t.Fatalf("Failed to create YAML asset: %v", err)
+	}
+	if err := os.Chmod(yamlPath, 0o644); err != nil {
+		t.Fatalf("Failed to set YAML mode: %v", err)
+	}
+
+	if err := HardenPermissions(sb); err != nil {
+		t.Fatalf("HardenPermissions failed: %v", err)
+	}
+	info, err := os.Stat(yamlPath)
+	if err != nil {
+		t.Fatalf("Failed to stat YAML asset: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("YAML mode = %04o, want unchanged 0644", got)
+	}
+}
+
 func TestHardenPermissions_NonExistentRoot(t *testing.T) {
 	// Create a StateBox with a non-existent root
 	tempDir := t.TempDir()
@@ -275,6 +338,8 @@ func TestIsSensitiveFile(t *testing.T) {
 		{"feedback.db", true},
 		{"config.JSON", true}, // Case insensitive
 		{"data.DB", true},     // Case insensitive
+		{"registry.json.bak", true},
+		{"feedback.db.bak", true},
 		{"readme.txt", false},
 		{"script.sh", false},
 		{"noextension", false},

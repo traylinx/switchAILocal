@@ -8,13 +8,23 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/traylinx/switchAILocal/internal/auth/credentialfile"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *ClaudeTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "claude"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // ClaudeTokenStorage stores OAuth2 token information for Anthropic Claude API authentication.
 // It maintains compatibility with the existing auth system while adding Claude-specific fields
@@ -55,22 +65,11 @@ func (ts *ClaudeTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "claude"
 
-	// Create directory structure if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	// Create the token file
-	f, err := os.Create(authFilePath)
+	data, err := ts.MarshalToken()
 	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
+		return fmt.Errorf("failed to encode token: %w", err)
 	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	// Encode and write the token data as JSON
-	if err = json.NewEncoder(f).Encode(ts); err != nil {
+	if err = credentialfile.Write(authFilePath, data); err != nil {
 		return fmt.Errorf("failed to write token to file: %w", err)
 	}
 	return nil

@@ -39,6 +39,10 @@ type OllamaTokenStorage struct {
 	ConnectedAt string   `json:"connected_at"`
 }
 
+func (s *OllamaTokenStorage) MarshalToken() ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
+}
+
 func (s *OllamaTokenStorage) SaveTokenToFile(path string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

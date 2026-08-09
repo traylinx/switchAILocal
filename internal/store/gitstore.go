@@ -19,9 +19,11 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/plumbing/transport/http"
+	"github.com/traylinx/switchAILocal/internal/authid"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
 
@@ -213,101 +215,111 @@ func (s *GitTokenStore) EnsureRepository() error {
 }
 
 // Save persists token storage and metadata to the resolved auth file path.
-func (s *GitTokenStore) Save(_ context.Context, auth *switchailocalauth.Auth) (string, error) {
+func (s *GitTokenStore) Save(ctx context.Context, auth *switchailocalauth.Auth) (string, error) {
 	if auth == nil {
 		return "", fmt.Errorf("auth filestore: auth is nil")
 	}
-
-	path, err := s.resolveAuthPath(auth)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if path == "" {
-		return "", fmt.Errorf("auth filestore: missing file path attribute for %s", auth.ID)
-	}
 
-	if auth.Disabled {
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			return "", nil
-		}
-	}
-
-	if err = s.EnsureRepository(); err != nil {
+	if err := s.EnsureRepository(); err != nil {
 		return "", err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return "", fmt.Errorf("auth filestore: directory not configured")
+	}
+	if err := os.Chmod(baseDir, 0o700); err != nil {
+		return "", fmt.Errorf("auth filestore: secure auth dir: %w", err)
+	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("auth filestore: open root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err = sweepStoredAuthTemps(ctx, root, time.Now()); err != nil {
+		return "", err
+	}
+	id, err := resolveStoredAuthID(auth, baseDir)
+	if err != nil {
+		return "", err
+	}
+	exists, err := validateStoredAuthPath(root, id)
+	if err != nil {
+		return "", err
+	}
+	if auth.Disabled && !exists {
+		return "", nil
+	}
+	filePath, err := authid.ToFSPath(baseDir, id)
+	if err != nil {
+		return "", fmt.Errorf("auth filestore: resolve auth id: %w", err)
 	}
 
-	switch {
-	case auth.Storage != nil:
-		if err = auth.Storage.SaveTokenToFile(path); err != nil {
-			return "", err
-		}
-	case auth.Metadata != nil:
-		raw, errMarshal := json.Marshal(auth.Metadata)
-		if errMarshal != nil {
-			return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
-		}
-		if existing, errRead := os.ReadFile(path); errRead == nil {
+	raw, err := marshalStoredAuth(auth)
+	if err != nil {
+		return "", err
+	}
+	if auth.Metadata != nil && auth.Storage == nil {
+		if existing, errRead := root.ReadFile(filepath.FromSlash(id)); errRead == nil {
 			if jsonEqual(existing, raw) {
-				return path, nil
+				setStoredAuthLocation(auth, id, filePath)
+				return filePath, nil
 			}
 		} else if !os.IsNotExist(errRead) {
 			return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
 		}
-		tmp := path + ".tmp"
-		if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
-			return "", fmt.Errorf("auth filestore: write temp failed: %w", errWrite)
+	}
+	if raw != nil {
+		if err = writeStoredAuthAtomic(root, id, raw); err != nil {
+			return "", err
 		}
-		if errRename := os.Rename(tmp, path); errRename != nil {
-			return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
-		}
-	default:
-		return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
+	}
+	setStoredAuthLocation(auth, id, filePath)
+	if raw == nil {
+		return filePath, nil
 	}
 
-	if auth.Attributes == nil {
-		auth.Attributes = make(map[string]string)
-	}
-	auth.Attributes["path"] = path
-
-	if strings.TrimSpace(auth.FileName) == "" {
-		auth.FileName = auth.ID
-	}
-
-	relPath, errRel := s.relativeToRepo(path)
+	relPath, errRel := s.relativeToRepo(filePath)
 	if errRel != nil {
 		return "", errRel
 	}
-	messageID := auth.ID
-	if strings.TrimSpace(messageID) == "" {
-		messageID = filepath.Base(path)
-	}
-	if errCommit := s.commitAndPushLocked(fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
+	if errCommit := s.commitAndPushLocked(fmt.Sprintf("Update auth %s", id), relPath); errCommit != nil {
 		return "", errCommit
 	}
 
-	return path, nil
+	return filePath, nil
 }
 
 // List enumerates all auth JSON files under the configured directory.
-func (s *GitTokenStore) List(_ context.Context) ([]*switchailocalauth.Auth, error) {
+func (s *GitTokenStore) List(ctx context.Context) ([]*switchailocalauth.Auth, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.EnsureRepository(); err != nil {
 		return nil, err
 	}
-	dir := s.baseDirSnapshot()
-	if dir == "" {
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
 		return nil, fmt.Errorf("auth filestore: directory not configured")
 	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("auth filestore: open root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
 	entries := make([]*switchailocalauth.Auth, 0)
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), ".", func(id string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if errContext := ctx.Err(); errContext != nil {
+			return errContext
 		}
 		if d.IsDir() {
 			return nil
@@ -315,8 +327,11 @@ func (s *GitTokenStore) List(_ context.Context) ([]*switchailocalauth.Auth, erro
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
 			return nil
 		}
-		auth, err := s.readAuthFile(path, dir)
-		if err != nil {
+		if errValidate := authid.Validate(id); errValidate != nil {
+			return nil
+		}
+		auth, errRead := s.readAuthFile(root, baseDir, id)
+		if errRead != nil {
 			return nil
 		}
 		if auth != nil {
@@ -331,32 +346,58 @@ func (s *GitTokenStore) List(_ context.Context) ([]*switchailocalauth.Auth, erro
 }
 
 // Delete removes the auth file.
-func (s *GitTokenStore) Delete(_ context.Context, id string) error {
+func (s *GitTokenStore) Delete(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("auth filestore: id is empty")
 	}
-	path, err := s.resolveDeletePath(id)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err = s.EnsureRepository(); err != nil {
+	if err := s.EnsureRepository(); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("auth filestore: delete failed: %w", err)
+	baseDir := s.baseDirSnapshot()
+	if baseDir == "" {
+		return fmt.Errorf("auth filestore: directory not configured")
 	}
-	if err == nil {
-		rel, errRel := s.relativeToRepo(path)
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return fmt.Errorf("auth filestore: open root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	canonicalID, err := canonicalStoredAuthID(baseDir, id)
+	if err != nil {
+		return fmt.Errorf("auth filestore: invalid delete id: %w", err)
+	}
+	exists, err := validateStoredAuthPath(root, canonicalID)
+	if err != nil {
+		return err
+	}
+	filePath, err := authid.ToFSPath(baseDir, canonicalID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		rel, errRel := s.relativeToRepo(filePath)
 		if errRel != nil {
 			return errRel
 		}
-		messageID := id
-		if errCommit := s.commitAndPushLocked(fmt.Sprintf("Delete auth %s", messageID), rel); errCommit != nil {
+		return s.commitAndPushLocked(fmt.Sprintf("Delete auth %s", canonicalID), rel)
+	}
+	if err = root.Remove(filepath.FromSlash(canonicalID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("auth filestore: delete failed: %w", err)
+	}
+	if err == nil {
+		rel, errRel := s.relativeToRepo(filePath)
+		if errRel != nil {
+			return errRel
+		}
+		if errCommit := s.commitAndPushLocked(fmt.Sprintf("Delete auth %s", canonicalID), rel); errCommit != nil {
 			return errCommit
 		}
 	}
@@ -398,19 +439,9 @@ func (s *GitTokenStore) PersistAuthFiles(_ context.Context, message string, path
 	return s.commitAndPushLocked(message, filtered...)
 }
 
-func (s *GitTokenStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
-		return id, nil
-	}
-	dir := s.baseDirSnapshot()
-	if dir == "" {
-		return "", fmt.Errorf("auth filestore: directory not configured")
-	}
-	return filepath.Join(dir, id), nil
-}
-
-func (s *GitTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.Auth, error) {
-	data, err := os.ReadFile(path)
+func (s *GitTokenStore) readAuthFile(root *os.Root, baseDir, id string) (*switchailocalauth.Auth, error) {
+	rootID := filepath.FromSlash(id)
+	data, err := root.ReadFile(rootID)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
@@ -425,18 +456,21 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.A
 	if provider == "" {
 		provider = "unknown"
 	}
-	info, err := os.Stat(path)
+	info, err := root.Stat(rootID)
 	if err != nil {
 		return nil, fmt.Errorf("stat file: %w", err)
 	}
-	id := s.idFor(path, baseDir)
+	filePath, err := authid.ToFSPath(baseDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("resolve file path: %w", err)
+	}
 	auth := &switchailocalauth.Auth{
 		ID:               id,
 		Provider:         provider,
 		FileName:         id,
 		Label:            s.labelFor(metadata),
 		Status:           switchailocalauth.StatusActive,
-		Attributes:       map[string]string{"path": path},
+		Attributes:       map[string]string{"path": filePath},
 		Metadata:         metadata,
 		CreatedAt:        info.ModTime(),
 		UpdatedAt:        info.ModTime(),
@@ -447,48 +481,6 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*switchailocalauth.A
 		auth.Attributes["email"] = email
 	}
 	return auth, nil
-}
-
-func (s *GitTokenStore) idFor(path, baseDir string) string {
-	if baseDir == "" {
-		return path
-	}
-	rel, err := filepath.Rel(baseDir, path)
-	if err != nil {
-		return path
-	}
-	return rel
-}
-
-func (s *GitTokenStore) resolveAuthPath(auth *switchailocalauth.Auth) (string, error) {
-	if auth == nil {
-		return "", fmt.Errorf("auth filestore: auth is nil")
-	}
-	if auth.Attributes != nil {
-		if p := strings.TrimSpace(auth.Attributes["path"]); p != "" {
-			return p, nil
-		}
-	}
-	if fileName := strings.TrimSpace(auth.FileName); fileName != "" {
-		if filepath.IsAbs(fileName) {
-			return fileName, nil
-		}
-		if dir := s.baseDirSnapshot(); dir != "" {
-			return filepath.Join(dir, fileName), nil
-		}
-		return fileName, nil
-	}
-	if auth.ID == "" {
-		return "", fmt.Errorf("auth filestore: missing id")
-	}
-	if filepath.IsAbs(auth.ID) {
-		return auth.ID, nil
-	}
-	dir := s.baseDirSnapshot()
-	if dir == "" {
-		return "", fmt.Errorf("auth filestore: directory not configured")
-	}
-	return filepath.Join(dir, auth.ID), nil
 }
 
 func (s *GitTokenStore) labelFor(metadata map[string]any) string {
@@ -539,6 +531,13 @@ func (s *GitTokenStore) relativeToRepo(path string) (string, error) {
 	if abs, err := filepath.Abs(repoDir); err == nil {
 		absRepo = abs
 	}
+	// authid.ToFSPath resolves existing parent symlinks before returning a path.
+	// Canonicalize the repository root the same way so macOS's /var ->
+	// /private/var alias (and equivalent trusted-root aliases) cannot turn a
+	// contained auth path into a false "outside repository" result.
+	if resolved, err := filepath.EvalSymlinks(absRepo); err == nil {
+		absRepo = resolved
+	}
 	cleanPath := path
 	if abs, err := filepath.Abs(path); err == nil {
 		cleanPath = abs
@@ -572,6 +571,18 @@ func (s *GitTokenStore) commitAndPushLocked(message string, relPaths ...string) 
 			continue
 		}
 		if _, err = worktree.Add(rel); err != nil {
+			if errors.Is(err, gitindex.ErrEntryNotFound) {
+				// The path was never tracked (for example, an injected final
+				// symlink removed safely by Delete), so there is no git mutation
+				// to stage.
+				diskPath := filepath.Join(repoDir, filepath.FromSlash(rel))
+				if _, statErr := os.Lstat(diskPath); statErr == nil {
+					return fmt.Errorf("git token store: add %s: %w", rel, err)
+				} else if !os.IsNotExist(statErr) {
+					return fmt.Errorf("git token store: inspect %s: %w", rel, statErr)
+				}
+				continue
+			}
 			if errors.Is(err, os.ErrNotExist) {
 				if _, errRemove := worktree.Remove(rel); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
 					return fmt.Errorf("git token store: remove %s: %w", rel, errRemove)

@@ -247,12 +247,12 @@ func (se *SuperbrainCLIExecutor) executeWithObservation(ctx context.Context, aut
 	// Log any errors but don't take action
 	if err != nil {
 		log.WithFields(log.Fields{
-			"request_id":     requestID,
-			"provider":       se.base.Provider,
-			"error":          err.Error(),
-			"mode":           "observe",
-			"silence_ms":     owCtx.GetSilenceDuration().Milliseconds(),
-			"restart_count":  owCtx.RestartCount,
+			"request_id":    requestID,
+			"provider":      se.base.Provider,
+			"error":         err.Error(),
+			"mode":          "observe",
+			"silence_ms":    owCtx.GetSilenceDuration().Milliseconds(),
+			"restart_count": owCtx.RestartCount,
 		}).Warn("Execution failed (observe mode - no action taken)")
 	}
 
@@ -468,7 +468,12 @@ func (se *SuperbrainCLIExecutor) executeStreamWithMonitoring(ctx context.Context
 			if len(chunk.Payload) > 0 {
 				owCtx.RecordOutput(string(chunk.Payload))
 			}
-			wrappedCh <- chunk
+			// Client disconnect stops the downstream reader; bail out so the
+			// deferred StopMonitoring/close run. The base producer unwinds on
+			// the same ctx, so chunks drains itself.
+			if !sendStreamChunk(ctx, wrappedCh, chunk) {
+				return
+			}
 		}
 	}()
 

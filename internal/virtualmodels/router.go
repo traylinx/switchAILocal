@@ -8,32 +8,40 @@
 package virtualmodels
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
 	json "github.com/goccy/go-json"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/registry"
+	"github.com/traylinx/switchAILocal/internal/util"
 )
 
 const (
-	ClassChatText               = "chat_text"
-	ClassChatTextTools          = "chat_text_tools"
-	ClassChatMultiturnTools     = "chat_multiturn_tools"
-	ClassChatImageUnderstanding = "chat_image_understanding"
-	ClassChatAudioUnderstanding = "chat_audio_understanding"
-	ClassAudioTranscription     = "audio_transcription"
-	ClassImageGeneration        = "image_generation"
-	ClassSpeechGeneration       = "speech_generation"
-	ClassMusicGeneration        = "music_generation"
-	ClassLyricsGeneration       = "lyrics_generation"
-	ClassEmbeddings             = "embeddings"
+	ClassChatText                    = "chat_text"
+	ClassChatTextTools               = "chat_text_tools"
+	ClassChatMultiturnTools          = "chat_multiturn_tools"
+	ClassChatImageUnderstanding      = "chat_image_understanding"
+	ClassChatAudioUnderstanding      = "chat_audio_understanding"
+	ClassChatMultimodalUnderstanding = "chat_multimodal_understanding"
+	ClassAudioTranscription          = "audio_transcription"
+	ClassImageGeneration             = "image_generation"
+	ClassSpeechGeneration            = "speech_generation"
+	ClassMusicGeneration             = "music_generation"
+	ClassLyricsGeneration            = "lyrics_generation"
+	ClassEmbeddings                  = "embeddings"
+
+	routerStateSchemaVersion = 2
+	routerAlgorithm          = "smooth-weighted-round-robin/v1"
 )
 
 // Requirements captures the capability contract required by a request.
@@ -77,15 +85,156 @@ func (e NoEligibleBackendError) Error() string {
 
 func (e NoEligibleBackendError) Code() string { return "no_eligible_backend" }
 
-// Router keeps process-local weighted round-robin cursors.
+// RouterState is the persisted, operator-observable routing state for virtual
+// model pools. Pool keys start with lower-case "<public-model>|<request-class>"
+// and may include media/tool/context qualifiers that affect eligible members.
+type RouterState struct {
+	SchemaVersion int                        `json:"schema_version"`
+	Algorithm     string                     `json:"algorithm"`
+	Pools         map[string]RouterPoolState `json:"pools"`
+}
+
+// RouterPoolState stores the smooth weighted round-robin accumulators for one
+// virtual model routing bucket.
+type RouterPoolState struct {
+	ConfigHash   string         `json:"config_hash"`
+	Current      map[string]int `json:"current"`
+	Counts       map[string]int `json:"counts"`
+	LastSelected string         `json:"last_selected,omitempty"`
+}
+
+// Router keeps smooth weighted round-robin accumulators for virtual model pools.
+// State is persisted best-effort so local process restarts continue proportional
+// routing without changing the public OpenAI-compatible API contract.
 type Router struct {
-	mu      sync.Mutex
-	cursors map[string]int
-	seed    int
+	mu            sync.Mutex
+	seed          int
+	stateFilePath string
+	state         RouterState
+	stateLoaded   bool
 }
 
 func NewRouter() *Router {
-	return &Router{cursors: make(map[string]int), seed: instanceSeed()}
+	return NewRouterWithStatePath("")
+}
+
+func NewRouterWithStatePath(path string) *Router {
+	return &Router{
+		seed:          instanceSeed(),
+		stateFilePath: path,
+		state:         newRouterState(),
+	}
+}
+
+func newRouterState() RouterState {
+	return RouterState{
+		SchemaVersion: routerStateSchemaVersion,
+		Algorithm:     routerAlgorithm,
+		Pools:         make(map[string]RouterPoolState),
+	}
+}
+
+func (s *RouterState) ensure() {
+	s.SchemaVersion = routerStateSchemaVersion
+	s.Algorithm = routerAlgorithm
+	if s.Pools == nil {
+		s.Pools = make(map[string]RouterPoolState)
+	}
+	for key, pool := range s.Pools {
+		pool.ensure()
+		s.Pools[key] = pool
+	}
+}
+
+func (s RouterState) clone() RouterState {
+	out := newRouterState()
+	out.SchemaVersion = s.SchemaVersion
+	out.Algorithm = s.Algorithm
+	for k, v := range s.Pools {
+		out.Pools[k] = v.clone()
+	}
+	return out
+}
+
+func (s *RouterPoolState) ensure() {
+	if s.Current == nil {
+		s.Current = make(map[string]int)
+	}
+	if s.Counts == nil {
+		s.Counts = make(map[string]int)
+	}
+}
+
+func (s RouterPoolState) clone() RouterPoolState {
+	out := RouterPoolState{
+		ConfigHash:   s.ConfigHash,
+		Current:      make(map[string]int, len(s.Current)),
+		Counts:       make(map[string]int, len(s.Counts)),
+		LastSelected: s.LastSelected,
+	}
+	for k, v := range s.Current {
+		out.Current[k] = v
+	}
+	for k, v := range s.Counts {
+		out.Counts[k] = v
+	}
+	return out
+}
+
+func (r *Router) getStateFilePath() string {
+	if r.stateFilePath != "" {
+		return r.stateFilePath
+	}
+	if sb, err := util.NewStateBox(); err == nil {
+		return filepath.Join(sb.RootPath(), "virtual_models_state.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".switchailocal", "virtual_models_state.json")
+}
+
+// Snapshot returns a copy of the current router state for tests and
+// observability. It best-effort loads persisted state before returning.
+func (r *Router) Snapshot() RouterState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.loadStateLocked()
+	return r.state.clone()
+}
+
+func (r *Router) loadStateLocked() {
+	if r.stateLoaded {
+		r.state.ensure()
+		return
+	}
+	r.state.ensure()
+	statePath := r.getStateFilePath()
+	if data, err := os.ReadFile(statePath); err == nil {
+		var disk RouterState
+		if err := json.Unmarshal(data, &disk); err == nil {
+			if disk.SchemaVersion == routerStateSchemaVersion && disk.Algorithm == routerAlgorithm {
+				disk.ensure()
+				r.state = disk
+			} else {
+				log.WithFields(log.Fields{
+					"schema_version": disk.SchemaVersion,
+					"algorithm":      disk.Algorithm,
+				}).Debug("ignored incompatible virtual model router state")
+			}
+		} else {
+			log.WithError(err).Debug("ignored invalid virtual model router state")
+		}
+	}
+	r.stateLoaded = true
+}
+
+func (r *Router) persistStateLocked() {
+	r.state.ensure()
+	statePath := r.getStateFilePath()
+	sb, _ := util.NewStateBox()
+	if err := util.SecureWriteJSON(sb, statePath, &r.state, nil); err != nil {
+		// Routing must never fail because the state file cannot be written.
+		log.WithError(err).Debug("failed to persist virtual model router state")
+	}
 }
 
 func instanceSeed() int {
@@ -143,6 +292,7 @@ func (r *Router) SelectExcluding(cfg *config.SDKConfig, model string, rawJSON []
 	}
 	req := DetectRequirements(rawJSON, endpoint)
 	eligible := eligibleMembers(pool, req)
+	mutateState := len(exclude) == 0
 	if len(exclude) > 0 {
 		filtered := eligible[:0]
 		for _, member := range eligible {
@@ -156,7 +306,7 @@ func (r *Router) SelectExcluding(cfg *config.SDKConfig, model string, rawJSON []
 	if len(eligible) == 0 {
 		return Route{}, NoEligibleBackendError{Model: model, Requirements: req}
 	}
-	member := r.pick(model, req.Class, eligible)
+	member := r.pick(model, req, eligible, mutateState)
 	return Route{PublicModel: model, Provider: member.Provider, NativeModel: member.Model, MemberID: member.ID, Requirements: req}, nil
 }
 
@@ -167,39 +317,249 @@ func FallbackEnabled(cfg *config.SDKConfig, model string) bool {
 	return ok && pool.Fallback
 }
 
-func (r *Router) pick(model, class string, eligible []config.VirtualModelMemberConfig) config.VirtualModelMemberConfig {
-	expanded := make([]config.VirtualModelMemberConfig, 0, len(eligible))
-	for _, member := range eligible {
-		weight := member.Weight
-		if weight <= 0 {
-			weight = 1
-		}
-		for i := 0; i < weight; i++ {
-			expanded = append(expanded, member)
-		}
+type weightedMember struct {
+	member config.VirtualModelMemberConfig
+	id     string
+	weight int
+}
+
+func (r *Router) pick(model string, req Requirements, eligible []config.VirtualModelMemberConfig, mutateState bool) config.VirtualModelMemberConfig {
+	members := sortedWeightedMembers(eligible)
+	if len(members) == 0 {
+		return config.VirtualModelMemberConfig{}
 	}
-	sort.SliceStable(expanded, func(i, j int) bool {
-		if strings.EqualFold(expanded[i].ID, expanded[j].ID) {
-			return expanded[i].Model < expanded[j].Model
-		}
-		return expanded[i].ID < expanded[j].ID
-	})
-	key := strings.ToLower(model + "|" + class)
+	key := routingStateKey(model, req)
+	configHash := routingConfigHash(model, key, members)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cursor, ok := r.cursors[key]
-	if !ok {
-		cursor = r.seed % len(expanded)
+	r.loadStateLocked()
+
+	if !mutateState {
+		return r.pickWithoutMutationLocked(key, members).member
 	}
-	member := expanded[cursor%len(expanded)]
-	r.cursors[key] = (cursor + 1) % len(expanded)
-	return member
+
+	poolState := r.poolStateForLocked(key, configHash, members)
+	selected := smoothPick(&poolState, members)
+	r.state.Pools[key] = poolState
+
+	log.WithFields(log.Fields{
+		"virtual_model": model,
+		"request_class": req.Class,
+		"state_key":     key,
+		"member_id":     selected.id,
+		"algorithm":     routerAlgorithm,
+		"total_routed":  poolState.Counts[selected.id],
+	}).Info("routed virtual model member")
+
+	r.persistStateLocked()
+	return selected.member
+}
+
+func sortedWeightedMembers(eligible []config.VirtualModelMemberConfig) []weightedMember {
+	members := make([]weightedMember, 0, len(eligible))
+	for _, member := range eligible {
+		id := strings.TrimSpace(member.ID)
+		if id == "" {
+			continue
+		}
+		members = append(members, weightedMember{member: member, id: id, weight: effectiveWeight(member)})
+	}
+	sort.SliceStable(members, func(i, j int) bool {
+		leftID := strings.ToLower(members[i].id)
+		rightID := strings.ToLower(members[j].id)
+		if leftID == rightID {
+			return members[i].member.Model < members[j].member.Model
+		}
+		return leftID < rightID
+	})
+	return members
+}
+
+func effectiveWeight(member config.VirtualModelMemberConfig) int {
+	if member.Weight <= 0 {
+		return 1
+	}
+	return member.Weight
+}
+
+func (r *Router) poolStateForLocked(key, configHash string, members []weightedMember) RouterPoolState {
+	poolState, ok := r.state.Pools[key]
+	if !ok || poolState.ConfigHash != configHash {
+		return newRouterPoolState(configHash, members)
+	}
+	poolState.ensure()
+	memberSet := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		memberSet[member.id] = struct{}{}
+		if _, ok := poolState.Current[member.id]; !ok {
+			poolState.Current[member.id] = 0
+		}
+		if _, ok := poolState.Counts[member.id]; !ok {
+			poolState.Counts[member.id] = 0
+		}
+	}
+	for id := range poolState.Current {
+		if _, ok := memberSet[id]; !ok {
+			delete(poolState.Current, id)
+		}
+	}
+	for id := range poolState.Counts {
+		if _, ok := memberSet[id]; !ok {
+			delete(poolState.Counts, id)
+		}
+	}
+	return poolState
+}
+
+func newRouterPoolState(configHash string, members []weightedMember) RouterPoolState {
+	poolState := RouterPoolState{
+		ConfigHash: configHash,
+		Current:    make(map[string]int, len(members)),
+		Counts:     make(map[string]int, len(members)),
+	}
+	for _, member := range members {
+		poolState.Current[member.id] = 0
+		poolState.Counts[member.id] = 0
+	}
+	return poolState
+}
+
+func smoothPick(poolState *RouterPoolState, members []weightedMember) weightedMember {
+	poolState.ensure()
+	totalWeight := 0
+	selectedIdx := 0
+	selectedSet := false
+	selectedScore := 0
+	for i, member := range members {
+		totalWeight += member.weight
+		poolState.Current[member.id] += member.weight
+		score := poolState.Current[member.id]
+		if !selectedSet || score > selectedScore {
+			selectedIdx = i
+			selectedScore = score
+			selectedSet = true
+		}
+	}
+	selected := members[selectedIdx]
+	poolState.Current[selected.id] -= totalWeight
+	poolState.Counts[selected.id]++
+	poolState.LastSelected = selected.id
+	return selected
+}
+
+func (r *Router) pickWithoutMutationLocked(key string, members []weightedMember) weightedMember {
+	if poolState, ok := r.state.Pools[key]; ok {
+		poolState = poolState.clone()
+		return smoothPick(&poolState, members)
+	}
+	idx := 0
+	if len(members) > 0 {
+		idx = r.seed % len(members)
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	return members[idx]
+}
+
+func routingStateKey(model string, req Requirements) string {
+	parts := []string{
+		strings.ToLower(strings.TrimSpace(model)),
+		strings.ToLower(strings.TrimSpace(req.Class)),
+	}
+	switch req.Class {
+	case ClassChatImageUnderstanding, ClassChatAudioUnderstanding, ClassChatMultimodalUnderstanding:
+		if req.NeedsTools {
+			parts = append(parts, "tools")
+		}
+		if req.HasToolHistory {
+			parts = append(parts, "tool_history")
+		}
+	}
+	if req.MinContext > 0 {
+		parts = append(parts, fmt.Sprintf("ctx_%d", req.MinContext))
+	}
+	return strings.Join(parts, "|")
+}
+
+type routingHashInput struct {
+	PublicModel  string              `json:"public_model"`
+	RequestClass string              `json:"request_class"`
+	Members      []routingHashMember `json:"members"`
+}
+
+type routingHashMember struct {
+	ID           string                `json:"id"`
+	Weight       int                   `json:"weight"`
+	Capabilities routingHashCapability `json:"capabilities"`
+}
+
+type routingHashCapability struct {
+	Operations        []string `json:"operations,omitempty"`
+	Input             []string `json:"input,omitempty"`
+	Output            []string `json:"output,omitempty"`
+	Tools             bool     `json:"tools,omitempty"`
+	Context           int      `json:"context,omitempty"`
+	AgenticSafe       bool     `json:"agentic_safe,omitempty"`
+	ToolHistoryReplay bool     `json:"tool_history_replay,omitempty"`
+}
+
+func routingConfigHash(model, stateKey string, members []weightedMember) string {
+	input := routingHashInput{
+		PublicModel:  strings.ToLower(strings.TrimSpace(model)),
+		RequestClass: strings.ToLower(strings.TrimSpace(stateKey)),
+		Members:      make([]routingHashMember, 0, len(members)),
+	}
+	for _, member := range members {
+		caps := member.member.Capabilities
+		input.Members = append(input.Members, routingHashMember{
+			ID:     member.id,
+			Weight: member.weight,
+			Capabilities: routingHashCapability{
+				Operations:        normalizedHashList(caps.Operations),
+				Input:             normalizedHashList(caps.Input),
+				Output:            normalizedHashList(caps.Output),
+				Tools:             caps.Tools,
+				Context:           caps.Context,
+				AgenticSafe:       caps.AgenticSafe,
+				ToolHistoryReplay: caps.ToolHistoryReplay,
+			},
+		})
+	}
+	data, _ := json.Marshal(input)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func normalizedHashList(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.ToLower(strings.TrimSpace(item))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func eligibleMembers(pool config.VirtualModelConfig, req Requirements) []config.VirtualModelMemberConfig {
 	out := make([]config.VirtualModelMemberConfig, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		if member.Enabled != nil && !*member.Enabled {
+			continue
+		}
+		if strings.TrimSpace(member.ID) == "" {
 			continue
 		}
 		if member.Provider == "" || member.Model == "" {
@@ -274,6 +634,8 @@ func classAllowed(ops map[string]struct{}, class string) bool {
 		return has(ops, "chat_image_understanding") || has(ops, "vision")
 	case ClassChatAudioUnderstanding:
 		return has(ops, "chat_audio_understanding") || has(ops, "audio_understanding")
+	case ClassChatMultimodalUnderstanding:
+		return has(ops, "chat_multimodal_understanding") || has(ops, "multimodal") || (classAllowed(ops, ClassChatImageUnderstanding) && classAllowed(ops, ClassChatAudioUnderstanding))
 	case ClassAudioTranscription:
 		return has(ops, "audio_transcription") || has(ops, "transcription")
 	case ClassImageGeneration:
@@ -337,20 +699,30 @@ func DetectRequirements(rawJSON []byte, endpoint string) Requirements {
 		return req
 	}
 
-	if hasImageContent(rawJSON) {
-		req.Class = ClassChatImageUnderstanding
-		req.InputImage = true
-		req.NeedsTools = requestHasTools(rawJSON)
-		return req
-	}
-	if hasAudioContent(rawJSON) {
-		req.Class = ClassChatAudioUnderstanding
-		req.InputAudio = true
-		req.NeedsTools = requestHasTools(rawJSON)
-		return req
-	}
 	req.NeedsTools = requestHasTools(rawJSON)
 	req.HasToolHistory = hasToolHistory(rawJSON)
+
+	inputImage := hasImageContent(rawJSON)
+	inputAudio := hasAudioContent(rawJSON)
+	if inputImage && inputAudio {
+		req.Class = ClassChatMultimodalUnderstanding
+		req.InputImage = true
+		req.InputAudio = true
+		req.NeedsTools = req.NeedsTools || req.HasToolHistory
+		return req
+	}
+	if inputImage {
+		req.Class = ClassChatImageUnderstanding
+		req.InputImage = true
+		req.NeedsTools = req.NeedsTools || req.HasToolHistory
+		return req
+	}
+	if inputAudio {
+		req.Class = ClassChatAudioUnderstanding
+		req.InputAudio = true
+		req.NeedsTools = req.NeedsTools || req.HasToolHistory
+		return req
+	}
 	switch {
 	case req.HasToolHistory:
 		req.Class = ClassChatMultiturnTools
@@ -390,19 +762,22 @@ func hasToolHistory(rawJSON []byte) bool {
 			}
 		}
 	}
-	return false
+	return responsesInputHasToolHistory(gjson.GetBytes(rawJSON, "input"))
 }
 
 func hasImageContent(rawJSON []byte) bool {
 	found := false
 	gjson.GetBytes(rawJSON, "messages").ForEach(func(_, msg gjson.Result) bool {
-		if contentHasType(msg.Get("content"), "image_url", "image") {
+		if contentHasType(msg.Get("content"), "image_url", "image", "input_image") {
 			found = true
 			return false
 		}
 		return true
 	})
-	return found
+	if found {
+		return true
+	}
+	return responsesInputHasContentType(gjson.GetBytes(rawJSON, "input"), "image_url", "image", "input_image")
 }
 
 func hasAudioContent(rawJSON []byte) bool {
@@ -414,28 +789,100 @@ func hasAudioContent(rawJSON []byte) bool {
 		}
 		return true
 	})
-	return found
+	if found {
+		return true
+	}
+	return responsesInputHasContentType(gjson.GetBytes(rawJSON, "input"), "input_audio", "audio", "audio_url")
+}
+
+func responsesInputHasToolHistory(input gjson.Result) bool {
+	if !input.Exists() {
+		return false
+	}
+	if input.IsArray() {
+		for _, item := range input.Array() {
+			if responseInputItemHasToolHistory(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responseInputItemHasToolHistory(item gjson.Result) bool {
+	if strings.EqualFold(item.Get("role").String(), "tool") {
+		return true
+	}
+	itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+	switch itemType {
+	case "function_call", "function_call_output", "tool_call", "tool_result", "computer_call", "computer_call_output":
+		return true
+	}
+	if item.Get("tool_call_id").Exists() {
+		return true
+	}
+	if item.Get("call_id").Exists() && strings.Contains(itemType, "call") {
+		return true
+	}
+	content := item.Get("content")
+	if content.IsArray() {
+		for _, part := range content.Array() {
+			partType := strings.ToLower(strings.TrimSpace(part.Get("type").String()))
+			if strings.Contains(partType, "function_call") || strings.Contains(partType, "tool_") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responsesInputHasContentType(input gjson.Result, types ...string) bool {
+	if !input.Exists() {
+		return false
+	}
+	if input.IsArray() {
+		for _, item := range input.Array() {
+			if resultHasType(item, types...) || contentHasType(item.Get("content"), types...) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func contentHasType(content gjson.Result, types ...string) bool {
 	if !content.Exists() {
 		return false
 	}
-	targets := normalizeSet(types)
+	if resultHasType(content, types...) {
+		return true
+	}
 	if content.IsArray() {
 		for _, part := range content.Array() {
-			if has(targets, part.Get("type").String()) || part.Get("image_url").Exists() || part.Get("input_audio").Exists() {
-				if part.Get("image_url").Exists() && has(targets, "image_url") {
-					return true
-				}
-				if part.Get("input_audio").Exists() && has(targets, "input_audio") {
-					return true
-				}
-				if has(targets, part.Get("type").String()) {
-					return true
-				}
+			if resultHasType(part, types...) {
+				return true
 			}
 		}
+	}
+	return false
+}
+
+func resultHasType(result gjson.Result, types ...string) bool {
+	targets := normalizeSet(types)
+	if has(targets, result.Get("type").String()) {
+		return true
+	}
+	if result.Get("image_url").Exists() && has(targets, "image_url") {
+		return true
+	}
+	if result.Get("input_image").Exists() && has(targets, "input_image") {
+		return true
+	}
+	if result.Get("input_audio").Exists() && has(targets, "input_audio") {
+		return true
+	}
+	if result.Get("audio_url").Exists() && has(targets, "audio_url") {
+		return true
 	}
 	return false
 }

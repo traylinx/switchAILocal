@@ -276,12 +276,14 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 				cloned := make([]byte, len(line)+1)
 				copy(cloned, line)
 				cloned[len(line)] = '\n'
-				out <- switchailocalexecutor.StreamChunk{Payload: cloned}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: cloned}) {
+					return
+				}
 			}
 			if errScan := scanner.Err(); errScan != nil {
 				recordAPIResponseError(ctx, e.cfg, errScan)
 				reporter.publishFailure(ctx)
-				out <- switchailocalexecutor.StreamChunk{Err: errScan}
+				sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 			}
 			return
 		}
@@ -298,13 +300,15 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 			}
 			chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
 			for i := range chunks {
-				out <- switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}
+				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {
+					return
+				}
 			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
-			out <- switchailocalexecutor.StreamChunk{Err: errScan}
+			sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Err: errScan})
 		}
 	}()
 	return stream, nil

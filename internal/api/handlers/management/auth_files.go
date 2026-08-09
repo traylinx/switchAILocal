@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,6 +110,28 @@ func isWebUIRequest(c *gin.Context) bool {
 	}
 }
 
+func buildCallbackRedirectTarget(targetBase, rawQuery string) (string, error) {
+	parsedURL, err := url.Parse(targetBase)
+	if err != nil {
+		return "", fmt.Errorf("invalid redirect target: %w", err)
+	}
+
+	isLocalhost := parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1"
+	isRelative := !parsedURL.IsAbs() && strings.HasPrefix(targetBase, "/") && !strings.HasPrefix(targetBase, "//")
+	if !isLocalhost && !isRelative {
+		return "", fmt.Errorf("invalid redirect target")
+	}
+
+	if rawQuery != "" {
+		if parsedURL.RawQuery == "" {
+			parsedURL.RawQuery = rawQuery
+		} else {
+			parsedURL.RawQuery += "&" + rawQuery
+		}
+	}
+	return parsedURL.String(), nil
+}
+
 func startCallbackForwarder(port int, provider, targetBase string) (*callbackForwarder, error) {
 	callbackForwardersMu.Lock()
 	prev := callbackForwarders[port]
@@ -128,13 +151,10 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		target := targetBase
-		if raw := r.URL.RawQuery; raw != "" {
-			if strings.Contains(target, "?") {
-				target = target + "&" + raw
-			} else {
-				target = target + "?" + raw
-			}
+		target, err := buildCallbackRedirectTarget(targetBase, r.URL.RawQuery)
+		if err != nil {
+			http.Error(w, "Invalid redirect target", http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, target, http.StatusFound)
@@ -550,7 +570,7 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
@@ -621,8 +641,15 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	// Reject separators and the "." / ".." path elements: filepath.Base("..")
+	// is still ".." and would resolve to the parent of AuthDir. Requiring the
+	// .json suffix (as Upload/Download do) keeps this to auth leaf files.
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".json") {
+		c.JSON(400, gin.H{"error": "name must end with .json"})
 		return
 	}
 	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
@@ -652,6 +679,9 @@ func (h *Handler) authIDForPath(path string) string {
 	if path == "" {
 		return ""
 	}
+	if !filepath.IsAbs(path) {
+		return filepath.ToSlash(path)
+	}
 	if h == nil || h.cfg == nil {
 		return path
 	}
@@ -659,10 +689,16 @@ func (h *Handler) authIDForPath(path string) string {
 	if authDir == "" {
 		return path
 	}
-	if rel, err := filepath.Rel(authDir, path); err == nil && rel != "" {
-		return rel
+	if !filepath.IsAbs(authDir) {
+		if absoluteAuthDir, err := filepath.Abs(authDir); err == nil {
+			authDir = absoluteAuthDir
+		}
 	}
-	return path
+	rel, err := filepath.Rel(authDir, path)
+	if err != nil || rel == "" || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (h *Handler) registerAuthFromFile(ctx context.Context, path string, data []byte) error {
@@ -750,14 +786,15 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 }
 
 func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
-	if strings.TrimSpace(path) == "" {
+	authID := h.authIDForPath(path)
+	if strings.TrimSpace(authID) == "" {
 		return fmt.Errorf("auth path is empty")
 	}
 	store := h.tokenStoreWithBaseDir()
 	if store == nil {
 		return fmt.Errorf("token store unavailable")
 	}
-	return store.Delete(ctx, path)
+	return store.Delete(ctx, authID)
 }
 
 func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
