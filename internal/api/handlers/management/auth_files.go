@@ -679,6 +679,9 @@ func (h *Handler) authIDForPath(path string) string {
 	if path == "" {
 		return ""
 	}
+	if !filepath.IsAbs(path) {
+		return filepath.ToSlash(path)
+	}
 	if h == nil || h.cfg == nil {
 		return path
 	}
@@ -686,10 +689,16 @@ func (h *Handler) authIDForPath(path string) string {
 	if authDir == "" {
 		return path
 	}
-	if rel, err := filepath.Rel(authDir, path); err == nil && rel != "" {
-		return rel
+	if !filepath.IsAbs(authDir) {
+		if absoluteAuthDir, err := filepath.Abs(authDir); err == nil {
+			authDir = absoluteAuthDir
+		}
 	}
-	return path
+	rel, err := filepath.Rel(authDir, path)
+	if err != nil || rel == "" || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (h *Handler) registerAuthFromFile(ctx context.Context, path string, data []byte) error {
@@ -777,14 +786,15 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 }
 
 func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
-	if strings.TrimSpace(path) == "" {
+	authID := h.authIDForPath(path)
+	if strings.TrimSpace(authID) == "" {
 		return fmt.Errorf("auth path is empty")
 	}
 	store := h.tokenStoreWithBaseDir()
 	if store == nil {
 		return fmt.Errorf("token store unavailable")
 	}
-	return store.Delete(ctx, path)
+	return store.Delete(ctx, authID)
 }
 
 func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
