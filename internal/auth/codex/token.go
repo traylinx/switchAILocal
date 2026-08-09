@@ -8,6 +8,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,16 @@ import (
 
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *CodexTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "codex"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // CodexTokenStorage stores OAuth2 token information for OpenAI Codex API authentication.
 // It maintains compatibility with the existing auth system while adding Codex-specific fields

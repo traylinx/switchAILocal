@@ -7,6 +7,7 @@
 package vertex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,24 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (s *VertexCredentialStorage) MarshalToken() ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("vertex credential: storage is nil")
+	}
+	if s.ServiceAccount == nil {
+		return nil, fmt.Errorf("vertex credential: service account content is empty")
+	}
+	s.Type = "vertex"
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // VertexCredentialStorage stores the service account JSON for Vertex AI access.
 // The content is persisted verbatim under the "service_account" key, together with

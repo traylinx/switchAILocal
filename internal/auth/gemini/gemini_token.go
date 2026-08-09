@@ -8,6 +8,7 @@
 package gemini
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +18,16 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/misc"
 )
+
+// MarshalToken serializes the credential without performing path-based I/O.
+func (ts *GeminiTokenStorage) MarshalToken() ([]byte, error) {
+	ts.Type = "gemini"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // GeminiTokenStorage stores OAuth2 token information for Google Gemini API authentication.
 // It maintains compatibility with the existing auth system while adding Gemini-specific fields
