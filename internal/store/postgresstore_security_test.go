@@ -1130,6 +1130,18 @@ func TestPostgresStoreMigratesLegacyAuthIDs(t *testing.T) {
 	}
 }
 
+func TestMigratedLegacyAuthIDOnlyAppendsMissingJSONSuffix(t *testing.T) {
+	got, err := migratedLegacyAuthID("nested/token.txt")
+	if err != nil || got != "nested/token.txt.json" {
+		t.Fatalf("migrated legacy id = %q, %v", got, err)
+	}
+	for _, id := range []string{"already.json", "already.JSON"} {
+		if got, err = migratedLegacyAuthID(id); err == nil || got != "" || !strings.Contains(err.Error(), "already has") {
+			t.Fatalf("already-suffixed legacy id %q = %q, %v", id, got, err)
+		}
+	}
+}
+
 func TestPostgresStoreBootstrapMigratesLegacyIDsBeforeMirrorSync(t *testing.T) {
 	store, mock, authDir := newPostgresSecurityTestStore(t)
 	store.configPath = filepath.Join(store.spoolRoot, "config", "config.yaml")
