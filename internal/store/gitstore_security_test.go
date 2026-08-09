@@ -403,6 +403,20 @@ func TestGitTokenStoreSecuresPermissionsAndSweepsOnlyStaleAtomicTemps(t *testing
 	}
 }
 
+func TestGitTokenStoreEnsureRepositoryRecreatesMissingAuthDirBeforeSave(t *testing.T) {
+	store, authDir := newSecurityTestGitStore(t)
+	if err := os.RemoveAll(authDir); err != nil {
+		t.Fatal(err)
+	}
+	filePath, err := store.Save(context.Background(), gitMetadataAuth("provider/token.json", "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filePath); err != nil {
+		t.Fatalf("Save did not recreate auth directory: %v", err)
+	}
+}
+
 func TestGitTokenStoreHonorsCanceledContextBeforeRepositoryWork(t *testing.T) {
 	store := NewGitTokenStore(filepath.Join(t.TempDir(), "missing.git"), "", "")
 	store.SetBaseDir(filepath.Join(t.TempDir(), "worktree", "auths"))
