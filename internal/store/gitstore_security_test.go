@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	emptyauth "github.com/traylinx/switchAILocal/internal/auth/empty"
 	switchailocalauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 )
 
 type gitRecordingTokenStorage struct {
 	raw       []byte
+	err       error
 	saveCalls int
 }
 
@@ -24,7 +26,12 @@ func (s *gitRecordingTokenStorage) SaveTokenToFile(string) error {
 	return errors.New("path-based serializer must not be called")
 }
 
-func (s *gitRecordingTokenStorage) MarshalToken() ([]byte, error) { return s.raw, nil }
+func (s *gitRecordingTokenStorage) MarshalToken() ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.raw, nil
+}
 
 type gitLegacyOnlyTokenStorage struct{}
 
@@ -53,6 +60,34 @@ func gitMetadataAuth(id, provider string) *switchailocalauth.Auth {
 	return &switchailocalauth.Auth{ID: id, Metadata: map[string]any{"type": provider}}
 }
 
+func gitHeadFileState(t *testing.T, authDir, id string) (plumbing.Hash, bool) {
+	t.Helper()
+	repoRoot := filepath.Dir(authDir)
+	repo, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(authDir, filepath.FromSlash(id))
+	rel, err := filepath.Rel(repoRoot, filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tree.File(filepath.ToSlash(rel))
+	return head.Hash(), err == nil
+}
+
 func TestGitTokenStoreNestedSaveListAndContainedAbsoluteDelete(t *testing.T) {
 	store, authDir := newSecurityTestGitStore(t)
 	auth := gitMetadataAuth("provider/tenant/token.json", "test")
@@ -69,6 +104,10 @@ func TestGitTokenStoreNestedSaveListAndContainedAbsoluteDelete(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode = %o", info.Mode().Perm())
+	}
+	savedHead, tracked := gitHeadFileState(t, authDir, auth.ID)
+	if !tracked {
+		t.Fatal("saved credential is absent from git HEAD")
 	}
 	listed, err := store.List(context.Background())
 	if err != nil {
@@ -97,6 +136,13 @@ func TestGitTokenStoreNestedSaveListAndContainedAbsoluteDelete(t *testing.T) {
 	}
 	if !status.IsClean() {
 		t.Fatalf("git worktree dirty after Delete: %s", status.String())
+	}
+	deletedHead, tracked := gitHeadFileState(t, authDir, auth.ID)
+	if tracked {
+		t.Fatal("deleted credential remains in git HEAD")
+	}
+	if deletedHead == savedHead {
+		t.Fatal("Delete did not advance git HEAD")
 	}
 }
 
@@ -139,6 +185,13 @@ func TestGitTokenStoreRejectsEscapesAndPortableAliases(t *testing.T) {
 	if err != nil || string(got) != string(original) {
 		t.Fatalf("outside file changed: %q, %v", got, err)
 	}
+	listed, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("rejected aliases created extra credentials: %#v", listed)
+	}
 }
 
 func TestGitTokenStoreRejectsInvalidIDsWithoutMutation(t *testing.T) {
@@ -152,6 +205,12 @@ func TestGitTokenStoreRejectsInvalidIDsWithoutMutation(t *testing.T) {
 		"provider/\x00.json",
 		"provider/token.txt",
 		"provider/.json",
+		"",
+		".",
+		"..",
+		"provider/",
+		"provider/./token.json",
+		"/absolute.json",
 	} {
 		t.Run(strings.ReplaceAll(id, "/", "_"), func(t *testing.T) {
 			store, authDir := newSecurityTestGitStore(t)
@@ -274,6 +333,9 @@ func TestGitTokenStoreDeleteCommitsAlreadyMissingTrackedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, tracked := gitHeadFileState(t, authDir, id); !tracked {
+		t.Fatal("precondition failed: credential was never tracked in git HEAD")
+	}
 	if err = os.Remove(filePath); err != nil {
 		t.Fatal(err)
 	}
@@ -349,6 +411,16 @@ func TestGitTokenStoreUsesRootSafeMarshalerAndPreservesEmptySemantics(t *testing
 	if _, err = os.Stat(filepath.Join(authDir, "provider", "zero.json")); !os.IsNotExist(err) {
 		t.Fatalf("empty non-nil payload left file: %v", err)
 	}
+	wantMarshalErr := errors.New("serialize failed")
+	if _, err = store.Save(context.Background(), &switchailocalauth.Auth{
+		ID:      "provider/error.json",
+		Storage: &gitRecordingTokenStorage{err: wantMarshalErr},
+	}); !errors.Is(err, wantMarshalErr) {
+		t.Fatalf("marshal error = %v; want %v", err, wantMarshalErr)
+	}
+	if _, err = os.Stat(filepath.Join(authDir, "provider", "error.json")); !os.IsNotExist(err) {
+		t.Fatalf("marshal failure left file: %v", err)
+	}
 
 	empty := &switchailocalauth.Auth{ID: "provider/empty.json", Storage: &emptyauth.EmptyStorage{}}
 	emptyPath, err := store.Save(context.Background(), empty)
@@ -381,8 +453,10 @@ func TestGitTokenStoreSecuresPermissionsAndSweepsOnlyStaleAtomicTemps(t *testing
 		}
 	}
 	old := time.Now().Add(-2 * storeTempMaxAge)
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{stale, unrelated} {
+		if err := os.Chtimes(file, old, old); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := store.Save(context.Background(), gitMetadataAuth("provider/token.json", "test")); err != nil {
 		t.Fatal(err)
@@ -400,6 +474,48 @@ func TestGitTokenStoreSecuresPermissionsAndSweepsOnlyStaleAtomicTemps(t *testing
 		if _, err := os.Stat(file); err != nil {
 			t.Fatalf("non-stale temp %q removed: %v", file, err)
 		}
+	}
+	entries, err := os.ReadDir(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exactTemps := 0
+	for _, entry := range entries {
+		if isStoredAuthTempName(entry.Name()) {
+			exactTemps++
+		}
+	}
+	if exactTemps != 1 {
+		t.Fatalf("exact atomic temp count = %d; want only fresh residue", exactTemps)
+	}
+	listed, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != "provider/token.json" {
+		t.Fatalf("List surfaced temp residue: %#v", listed)
+	}
+}
+
+func TestGitTokenStoreOverwriteRestoresCredentialMode(t *testing.T) {
+	store, _ := newSecurityTestGitStore(t)
+	id := "provider/token.json"
+	filePath, err := store.Save(context.Background(), gitMetadataAuth(id, "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod(filePath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Save(context.Background(), gitMetadataAuth(id, "second")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("overwritten credential mode = %o", info.Mode().Perm())
 	}
 }
 
