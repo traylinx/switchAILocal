@@ -86,6 +86,20 @@ curl -X POST http://localhost:18080/v0/management/providers/discover-models \
 }
 ```
 
+### URL safety for connectivity probes
+
+The `providers/test` and `providers/discover-models` probes accept only
+absolute `http://` or `https://` URLs with a host. URL userinfo and fragments
+are rejected. This applies independently to base, models, and proxy URLs.
+
+Loopback, RFC-1918, link-local, and other reachable network ranges are
+intentionally allowed because local and LAN providers are a supported product
+shape. These endpoints are therefore restricted by the management-auth
+boundary, not by an IP blocklist. Probe redirects remain enabled up to ten
+requests; every redirect target is revalidated against the same scheme, host,
+and userinfo rules. The probe endpoints accept only HTTP(S) proxies even when a
+separately configured runtime transport supports another proxy scheme.
+
 ## Gemini API Keys
 
 ### List Keys
