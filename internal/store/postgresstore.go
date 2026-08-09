@@ -667,13 +667,13 @@ func (s *PostgresStore) migrateLegacyAuthIDs(ctx context.Context) error {
 		return fmt.Errorf("postgres store: iterate legacy auth ids: %w", err)
 	}
 
-	type migration struct{ from, to string }
-	migrations := make([]migration, 0)
-	type seenTarget struct {
-		source         string
+	type migrationCandidate struct {
+		from, to       string
+		foldKey        string
 		needsMigration bool
 	}
-	seenTargetsByFoldKey := make(map[string]seenTarget, len(ids))
+	candidates := make([]migrationCandidate, 0, len(ids))
+	candidatesByFoldKey := make(map[string][]migrationCandidate, len(ids))
 	for _, id := range ids {
 		targetID, errID := canonicalStoredDatabaseAuthID(id)
 		needsMigration := errID != nil
@@ -688,16 +688,28 @@ func (s *PostgresStore) migrateLegacyAuthIDs(ctx context.Context) error {
 		if errFold != nil {
 			return fmt.Errorf("postgres store: fold migrated auth id %q: %w", targetID, errFold)
 		}
-		if existing, ok := seenTargetsByFoldKey[foldKey]; ok && existing.source != id {
-			if existing.needsMigration || needsMigration {
-				return fmt.Errorf("postgres store: legacy auth id migration conflict: %q and %q map to portable aliases", existing.source, id)
+		candidate := migrationCandidate{from: id, to: targetID, foldKey: foldKey, needsMigration: needsMigration}
+		candidates = append(candidates, candidate)
+		candidatesByFoldKey[foldKey] = append(candidatesByFoldKey[foldKey], candidate)
+	}
+
+	migrations := make([]migrationCandidate, 0)
+	warnedFoldKeys := make(map[string]bool)
+	for _, candidate := range candidates {
+		group := candidatesByFoldKey[candidate.foldKey]
+		if len(group) > 1 {
+			if !warnedFoldKeys[candidate.foldKey] {
+				sources := make([]string, 0, len(group))
+				for _, item := range group {
+					sources = append(sources, item.from)
+				}
+				log.Warnf("postgres store: database auth ids %q are portable aliases; leaving ambiguous legacy rows unmigrated", sources)
+				warnedFoldKeys[candidate.foldKey] = true
 			}
-			log.Warnf("postgres store: existing database auth ids %q and %q are portable aliases; read paths will keep the first C-collated row", existing.source, id)
 			continue
 		}
-		seenTargetsByFoldKey[foldKey] = seenTarget{source: id, needsMigration: needsMigration}
-		if targetID != id {
-			migrations = append(migrations, migration{from: id, to: targetID})
+		if candidate.needsMigration {
+			migrations = append(migrations, candidate)
 		}
 	}
 

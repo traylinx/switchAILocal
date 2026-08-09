@@ -1179,19 +1179,22 @@ func TestPostgresStoreBootstrapMigratesLegacyIDsBeforeMirrorSync(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreLegacyAuthIDMigrationRejectsPortableCollision(t *testing.T) {
+func TestPostgresStoreLegacyAuthIDMigrationQuarantinesPortableCollision(t *testing.T) {
 	store, mock, _ := newPostgresSecurityTestStore(t)
 	expectPostgresAuthMutationStart(mock)
 	rows := sqlmock.NewRows([]string{"id"}).
 		AddRow("github/Alice").
-		AddRow("github/alice.json")
+		AddRow("github/alice.json").
+		AddRow("provider/safe")
 	mock.ExpectQuery(`SELECT id FROM "auth_store" ORDER BY id COLLATE "C"`).WillReturnRows(rows)
-	mock.ExpectRollback()
-	err := store.migrateLegacyAuthIDs(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "migration conflict") {
-		t.Fatalf("legacy migration collision error = %v", err)
+	mock.ExpectExec(`UPDATE "auth_store" SET id = \$1 WHERE id = \$2`).
+		WithArgs("provider/safe.json", "provider/safe").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := store.migrateLegacyAuthIDs(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if err = mock.ExpectationsWereMet(); err != nil {
+	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 }
