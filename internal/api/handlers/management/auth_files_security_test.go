@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +22,28 @@ type invalidAuthLeafNameCase struct {
 	fileName     string
 	absolute     bool
 	expectedBody string
+}
+
+type recordingManagementAuthStore struct {
+	baseDir   string
+	deleteIDs []string
+}
+
+func (*recordingManagementAuthStore) List(context.Context) ([]*coreauth.Auth, error) {
+	return nil, nil
+}
+
+func (*recordingManagementAuthStore) Save(context.Context, *coreauth.Auth) (string, error) {
+	return "", nil
+}
+
+func (store *recordingManagementAuthStore) Delete(_ context.Context, id string) error {
+	store.deleteIDs = append(store.deleteIDs, id)
+	return nil
+}
+
+func (store *recordingManagementAuthStore) SetBaseDir(baseDir string) {
+	store.baseDir = baseDir
 }
 
 func invalidAuthLeafNameCases() []invalidAuthLeafNameCase {
@@ -260,4 +283,43 @@ func TestDeleteAuthFile_AcceptsValidLeafName(t *testing.T) {
 	assert.JSONEq(t, `{"status":"ok"}`, w.Body.String())
 	_, err := os.Stat(filePath)
 	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestDeleteTokenRecordUsesCanonicalAuthID(t *testing.T) {
+	authDir := t.TempDir()
+	store := &recordingManagementAuthStore{}
+	h := &Handler{
+		cfg:        &config.Config{AuthDir: authDir},
+		tokenStore: store,
+	}
+
+	absolutePath := filepath.Join(authDir, "provider", "tenant", "token.json")
+	if err := h.deleteTokenRecord(context.Background(), absolutePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deleteTokenRecord(context.Background(), "provider/second.json"); err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, authDir, store.baseDir)
+	assert.Equal(t, []string{"provider/tenant/token.json", "provider/second.json"}, store.deleteIDs)
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	relativeAuthDir, err := filepath.Rel(cwd, authDir)
+	require.NoError(t, err)
+	relativeStore := &recordingManagementAuthStore{}
+	relativeHandler := &Handler{
+		cfg:        &config.Config{AuthDir: relativeAuthDir},
+		tokenStore: relativeStore,
+	}
+	if err = relativeHandler.deleteTokenRecord(context.Background(), absolutePath); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, []string{"provider/tenant/token.json"}, relativeStore.deleteIDs)
+
+	outsidePath := filepath.Join(filepath.Dir(authDir), "outside.json")
+	err = h.deleteTokenRecord(context.Background(), outsidePath)
+	require.ErrorContains(t, err, "auth path is empty")
+	assert.Equal(t, []string{"provider/tenant/token.json", "provider/second.json"}, store.deleteIDs)
 }
