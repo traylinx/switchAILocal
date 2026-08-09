@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,15 +37,28 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 	if req.ModelsURL == "" {
 		// Try to infer models URL from BaseURL if possible
 		if req.BaseURL != "" {
-			trimmed := strings.TrimSuffix(req.BaseURL, "/")
-			if strings.Contains(req.BaseURL, "ollama") || strings.Contains(req.BaseURL, "localhost:11434") {
-				req.ModelsURL = trimmed + "/api/tags"
-			} else {
-				// Default to OpenAI standard
-				req.ModelsURL = trimmed + "/models"
+			baseURL, err := inferProviderModelsURL(req.BaseURL)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+				return
 			}
+			req.ModelsURL = baseURL.String()
 		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing_url", "message": "Models URL or Base URL is required"})
+			return
+		}
+	}
+	modelsURL, err := parseProviderHTTPURL(req.ModelsURL, "modelsUrl")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url", "message": err.Error()})
+		return
+	}
+
+	var proxyURL *url.URL
+	if req.ProxyURL != "" {
+		proxyURL, err = parseProviderHTTPURL(req.ProxyURL, "proxyUrl")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_proxy", "message": err.Error()})
 			return
 		}
 	}
@@ -54,25 +66,11 @@ func (h *Handler) DiscoverModels(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
+	client := providerHTTPClient(15*time.Second, proxyURL)
 
-	// Configure Proxy
-	if req.ProxyURL != "" {
-		proxyURL, err := url.Parse(req.ProxyURL)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_proxy", "message": "Invalid Proxy URL"})
-			return
-		}
-		client.Transport = &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		}
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.ModelsURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL.String(), nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "request_creation_failed", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request_creation_failed", "message": err.Error()})
 		return
 	}
 
