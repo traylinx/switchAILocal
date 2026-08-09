@@ -67,10 +67,10 @@ func TestCircuitBreaker_StateTransitions(t *testing.T) {
 	// test failure from half-open goes back to open instantly
 	cb.RecordFailure()
 	cb.RecordFailure()
-	cb.RecordFailure() // trip again
+	cb.RecordFailure()                 // trip again
 	time.Sleep(150 * time.Millisecond) // wait
-	_ = cb.AllowRequest() // transition to half-open
-	cb.RecordFailure() // fail the probe
+	_ = cb.AllowRequest()              // transition to half-open
+	cb.RecordFailure()                 // fail the probe
 	if cb.State() != circuit.StateOpen {
 		t.Fatalf("expected state to return to open after failed probe, got %v", cb.State())
 	}

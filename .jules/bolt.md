@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-09 - Pooling Response Writer Buffers
+**Learning:** When using `sync.Pool` for dynamically allocated buffers (like `bytes.Buffer`) within critical HTTP middleware paths to recycle memory, it is crucial to enforce a maximum capacity check before returning the buffer to the pool. This prevents permanent memory bloat from occasional massive payloads.
+**Action:** Always check `if buf.Cap() <= MaxAllowedSize` before calling `pool.Put(buf)` in high-throughput data paths.
