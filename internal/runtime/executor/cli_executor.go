@@ -516,16 +516,29 @@ func (e *LocalCLIExecutor) executeRemote(ctx context.Context, remoteHost, binary
 	jsonBody, _ := json.Marshal(reqBody)
 
 	// Reject non-HTTP schemes and host-less URLs before constructing /run.
+	// Validate remote host URL to prevent SSRF
 	parsedURL, err := url.Parse(remoteHost)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
 		return switchailocalexecutor.Response{}, fmt.Errorf("invalid remote host URL, must use http or https scheme and include a host")
 	}
 
-	targetURL := *parsedURL
-	targetURL.Path = strings.TrimSuffix(targetURL.Path, "/") + "/run"
-	targetURL.RawPath = ""
-	targetURL.Fragment = ""
-	targetURL.RawFragment = ""
+	// Safely reconstruct the target URL using a strict url.URL struct literal
+	// to prevent injection of malicious paths, query parameters, or host spoofing
+	targetURL := url.URL{
+		Scheme: parsedURL.Scheme,
+		Host:   parsedURL.Host,
+		Path:   strings.TrimSuffix(parsedURL.Path, "/") + "/run",
+	}
+
+	// We also need to get user info if any
+	if parsedURL.User != nil {
+		targetURL.User = parsedURL.User
+	}
+
+	// We also need to preserve RawQuery if any
+	if parsedURL.RawQuery != "" {
+		targetURL.RawQuery = parsedURL.RawQuery
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL.String(), bytes.NewReader(jsonBody))
 	if err != nil {
