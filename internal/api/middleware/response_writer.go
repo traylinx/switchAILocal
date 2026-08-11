@@ -11,11 +11,18 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
+
+var responseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -55,7 +62,7 @@ type ResponseWriterWrapper struct {
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           responseBodyPool.Get().(*bytes.Buffer),
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -247,6 +254,10 @@ func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
 // including any API-specific request/response data stored in the Gin context.
 func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	if w.logger == nil {
+		w.body.Reset()
+		if w.body.Cap() <= 128*1024 {
+			responseBodyPool.Put(w.body)
+		}
 		return nil
 	}
 
@@ -270,6 +281,10 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	hasAPIError := len(slicesAPIResponseError) > 0 || finalStatusCode >= http.StatusBadRequest
 	forceLog := w.logOnErrorOnly && hasAPIError && !w.logger.IsEnabled()
 	if !w.logger.IsEnabled() && !forceLog {
+		w.body.Reset()
+		if w.body.Cap() <= 128*1024 {
+			responseBodyPool.Put(w.body)
+		}
 		return nil
 	}
 
@@ -295,13 +310,33 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		}
 		if err := w.streamWriter.Close(); err != nil {
 			w.streamWriter = nil
+			w.body.Reset()
+			if w.body.Cap() <= 128*1024 {
+				responseBodyPool.Put(w.body)
+			}
 			return err
 		}
 		w.streamWriter = nil
+		w.body.Reset()
+		if w.body.Cap() <= 128*1024 {
+			responseBodyPool.Put(w.body)
+		}
 		return nil
 	}
 
-	return w.logRequest(finalStatusCode, w.cloneHeaders(), w.body.Bytes(), w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+	// Capture body bytes before returning buffer to pool
+	bodyBytes := w.body.Bytes()
+	copiedBody := make([]byte, len(bodyBytes))
+	copy(copiedBody, bodyBytes)
+
+	// Reset and return buffer to pool
+	w.body.Reset()
+	// Prevent memory bloat from occasional massive payloads
+	if w.body.Cap() <= 128*1024 {
+		responseBodyPool.Put(w.body)
+	}
+
+	return w.logRequest(finalStatusCode, w.cloneHeaders(), copiedBody, w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
