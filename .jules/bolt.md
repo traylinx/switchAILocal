@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-12 - sync.Pool in ResponseWriterWrapper
+**Learning:** When using `sync.Pool` to recycle `bytes.Buffer` within HTTP middleware wrappers (like Gin's ResponseWriter), the `Put` operation must be placed inside a `defer` block at the beginning of the finalization method. Placing it at the end of the method leaves the buffer abandoned if the method hits an early return (e.g. for unlogged requests), defeating the optimization for those paths.
+**Action:** Always wrap `sync.Pool.Put` in a `defer` when placing it in functions with multiple return paths to ensure buffers are consistently reclaimed, checking first that the buffer isn't nil and hasn't exceeded its capacity limit.
