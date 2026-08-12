@@ -11,11 +11,20 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
+
+// responseBodyPool is a sync.Pool for bytes.Buffer used to store response bodies.
+// This reduces garbage collection pressure by reusing buffers across requests.
+var responseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -53,9 +62,12 @@ type ResponseWriterWrapper struct {
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+	buf := responseBodyPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           buf,
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -246,6 +258,15 @@ func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
 // For non-streaming responses, it logs the complete request and response details,
 // including any API-specific request/response data stored in the Gin context.
 func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
+	if w.body != nil {
+		defer func() {
+			if w.body.Cap() <= 128*1024 {
+				responseBodyPool.Put(w.body)
+			}
+			w.body = nil
+		}()
+	}
+
 	if w.logger == nil {
 		return nil
 	}
@@ -301,7 +322,11 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		return nil
 	}
 
-	return w.logRequest(finalStatusCode, w.cloneHeaders(), w.body.Bytes(), w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+	// Capture body bytes before returning buffer to pool
+	// Copy the bytes since the buffer will be reused
+	bodyBytes := append([]byte(nil), w.body.Bytes()...)
+
+	return w.logRequest(finalStatusCode, w.cloneHeaders(), bodyBytes, w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
