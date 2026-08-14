@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-14 - sync.Pool overhead and String Concatenation Optimization
+**Learning:** Attempting to optimize `bytes.Buffer` allocations using `sync.Pool` in `ResponseWriterWrapper` actually degraded performance (from 277ns/op to 411ns/op). The overhead of acquiring/releasing from the pool outweighed the benefits of recycling small buffers. However, optimizing string concatenation in hot paths (like SSE event payload building) by replacing `fmt.Sprintf` with direct concatenation (`+`) proved highly effective, nearly doubling throughput by avoiding reflection overhead.
+**Action:** Do not blindly apply `sync.Pool` for small, short-lived buffers without benchmarking, as the locking/pool mechanics introduce overhead. When building small strings in hot loops, always prefer direct concatenation (`+`) over `fmt.Sprintf` or `strings.Builder` for optimal performance.
