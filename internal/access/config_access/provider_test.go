@@ -3,8 +3,8 @@ package configaccess
 import (
 	"context"
 	"net/http"
-	"testing"
 	"net/url"
+	"testing"
 
 	sdkaccess "github.com/traylinx/switchAILocal/sdk/access"
 	sdkconfig "github.com/traylinx/switchAILocal/sdk/config"
@@ -109,7 +109,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			for k, v := range tt.headers {
 				req.Header.Set(k, v)
 			}
-			
+
 			// Add queryparams
 			q := req.URL.Query()
 			for k, v := range tt.queryParams {

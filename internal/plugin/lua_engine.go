@@ -587,38 +587,38 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 			L.Push(lua.LString("missing arguments: req (cmd, args, env, toolName, toolArgs)"))
 			return 2
 		}
-		
+
 		cmdName := L.CheckString(1)
-		
+
 		argsTbl := L.CheckTable(2)
 		var args []string
 		argsTbl.ForEach(func(_, v lua.LValue) {
 			args = append(args, v.String())
 		})
-		
+
 		envTbl := L.CheckTable(3)
 		var env = make(map[string]string)
 		envTbl.ForEach(func(k, v lua.LValue) {
 			env[k.String()] = v.String()
 		})
-		
+
 		toolName := L.CheckString(4)
-		
+
 		toolArgsTbl := L.CheckTable(5)
 		toolArgs := e.luaTableToGoMap(toolArgsTbl)
-		
+
 		ctx := L.Context()
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		
+
 		output, err := executeMCPToolCall(ctx, cmdName, args, env, toolName, toolArgs)
 		if err != nil {
-			L.Push(lua.LString(output)) 
+			L.Push(lua.LString(output))
 			L.Push(lua.LString(err.Error()))
 			return 2
 		}
-		
+
 		L.Push(lua.LString(output))
 		L.Push(lua.LNil) // No error
 		return 2
@@ -677,7 +677,7 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 						if urlStr, ok := imgUrlData["url"].(string); ok {
 							// Call Minimax VLM natively
 							vlmReqBody, _ := json.Marshal(map[string]any{
-								"prompt": prompt,
+								"prompt":    prompt,
 								"image_url": urlStr,
 							})
 
@@ -685,10 +685,10 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 							if err == nil {
 								req.Header.Set("Content-Type", "application/json")
 								req.Header.Set("Authorization", "Bearer "+apiKey)
-								
+
 								client := &http.Client{Timeout: 60 * time.Second}
 								resp, err := client.Do(req)
-								
+
 								newContent := map[string]any{"type": "text"}
 								if err != nil {
 									newContent["text"] = "[Image extraction failed network error: " + err.Error() + "]"
@@ -739,23 +739,25 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 			L.Push(lua.LString("missing arguments"))
 			return 2
 		}
-		
+
 		bodyStr := L.CheckString(1)
 		cmdName := L.CheckString(2)
-		
+
 		argsTbl := L.CheckTable(3)
 		var args []string
 		argsTbl.ForEach(func(_, v lua.LValue) { args = append(args, v.String()) })
-		
+
 		envTbl := L.CheckTable(4)
 		var env = make(map[string]string)
 		envTbl.ForEach(func(k, v lua.LValue) { env[k.String()] = v.String() })
-		
+
 		toolName := L.CheckString(5)
 		prompt := L.CheckString(6)
 
 		ctx := L.Context()
-		if ctx == nil { ctx = context.Background() }
+		if ctx == nil {
+			ctx = context.Background()
+		}
 
 		// Parse body natively in Go
 		var payload map[string]any
@@ -775,15 +777,23 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 
 		for i, msgVal := range msgsVal {
 			msg, ok := msgVal.(map[string]any)
-			if !ok { continue }
-			if role, _ := msg["role"].(string); role != "user" { continue }
+			if !ok {
+				continue
+			}
+			if role, _ := msg["role"].(string); role != "user" {
+				continue
+			}
 
 			contents, ok := msg["content"].([]any)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 
 			for j, contentVal := range contents {
 				content, ok := contentVal.(map[string]any)
-				if !ok { continue }
+				if !ok {
+					continue
+				}
 
 				if t, _ := content["type"].(string); t == "image_url" {
 					if imgUrlData, ok := content["image_url"].(map[string]any); ok {
@@ -791,7 +801,7 @@ func (e *LuaEngine) registerSwitchAIModule(L *lua.LState) {
 							// Execute MCP tool natively in Go
 							toolArgs := map[string]any{"prompt": prompt, "image_source": urlStr}
 							out, err := executeMCPToolCall(ctx, cmdName, args, env, toolName, toolArgs)
-							
+
 							newContent := map[string]any{"type": "text"}
 							if err != nil {
 								newContent["text"] = "[Image extraction failed internally: " + err.Error() + "]"

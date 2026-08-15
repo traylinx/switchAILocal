@@ -60,11 +60,11 @@ type ProviderProber interface {
 
 // DiscoveryService orchestrates parallel health and tier probing
 type DiscoveryService struct {
-	config   DiscoveryConfig
-	probers  []ProviderProber
-	cache    map[string]ProbeResult
-	cacheMu  sync.RWMutex
-	lastRun  time.Time
+	config  DiscoveryConfig
+	probers []ProviderProber
+	cache   map[string]ProbeResult
+	cacheMu sync.RWMutex
+	lastRun time.Time
 }
 
 // NewDiscoveryService initializes the orchestrator with configured probers

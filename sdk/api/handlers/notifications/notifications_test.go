@@ -405,8 +405,8 @@ func TestLookupTelegramBot(t *testing.T) {
 }
 
 func TestIsChatAllowed(t *testing.T) {
-	open := config.TelegramBot{}                                     // empty allowlist => any
-	restricted := config.TelegramBot{AllowedChatIDs: []int64{1, 2}}  // explicit
+	open := config.TelegramBot{}                                    // empty allowlist => any
+	restricted := config.TelegramBot{AllowedChatIDs: []int64{1, 2}} // explicit
 	if !open.IsChatAllowed(999) {
 		t.Errorf("open bot must allow any chat_id")
 	}
