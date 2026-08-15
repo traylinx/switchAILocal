@@ -397,10 +397,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	var autoResolver *autoroute.AutoResolver
 	if cfg.AutoRouting.Enabled {
 		log.Info("Initializing Intelligent Auto-Routing System")
-		
+
 		// 1. Setup Discovery Service
 		discoverySvc := autoroute.NewDiscoveryService(cfg.AutoRouting.Discovery)
-		
+
 		// 2. Register probers based on configured credentials
 		// CLI Probers
 		discoverySvc.RegisterProber(probes.NewCLIProber("geminicli", "gemini"))
@@ -412,16 +412,16 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			name := fmt.Sprintf("gemini-api-%d", i)
 			endpoint := "/v1beta/models"
 			if key.ModelsURL != "" {
-			    endpoint = key.ModelsURL
+				endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "Authorization"))
 		}
-		
+
 		for i, key := range cfg.ClaudeKey {
 			name := fmt.Sprintf("claude-api-%d", i)
 			endpoint := "/v1/models"
 			if key.ModelsURL != "" {
-			    endpoint = key.ModelsURL
+				endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "x-api-key"))
 		}
@@ -437,30 +437,30 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		// 3. Run Boot-Time Discovery
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		
+
 		var candidates []autoroute.CandidateInput
 		if cfg.AutoRouting.Discovery.ProbeOnStartup {
 			log.Info("Running boot-time provider discovery")
 			results := discoverySvc.DiscoverAll(ctx)
-			
+
 			// 4. Convert discovery results to CandidateInputs
 			for provider, res := range results {
 				if !res.Available {
 					log.WithField("provider", provider).Warn("Provider unavailable during discovery")
 					continue
 				}
-				
+
 				for _, model := range res.Models {
-				    candidates = append(candidates, autoroute.CandidateInput{
-					    Provider:  provider,
-					    Model:     model.ID,
-					    Available: true,
-					    Latency:   res.Latency,
-					    SuccessRate: 1.0, 
-					    QuotaHealth: 1.0,
-				    })
+					candidates = append(candidates, autoroute.CandidateInput{
+						Provider:    provider,
+						Model:       model.ID,
+						Available:   true,
+						Latency:     res.Latency,
+						SuccessRate: 1.0,
+						QuotaHealth: 1.0,
+					})
 				}
-				
+
 				log.WithFields(log.Fields{
 					"provider": provider,
 					"models":   len(res.Models),
@@ -468,16 +468,16 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 				}).Info("Discovered provider models")
 			}
 		} else {
-			// If probing disabled on boot, just populate basic fallback providers 
+			// If probing disabled on boot, just populate basic fallback providers
 			for _, p := range []string{"geminicli", "claudecli", "codex", "ollama"} {
-			    candidates = append(candidates, autoroute.CandidateInput{
-					Provider: p,
-					Model:    "auto", 
-					Available: true,
-					Latency:   0,
+				candidates = append(candidates, autoroute.CandidateInput{
+					Provider:    p,
+					Model:       "auto",
+					Available:   true,
+					Latency:     0,
 					SuccessRate: 1.0,
 					QuotaHealth: 1.0,
-			    })
+				})
 			}
 		}
 
@@ -595,7 +595,7 @@ func (s *Server) setupRoutes() {
 	if s.cfg != nil {
 		observability.RegisterMetricsRoute(s.engine, s.cfg.Observability.Metrics.Enabled, s.cfg.Observability.Metrics.Path)
 	}
-	
+
 	s.engine.GET("/management", s.serveManagementControlPanel)
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
@@ -1454,7 +1454,7 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
-				
+
 				hasher := sha256.New()
 				hasher.Write([]byte(result.Principal))
 				c.Set("api_key_hash", "sha256:"+hex.EncodeToString(hasher.Sum(nil)))

@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize string concatenation for SSE event formatting
+**Learning:** In Go, string concatenation (`+`) is significantly faster than `fmt.Sprintf` for constructing simple strings in hot paths like SSE event emission (e.g., `emitEvent`, `emitRespEvent`). This eliminates reflection overhead and minimizes per-chunk allocations, as the Go compiler optimizes `+` into a single allocation via `runtime.concatstrings`.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`) when building basic string formats in high-throughput areas, such as streaming endpoints.

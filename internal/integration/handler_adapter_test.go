@@ -80,7 +80,7 @@ func TestHandlerAdapter_RecordRouting_WithNilIntegrator(t *testing.T) {
 func TestHandlerAdapter_EmitRoutingEvent_WithMap(t *testing.T) {
 	// Create a mock integrator with a real event bus
 	emitCalled := false
-	
+
 	// We can't easily mock the event bus, so we'll just verify the method doesn't panic
 	mockIntegrator := &RequestPipelineIntegrator{
 		eventBus: nil, // Event bus is optional

@@ -6,23 +6,23 @@ import (
 
 // RequestOutcome represents the real-world result of a routing decision.
 type RequestOutcome struct {
-	Timestamp          time.Time
-	Model              string
-	Provider           string
-	Tier               string
-	Latency            time.Duration
-	Success            bool
-	StatusCode         int
+	Timestamp           time.Time
+	Model               string
+	Provider            string
+	Tier                string
+	Latency             time.Duration
+	Success             bool
+	StatusCode          int
 	EstimatedComplexity float64
-	TokensUsed         int // If available
+	TokensUsed          int // If available
 }
 
 // RQSWeightConfig defines the importance of different factors in the
 // Routing Quality Score (RQS). This is the master "val_bpb" metric.
 type RQSWeightConfig struct {
-	Success     float64
-	Latency     float64
-	Efficiency  float64
+	Success      float64
+	Latency      float64
+	Efficiency   float64
 	Conservation float64
 }
 
@@ -110,7 +110,7 @@ func calculateEfficiency(tier string, complexity float64) float64 {
 // calculateConservation specifically rewards saving premium tokens on simple tasks.
 func calculateConservation(tier string, complexity float64) float64 {
 	isSimple := complexity < 0.4
-	
+
 	if isSimple {
 		if tier == TierFree || tier == TierLocal {
 			return 1.0 // Maximum conservation achieved
