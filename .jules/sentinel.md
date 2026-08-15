@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-15 - Fix SSRF via taint analysis in executeRemote
+**Vulnerability:** gosec flagged G704 (SSRF via taint analysis) because parsed URLs were being directly modified and stringified without explicit structural validation.
+**Learning:** When mitigating SSRF, gosec taint analysis requires explicit reconstruction of the URL using a `url.URL` struct literal rather than mutating the original parsed object or concatenating strings, to guarantee untrusted inputs are structurally sanitized.
+**Prevention:** Always parse untrusted URLs with `url.Parse`, strictly validate the `Scheme` and `Host`, and use a `url.URL{...}` literal to safely reconstruct the final URL before making HTTP requests.
