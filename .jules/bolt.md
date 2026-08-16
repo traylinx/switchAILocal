@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-16 - Optimize SSE string building
+**Learning:** Go optimizes simple string concatenations (e.g. `"data: " + msg + "\n\n"`) significantly better than `fmt.Sprintf`, saving reflection overhead and allocations in the SSE streaming hot path (benchmark showed 143ns vs 81ns).
+**Action:** In hot paths building SSE text outputs, use string concatenation instead of `fmt.Sprintf`.
