@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Pooling Response Writer Buffers
+**Learning:** In the API gateway's hot path, `ResponseWriterWrapper` previously allocated a new `bytes.Buffer` for every HTTP response. This created unnecessary allocations and GC pressure, particularly for non-streaming requests. Using a `sync.Pool` to recycle these buffers provides measurable allocation savings.
+**Action:** Always consider `sync.Pool` for buffers created on a per-request basis in middleware, ensuring to cap the maximum buffer size returned to the pool to prevent memory bloat from occasional massive payloads.
