@@ -26,9 +26,9 @@ func TestProviderTimeouts_Resolve(t *testing.T) {
 		{"openai", 20 * time.Second},
 		{"anthropic", 60 * time.Second},
 		{"ollama", 180 * time.Second},
-		{"gemini", 30 * time.Second},    // unknown → default
-		{"", 30 * time.Second},          // empty → default
-		{"unknown", 30 * time.Second},   // unknown → default
+		{"gemini", 30 * time.Second},  // unknown → default
+		{"", 30 * time.Second},        // empty → default
+		{"unknown", 30 * time.Second}, // unknown → default
 	}
 
 	for _, tt := range tests {
@@ -95,10 +95,10 @@ func TestStreamHealth_ResolveFirstByte(t *testing.T) {
 		provider string
 		want     time.Duration
 	}{
-		{"minimax", 30 * time.Second},  // override
-		{"ollama", 60 * time.Second},   // override
-		{"openai", 15 * time.Second},   // unknown → global default
-		{"", 15 * time.Second},         // empty → global default
+		{"minimax", 30 * time.Second}, // override
+		{"ollama", 60 * time.Second},  // override
+		{"openai", 15 * time.Second},  // unknown → global default
+		{"", 15 * time.Second},        // empty → global default
 	}
 
 	for _, tt := range tests {

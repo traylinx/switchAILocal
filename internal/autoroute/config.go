@@ -7,15 +7,15 @@ import (
 
 // Config represents the master configuration for the Auto-Routing subsystem.
 type Config struct {
-	Enabled           bool                          `yaml:"enabled" json:"enabled"`
-	MaxResolution     time.Duration                 `yaml:"max-resolution-ms" json:"max_resolution_ms"`
-	Providers         map[string]ProviderTierConfig `yaml:"providers" json:"providers"`
-	Preferences       []ModelPreference             `yaml:"preferences" json:"preferences"`
-	Conservation      ConservationConfig            `yaml:"conservation" json:"conservation"`
-	Discovery         DiscoveryConfig               `yaml:"discovery" json:"discovery"`
-	Weights           ScoringWeights                `yaml:"weights" json:"weights"`
-	IntentMatrix      map[string][]string           `yaml:"intent-matrix" json:"intent_matrix"`
-	Lab               LabConfig                     `yaml:"lab" json:"lab"`
+	Enabled       bool                          `yaml:"enabled" json:"enabled"`
+	MaxResolution time.Duration                 `yaml:"max-resolution-ms" json:"max_resolution_ms"`
+	Providers     map[string]ProviderTierConfig `yaml:"providers" json:"providers"`
+	Preferences   []ModelPreference             `yaml:"preferences" json:"preferences"`
+	Conservation  ConservationConfig            `yaml:"conservation" json:"conservation"`
+	Discovery     DiscoveryConfig               `yaml:"discovery" json:"discovery"`
+	Weights       ScoringWeights                `yaml:"weights" json:"weights"`
+	IntentMatrix  map[string][]string           `yaml:"intent-matrix" json:"intent_matrix"`
+	Lab           LabConfig                     `yaml:"lab" json:"lab"`
 	// DisabledProviders lists provider names that should never be selected, even if
 	// they score highest. Use when credits are exhausted or a provider is known-bad.
 	// Example: [anthropic] skips all Anthropic models until the list is cleared.
@@ -90,8 +90,8 @@ type ModelPreference struct {
 
 // ConservationConfig dictates how aggressively the router should hoard premium tokens.
 type ConservationConfig struct {
-	Enabled               bool `yaml:"enabled" json:"enabled"`
-	SimpleThreshold       int  `yaml:"simple-threshold-tokens" json:"simple_threshold_tokens"`
+	Enabled               bool    `yaml:"enabled" json:"enabled"`
+	SimpleThreshold       int     `yaml:"simple-threshold-tokens" json:"simple_threshold_tokens"`
 	PremiumConservationAt float64 `yaml:"premium-conservation-at" json:"premium_conservation_at"` // percentage (0.0 to 1.0)
 }
 
@@ -107,10 +107,10 @@ type DiscoveryConfig struct {
 
 // LabConfig controls the autonomous self-optimization engine (autoresearch plugin equivalent).
 type LabConfig struct {
-	Enabled             bool          `yaml:"enabled" json:"enabled"`
-	AdaptationInterval  time.Duration `yaml:"adaptation-interval" json:"adaptation_interval"`
-	MaxWeightDrift      float64       `yaml:"max-weight-drift" json:"max_weight_drift"`
-	MinObservationWindow int          `yaml:"min-observation-window" json:"min_observation_window"` // min requests before evaluating (default 10)
+	Enabled              bool          `yaml:"enabled" json:"enabled"`
+	AdaptationInterval   time.Duration `yaml:"adaptation-interval" json:"adaptation_interval"`
+	MaxWeightDrift       float64       `yaml:"max-weight-drift" json:"max_weight_drift"`
+	MinObservationWindow int           `yaml:"min-observation-window" json:"min_observation_window"` // min requests before evaluating (default 10)
 }
 
 // ScoringWeights represent the importance of different health metrics.

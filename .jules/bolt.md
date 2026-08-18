@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-08-18 - [Safe Buffer Pooling for Streaming Responses]
+**Learning:** When implementing `sync.Pool` for `bytes.Buffer` in HTTP middleware that handles Server-Sent Events (SSE) or streaming responses, returning the buffer to the pool inside the `Flush()` method causes critical regressions. `Flush()` is called repeatedly for each chunk. Releasing the buffer on the first flush causes subsequent writes to fail or panic.
+**Action:** Always verify the full lifecycle of streaming responses. Only return pooled buffers at the absolute end of the request (e.g., using a `defer` at the handler level), and never during iterative chunk flushing.
