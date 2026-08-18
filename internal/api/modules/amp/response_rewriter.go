@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -17,6 +18,13 @@ import (
 
 // ResponseRewriter wraps a gin.ResponseWriter to intercept and modify the response body
 // It's used to rewrite model names in responses when model mapping is used
+
+var ampResponseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 type ResponseRewriter struct {
 	gin.ResponseWriter
 	body          *bytes.Buffer
@@ -28,7 +36,7 @@ type ResponseRewriter struct {
 func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRewriter {
 	return &ResponseRewriter{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           ampResponseBodyPool.Get().(*bytes.Buffer),
 		originalModel:  originalModel,
 	}
 }
@@ -66,6 +74,17 @@ func (rw *ResponseRewriter) Flush() {
 		if _, err := rw.ResponseWriter.Write(rw.rewriteModelInResponse(rw.body.Bytes())); err != nil {
 			log.Warnf("amp response rewriter: failed to write rewritten response: %v", err)
 		}
+	}
+}
+
+// Release returns the buffer to the pool. It should be called only at the end of the request lifecycle.
+func (rw *ResponseRewriter) Release() {
+	if rw.body != nil {
+		if rw.body.Cap() <= 128*1024 {
+			rw.body.Reset()
+			ampResponseBodyPool.Put(rw.body)
+		}
+		rw.body = nil
 	}
 }
 
