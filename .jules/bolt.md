@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-19 - Sync Pool ResponseWriterWrapper Optimization
+**Learning:** Utilizing sync.Pool for highly allocated API request/response objects (like ResponseWriterWrapper) significantly drops allocations and improves ns/op.
+**Action:** When implementing sync.Pool for structs that wrap bytes.Buffer, always enforce a maximum capacity check (e.g., if w.body.Cap() <= 128*1024) before returning the object to the pool to prevent permanent memory bloat from occasional massive payloads.
