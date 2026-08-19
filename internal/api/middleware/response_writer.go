@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
@@ -52,13 +53,42 @@ type ResponseWriterWrapper struct {
 //
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
+var responseWriterPool = sync.Pool{
+	New: func() interface{} {
+		return &ResponseWriterWrapper{
+			body:    &bytes.Buffer{},
+			headers: make(map[string][]string),
+		}
+	},
+}
+
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
-	return &ResponseWriterWrapper{
-		ResponseWriter: w,
-		body:           &bytes.Buffer{},
-		logger:         logger,
-		requestInfo:    requestInfo,
-		headers:        make(map[string][]string),
+	wrapper := responseWriterPool.Get().(*ResponseWriterWrapper)
+	wrapper.ResponseWriter = w
+	wrapper.logger = logger
+	wrapper.requestInfo = requestInfo
+
+	// Reset state
+	wrapper.body.Reset()
+	for k := range wrapper.headers {
+		delete(wrapper.headers, k)
+	}
+	wrapper.statusCode = 0
+	wrapper.isStreaming = false
+	wrapper.logOnErrorOnly = false
+	wrapper.chunkChannel = nil
+	wrapper.streamDone = nil
+	wrapper.streamWriter = nil
+
+	return wrapper
+}
+
+// Release releases a ResponseWriterWrapper back to the sync.Pool.
+// It ensures that the internal buffer capacity is within a safe limit to prevent memory bloat.
+func (w *ResponseWriterWrapper) Release() {
+	// Prevent massive memory bloat if body gets huge
+	if w.body.Cap() <= 128*1024 {
+		responseWriterPool.Put(w)
 	}
 }
 
