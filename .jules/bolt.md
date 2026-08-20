@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-08-08 - Optimize API Gateway buffer allocations using sync.Pool
+**Learning:** In the switchAILocal API gateway, `bytes.Buffer` was being allocated for every incoming HTTP request to temporarily store the response body for logging. This high-frequency allocation pattern created unnecessary garbage collection pressure and latency in the hot path.
+**Action:** Always utilize `sync.Pool` to recycle dynamically sized buffers (like `bytes.Buffer`) in critical HTTP middleware paths. Ensure a capacity limit check (e.g., `if buf.Cap() <= 128 * 1024`) is implemented before returning the buffer to the pool to prevent permanent memory bloat from occasional massive payloads.
