@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-19 - Optimize SSE Event Emission in Translators
+**Learning:** Using `fmt.Sprintf` for simple string concatenation in hot paths (like SSE event emission) introduces unnecessary reflection overhead. Go's native string concatenation (`+`) is highly optimized via `runtime.concatstrings` and is significantly faster for small, known numbers of operands.
+**Action:** Prefer direct string concatenation (`"event: " + event + "\ndata: " + payload`) over `fmt.Sprintf` in hot translation loops for building standard protocol responses.
