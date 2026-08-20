@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-07-07 - sync.Pool in HTTP Middleware
+**Learning:** Found that `gin.ResponseWriter` wrapper instances in the API gateway frequently allocate new `bytes.Buffer` objects on every request for capturing response bodies (unless streaming). At high request volumes, this generates excessive garbage collection pressure.
+**Action:** Use `sync.Pool` to recycle `bytes.Buffer` instances inside middleware like `ResponseWriterWrapper`, significantly reducing allocations and GC overhead for non-streaming paths.
