@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-17 - Optimize SSE event building using string concatenation
+**Learning:** The gateway processes thousands of streaming chunks per second. Using `fmt.Sprintf` for simple event formatting like `"event: %s\ndata: %s"` introduces reflection overhead and unnecessary heap allocations, increasing latency and GC pressure.
+**Action:** In hot paths for SSE event building that return `string`, optimize performance by using direct string concatenation (`+`) instead of `fmt.Sprintf`. This eliminates reflection overhead and minimizes per-chunk memory allocations.
