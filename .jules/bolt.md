@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-08-20 - Pool bytes.Buffer in HTTP Middleware
+**Learning:** Naive buffer allocation in HTTP middleware (`ResponseWriterWrapper` and `ResponseRewriter`) causes massive heap allocations and high GC pressure during streaming and large non-streaming requests. Returning them to a `sync.Pool` without `.Cap()` checks causes long-term memory leaks when processing occasional massive payloads.
+**Action:** Always recycle `bytes.Buffer` in middleware via `sync.Pool`. Ensure the buffer is explicitly released *after* the request is fully complete (e.g. at the handler level, not inside `Flush()`), and enforce a `.Cap()` check (e.g., `<= 128*1024`) before returning the buffer to the pool to prevent memory bloat.
