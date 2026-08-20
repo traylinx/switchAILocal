@@ -24,8 +24,8 @@ func TestComputeCooldownBackoff_BoundedAndMonotonicUntilCap(t *testing.T) {
 		{3, 40_000},
 		{4, 80_000},
 		{5, 160_000},
-		{6, 300_000}, // 320s → capped to 300s
-		{7, 300_000}, // capped
+		{6, 300_000},  // 320s → capped to 300s
+		{7, 300_000},  // capped
 		{99, 300_000}, // capped
 	}
 	for _, tt := range cases {

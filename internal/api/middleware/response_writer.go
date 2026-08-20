@@ -11,11 +11,20 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
+
+// bufferPool is used to recycle bytes.Buffer objects to reduce allocations
+// during response logging.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -53,9 +62,12 @@ type ResponseWriterWrapper struct {
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           buf,
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -301,7 +313,18 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		return nil
 	}
 
-	return w.logRequest(finalStatusCode, w.cloneHeaders(), w.body.Bytes(), w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+	err := w.logRequest(finalStatusCode, w.cloneHeaders(), w.body.Bytes(), w.extractAPIRequest(c), w.extractAPIResponse(c), slicesAPIResponseError, forceLog)
+
+	// Return the buffer to the pool to reduce allocations
+	// We only return it if it hasn't grown too large to prevent memory bloat
+	if w.body != nil {
+		if w.body.Cap() <= 128*1024 { // 128KB max capacity
+			bufferPool.Put(w.body)
+		}
+		w.body = nil // Prevent use after return
+	}
+
+	return err
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {

@@ -58,4 +58,3 @@ type FallbackEntry struct {
 	Model    string `json:"model"`
 	Tier     string `json:"tier"`
 }
-

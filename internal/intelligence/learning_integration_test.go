@@ -120,18 +120,18 @@ func TestLearningIntegration_ConfidenceAdjustment(t *testing.T) {
 	}
 
 	adjustedConfidence := router.adjustConfidenceWithMemory(decision)
-	
+
 	// Expected: 0.7 (base) + 0.15 (preference) + 0.03 (bias) + 0.1 (time) = 0.98
 	assert.Greater(t, adjustedConfidence, 0.9, "Should boost confidence with positive factors")
 	assert.LessOrEqual(t, adjustedConfidence, 1.0, "Should clamp to maximum 1.0")
 
 	// Test 2: Confidence adjustment with negative bias
 	decision.SelectedModel = "openai:gpt-4"
-	decision.Intent = "general" // No learned preference
+	decision.Intent = "general"                                       // No learned preference
 	decision.Timestamp = time.Date(2024, 1, 1, 23, 0, 0, 0, time.UTC) // 11 PM - off hours
 
 	adjustedConfidence = router.adjustConfidenceWithMemory(decision)
-	
+
 	// Expected: 0.7 (base) + 0.0 (no preference) + (-0.05) (negative bias) + 0.0 (no time match) = 0.65
 	assert.Less(t, adjustedConfidence, 0.7, "Should reduce confidence with negative bias")
 	assert.Greater(t, adjustedConfidence, 0.6, "Should not reduce too much")
@@ -160,13 +160,13 @@ func TestLearningIntegration_TimePatternMatching(t *testing.T) {
 		hour     int
 		expected bool
 	}{
-		{"coding", 14, true},   // 2 PM - work hours
-		{"coding", 2, false},   // 2 AM - off hours
-		{"chat", 20, true},     // 8 PM - evening
-		{"chat", 10, false},    // 10 AM - work hours
-		{"reasoning", 12, true}, // 12 PM - focused hours
+		{"coding", 14, true},     // 2 PM - work hours
+		{"coding", 2, false},     // 2 AM - off hours
+		{"chat", 20, true},       // 8 PM - evening
+		{"chat", 10, false},      // 10 AM - work hours
+		{"reasoning", 12, true},  // 12 PM - focused hours
 		{"reasoning", 22, false}, // 10 PM - late
-		{"unknown", 14, false},  // Unknown intent
+		{"unknown", 14, false},   // Unknown intent
 	}
 
 	for _, tc := range testCases {
@@ -178,7 +178,7 @@ func TestLearningIntegration_TimePatternMatching(t *testing.T) {
 			}
 
 			isMatch := router.isTimePatternMatch(decision, prefs)
-			assert.Equal(t, tc.expected, isMatch, 
+			assert.Equal(t, tc.expected, isMatch,
 				"Time pattern match for %s at %d:00 should be %t", tc.intent, tc.hour, tc.expected)
 		})
 	}
@@ -228,7 +228,7 @@ func TestLearningIntegration_EndToEndRouting(t *testing.T) {
 	assert.Equal(t, "claude:3.5", decision.SelectedModel, "Should use learned preference")
 	assert.True(t, decision.UsedMemory, "Should indicate memory was used")
 	assert.Equal(t, "preferences", decision.MemorySource, "Should indicate preferences source")
-	
+
 	// Confidence should be adjusted by learning algorithm
 	assert.Greater(t, decision.Confidence, 0.85, "Should have high confidence with learning adjustment")
 }
@@ -272,7 +272,7 @@ func TestLearningIntegration_ReflexTierWithLearning(t *testing.T) {
 	assert.Equal(t, "reflex", decision.Tier, "Should use reflex routing tier")
 	assert.Equal(t, "coding", decision.Intent, "Should classify as coding")
 	assert.Equal(t, "claudecli:claude-sonnet-4", decision.SelectedModel, "Should use reflex model choice")
-	
+
 	// Confidence should be higher than base due to positive provider bias
 	assert.Greater(t, decision.Confidence, 0.90, "Should have boosted confidence due to positive bias")
 }
@@ -304,7 +304,7 @@ func TestLearningIntegration_OutcomeRecording(t *testing.T) {
 
 	// Test successful outcome
 	outcome := router.CreateOutcome(decision, true, 1500, nil)
-	
+
 	assert.NotNil(t, outcome)
 	assert.Equal(t, decision, outcome.Decision)
 	assert.True(t, outcome.Success)
