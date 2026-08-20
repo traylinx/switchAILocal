@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-06-12 - Optimize SSE Hot Paths by Eliminating Reflection
+**Learning:** Using `fmt.Sprintf` in high-frequency SSE streaming hot paths introduces unnecessary reflection overhead and allocations. For concatenating simple known strings like event payloads (`"data: " + template + "\n\n"`), direct string concatenation is significantly faster.
+**Action:** When building SSE payloads or any highly repetitive string response chunks where the number of operands is small and known, prefer direct string concatenation (`+`) over `fmt.Sprintf` or `strings.Builder` to eliminate reflection overhead and reduce allocations to zero.
