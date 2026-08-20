@@ -8,7 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +45,7 @@ type claudeToResponsesState struct {
 var dataTag = []byte("data:")
 
 func emitEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertClaudeResponseToOpenAIResponses converts Claude SSE to OpenAI Responses SSE events.
@@ -121,7 +121,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 		if typ == "text" {
 			// open message item + content part
 			st.InTextBlock = true
-			st.CurrentMsgID = fmt.Sprintf("msg_%s_0", st.ResponseID)
+			st.CurrentMsgID = "msg_" + st.ResponseID + "_0"
 			item := `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"in_progress","content":[],"role":"assistant"}}`
 			item, _ = sjson.Set(item, "sequence_number", nextSeq())
 			item, _ = sjson.Set(item, "item.id", st.CurrentMsgID)
@@ -138,7 +138,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			item := `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`
 			item, _ = sjson.Set(item, "sequence_number", nextSeq())
 			item, _ = sjson.Set(item, "output_index", idx)
-			item, _ = sjson.Set(item, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+			item, _ = sjson.Set(item, "item.id", "fc_"+st.CurrentFCID)
 			item, _ = sjson.Set(item, "item.call_id", st.CurrentFCID)
 			item, _ = sjson.Set(item, "item.name", name)
 			out = append(out, emitEvent("response.output_item.added", item))
@@ -153,7 +153,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			st.ReasoningActive = true
 			st.ReasoningIndex = idx
 			st.ReasoningBuf.Reset()
-			st.ReasoningItemID = fmt.Sprintf("rs_%s_%d", st.ResponseID, idx)
+			st.ReasoningItemID = "rs_" + st.ResponseID + "_" + strconv.Itoa(idx)
 			item := `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"in_progress","summary":[]}}`
 			item, _ = sjson.Set(item, "sequence_number", nextSeq())
 			item, _ = sjson.Set(item, "output_index", idx)
@@ -192,7 +192,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 				st.FuncArgsBuf[idx].WriteString(pj.String())
 				msg := `{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`
 				msg, _ = sjson.Set(msg, "sequence_number", nextSeq())
-				msg, _ = sjson.Set(msg, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+				msg, _ = sjson.Set(msg, "item_id", "fc_"+st.CurrentFCID)
 				msg, _ = sjson.Set(msg, "output_index", idx)
 				msg, _ = sjson.Set(msg, "delta", pj.String())
 				out = append(out, emitEvent("response.function_call_arguments.delta", msg))
@@ -235,14 +235,14 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			}
 			fcDone := `{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`
 			fcDone, _ = sjson.Set(fcDone, "sequence_number", nextSeq())
-			fcDone, _ = sjson.Set(fcDone, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+			fcDone, _ = sjson.Set(fcDone, "item_id", "fc_"+st.CurrentFCID)
 			fcDone, _ = sjson.Set(fcDone, "output_index", idx)
 			fcDone, _ = sjson.Set(fcDone, "arguments", args)
 			out = append(out, emitEvent("response.function_call_arguments.done", fcDone))
 			itemDone := `{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`
 			itemDone, _ = sjson.Set(itemDone, "sequence_number", nextSeq())
 			itemDone, _ = sjson.Set(itemDone, "output_index", idx)
-			itemDone, _ = sjson.Set(itemDone, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+			itemDone, _ = sjson.Set(itemDone, "item.id", "fc_"+st.CurrentFCID)
 			itemDone, _ = sjson.Set(itemDone, "item.arguments", args)
 			itemDone, _ = sjson.Set(itemDone, "item.call_id", st.CurrentFCID)
 			out = append(out, emitEvent("response.output_item.done", itemDone))
@@ -389,7 +389,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 					callID = st.CurrentFCID
 				}
 				item := `{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`
-				item, _ = sjson.Set(item, "id", fmt.Sprintf("fc_%s", callID))
+				item, _ = sjson.Set(item, "id", "fc_"+callID)
 				item, _ = sjson.Set(item, "arguments", args)
 				item, _ = sjson.Set(item, "call_id", callID)
 				item, _ = sjson.Set(item, "name", name)
@@ -507,7 +507,7 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 				}
 			case "thinking":
 				reasoningActive = true
-				reasoningItemID = fmt.Sprintf("rs_%s_%d", responseID, idx)
+				reasoningItemID = "rs_" + responseID + "_" + strconv.Itoa(idx)
 			}
 
 		case "content_block_delta":
@@ -651,7 +651,7 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 				args = "{}"
 			}
 			item := `{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`
-			item, _ = sjson.Set(item, "id", fmt.Sprintf("fc_%s", st.id))
+			item, _ = sjson.Set(item, "id", "fc_"+st.id)
 			item, _ = sjson.Set(item, "arguments", args)
 			item, _ = sjson.Set(item, "call_id", st.id)
 			item, _ = sjson.Set(item, "name", st.name)
