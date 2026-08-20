@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-06-11 - Optimize SSE chunk emission with string concatenation
+**Learning:** In hot paths for SSE event building that return `string` (e.g., `emitEvent` and `emitRespEvent` in translator packages), optimizing performance by using direct string concatenation (`+`) instead of `fmt.Sprintf` reduces execution time by half (from ~240ns/op to ~117ns/op) and eliminates reflection overhead, minimizing per-chunk memory allocations.
+**Action:** Default to string concatenation for small, known numbers of string operands instead of `fmt.Sprintf` or `strings.Builder` when building responses in hot paths.
