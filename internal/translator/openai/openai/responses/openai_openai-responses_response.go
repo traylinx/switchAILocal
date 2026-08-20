@@ -49,8 +49,10 @@ type oaiToResponsesState struct {
 // responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
 var responseIDCounter uint64
 
+// emitRespEvent uses direct string concatenation instead of fmt.Sprintf for better performance
+// in the SSE event hot path, avoiding reflection and reducing CPU overhead per chunk.
 func emitRespEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertOpenAIChatCompletionsResponseToOpenAIResponses converts OpenAI Chat Completions streaming chunks
