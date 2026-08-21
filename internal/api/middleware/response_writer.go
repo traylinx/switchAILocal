@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
@@ -28,6 +29,12 @@ type RequestInfo struct {
 
 // ResponseWriterWrapper wraps the standard gin.ResponseWriter to intercept and log response data.
 // It is designed to handle both standard and streaming responses, ensuring that logging operations do not block the client response.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 type ResponseWriterWrapper struct {
 	gin.ResponseWriter
 	body           *bytes.Buffer              // body is a buffer to store the response body for non-streaming responses.
@@ -53,9 +60,11 @@ type ResponseWriterWrapper struct {
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           buf,
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -246,6 +255,15 @@ func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
 // For non-streaming responses, it logs the complete request and response details,
 // including any API-specific request/response data stored in the Gin context.
 func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
+	defer func() {
+		if w.body != nil {
+			if w.body.Cap() <= 128*1024 {
+				bufferPool.Put(w.body)
+			}
+			w.body = nil
+		}
+	}()
+
 	if w.logger == nil {
 		return nil
 	}

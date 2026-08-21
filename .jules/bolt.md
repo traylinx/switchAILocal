@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - sync.Pool defer Cleanup Caution
+**Learning:** When using `sync.Pool` to recycle objects inside middleware or wrapper functions like `ResponseWriterWrapper.Finalize`, returning the object inside multiple conditional return paths increases the risk of memory leaks if a new path is added later or double-free panics if cleanup logic becomes misaligned.
+**Action:** Always structure `sync.Pool.Put` operations within a single `defer` block at the top of the function to guarantee cleanup across all execution paths, rather than duplicating the `Put` logic across multiple early return statements.
