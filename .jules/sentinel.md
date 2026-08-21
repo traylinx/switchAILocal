@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-21 - SSRF Vulnerability in CLI Executor
+**Vulnerability:** The `executeRemote` function reconstructed a URL using a value-copied `url.URL` and modified the `Path` field. If an attacker provided an opaque URL (e.g. `http:example.com/../../etc/passwd`), the Go `url.URL.String()` method would prioritize the `Opaque` field, bypassing the `Path` modification and leading to SSRF.
+**Learning:** Value-copying a parsed `url.URL` struct and nullifying fields is not safe against malicious input containing opaque paths.
+**Prevention:** Always explicitly construct a new `url.URL{}` struct literal when reconstructing URLs from untrusted input.
