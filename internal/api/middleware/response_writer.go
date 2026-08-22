@@ -11,13 +11,21 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
 
+var responseWriterBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
+
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
+
 type RequestInfo struct {
 	URL       string              // URL is the request URL.
 	Method    string              // Method is the HTTP method (e.g., GET, POST).
@@ -55,10 +63,21 @@ type ResponseWriterWrapper struct {
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           responseWriterBufferPool.Get().(*bytes.Buffer),
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
+	}
+}
+
+// Release returns the buffer to the pool.
+func (w *ResponseWriterWrapper) Release() {
+	if w.body != nil {
+		w.body.Reset()
+		if w.body.Cap() <= 128*1024 { // Prevent holding large buffers forever
+			responseWriterBufferPool.Put(w.body)
+		}
+		w.body = nil
 	}
 }
 

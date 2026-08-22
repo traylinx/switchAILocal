@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -15,7 +16,14 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+var rewriterBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
+
 // ResponseRewriter wraps a gin.ResponseWriter to intercept and modify the response body
+
 // It's used to rewrite model names in responses when model mapping is used
 type ResponseRewriter struct {
 	gin.ResponseWriter
@@ -28,8 +36,19 @@ type ResponseRewriter struct {
 func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRewriter {
 	return &ResponseRewriter{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           rewriterBufferPool.Get().(*bytes.Buffer),
 		originalModel:  originalModel,
+	}
+}
+
+// Release returns the buffer to the pool. It should be called after Flush.
+func (rw *ResponseRewriter) Release() {
+	if rw.body != nil {
+		rw.body.Reset()
+		if rw.body.Cap() <= 128*1024 { // Prevent holding large buffers forever
+			rewriterBufferPool.Put(rw.body)
+		}
+		rw.body = nil
 	}
 }
 
