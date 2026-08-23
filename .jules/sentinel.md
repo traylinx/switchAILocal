@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-08-23 - Secure URL Reconstruction
+**Vulnerability:** SSRF via taint analysis in CLI Executor where target URL was modified by copying the parsed struct and nullifying fields.
+**Learning:** Copying a parsed `url.URL` struct and nullifying fields (like `RawPath`) is insufficient if an attacker provides a URL that populates the `Opaque` field. The `.String()` method prioritizes `Opaque`, allowing attackers to bypass validation and routing logic.
+**Prevention:** Always reconstruct target URLs from untrusted input by explicitly creating a new `url.URL{}` struct literal, copying only the required and validated fields (e.g., `Scheme`, `Host`, `Path`).
