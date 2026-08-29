@@ -7,6 +7,7 @@ package executor
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,25 +142,55 @@ func streamChunkID() string {
 // This avoids struct allocation and reflection-based json.Marshal (~5x faster).
 // The id and created are pre-computed once per stream (OpenAI spec: same for all chunks).
 func BuildOpenAIStreamChunkFast(id string, created int64, model, content string, isFirst bool) []byte {
-	escaped := jsonEscapeString(content)
-	var delta string
+	escapedContent := jsonEscapeString(content)
+	escapedModel := jsonEscapeString(model)
+
+	// Pre-allocate byte slice with calculated capacity
+	// Base static JSON structure is ~121 bytes. Role adds ~13 bytes.
+	capacity := 140 + len(id) + 20 + len(escapedModel) + len(escapedContent)
+	b := make([]byte, 0, capacity)
+
+	b = append(b, `{"id":"`...)
+	b = append(b, id...)
+	b = append(b, `","object":"chat.completion.chunk","created":`...)
+	b = strconv.AppendInt(b, created, 10)
+	b = append(b, `,"model":"`...)
+	b = append(b, escapedModel...)
+	b = append(b, `","choices":[{"index":0,"delta":{`...)
+
 	if isFirst {
-		delta = fmt.Sprintf(`"role":"assistant","content":"%s"`, escaped)
+		b = append(b, `"role":"assistant","content":"`...)
+		b = append(b, escapedContent...)
+		b = append(b, `"`...)
 	} else {
-		delta = fmt.Sprintf(`"content":"%s"`, escaped)
+		b = append(b, `"content":"`...)
+		b = append(b, escapedContent...)
+		b = append(b, `"`...)
 	}
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{%s},"finish_reason":null}]}`,
-		id, created, jsonEscapeString(model), delta,
-	))
+
+	b = append(b, `},"finish_reason":null}]}`...)
+
+	return b
 }
 
 // BuildOpenAIStreamFinishChunkFast creates the final finish chunk using templates.
 func BuildOpenAIStreamFinishChunkFast(id string, created int64, model string) []byte {
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		id, created, jsonEscapeString(model),
-	))
+	escapedModel := jsonEscapeString(model)
+
+	// Pre-allocate byte slice with calculated capacity
+	// Base static JSON structure is ~107 bytes.
+	capacity := 120 + len(id) + 20 + len(escapedModel)
+	b := make([]byte, 0, capacity)
+
+	b = append(b, `{"id":"`...)
+	b = append(b, id...)
+	b = append(b, `","object":"chat.completion.chunk","created":`...)
+	b = strconv.AppendInt(b, created, 10)
+	b = append(b, `,"model":"`...)
+	b = append(b, escapedModel...)
+	b = append(b, `","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`...)
+
+	return b
 }
 
 // jsonEscapeString escapes special characters for safe embedding in JSON string values.

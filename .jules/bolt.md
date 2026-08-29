@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-05-04 - Pre-allocate byte slices in SSE event building
+**Learning:** Replacing fmt.Sprintf with a pre-allocated byte slice and append() alongside strconv.AppendInt() for integers avoids reflection and string intermediate allocations.
+**Action:** Use make([]byte, 0, capacity) and append() instead of fmt.Sprintf when returning []byte in high-throughput hot paths like streaming event chunk building.
