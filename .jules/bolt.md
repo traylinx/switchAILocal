@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-04-11 - Optimize string concatenation in streaming handlers
+**Learning:** In streaming handlers across `codex`, `antigravity`, `gemini-cli`, and `gemini` translators, `fmt.Sprintf` was used for simple string prefixing and suffixing in hot loops (e.g., `fmt.Sprintf("data: %s\n\n\n", data)`). This introduces reflection overhead and unnecessary per-chunk memory allocations. Direct string concatenation (`+`) is much more efficient for these operations.
+**Action:** Replace `fmt.Sprintf` with direct string concatenation (`+`) when building simple SSE events to eliminate reflection overhead and minimize allocations in high-throughput streaming paths.
