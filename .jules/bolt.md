@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2025-03-09 - Remove String Concatenation Overhead for SSE event building in API handlers
+**Learning:** Found that `fmt.Sprintf` was being heavily used in streaming API handlers (like across `codex`, `antigravity`, `gemini-cli`, `gemini`, and `openai` translators) for building SSE events (`data: %s\n\n` or similar) and Data URIs (`data:%s;base64,%s`). This triggers reflection and adds memory overhead during streaming responses.
+**Action:** Replace `fmt.Sprintf` in hot paths with direct string concatenation (`+`) to eliminate reflection overhead and minimize per-chunk memory allocations, as per memory rules. Remove the `fmt` package from imports to avoid `go vet` unused errors.
