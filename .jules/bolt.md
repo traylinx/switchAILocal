@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-05-18 - Avoid fmt.Sprintf for String Concatenation in Hot Paths
+**Learning:** `fmt.Sprintf` uses reflection and allocates unnecessarily for simple string concatenations like `data: %s\n\n`. In the `translator` package, replacing `fmt.Sprintf` with direct string concatenation (`"data: " + template + "\n\n"`) or `strconv.Itoa` for integers significantly reduces allocations and speeds up execution (e.g., in streaming response events).
+**Action:** Use direct string concatenation or `strconv` instead of `fmt.Sprintf` for high-frequency SSE event building and string manipulation in hot loops.
