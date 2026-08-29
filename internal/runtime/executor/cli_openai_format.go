@@ -7,6 +7,7 @@ package executor
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,25 +142,47 @@ func streamChunkID() string {
 // This avoids struct allocation and reflection-based json.Marshal (~5x faster).
 // The id and created are pre-computed once per stream (OpenAI spec: same for all chunks).
 func BuildOpenAIStreamChunkFast(id string, created int64, model, content string, isFirst bool) []byte {
-	escaped := jsonEscapeString(content)
-	var delta string
+	escapedModel := jsonEscapeString(model)
+	escapedContent := jsonEscapeString(content)
+
+	capacity := 150 + len(id) + len(escapedModel) + len(escapedContent)
 	if isFirst {
-		delta = fmt.Sprintf(`"role":"assistant","content":"%s"`, escaped)
-	} else {
-		delta = fmt.Sprintf(`"content":"%s"`, escaped)
+		capacity += 20 // `"role":"assistant",`
 	}
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{%s},"finish_reason":null}]}`,
-		id, created, jsonEscapeString(model), delta,
-	))
+
+	buf := make([]byte, 0, capacity)
+	buf = append(buf, `{"id":"`...)
+	buf = append(buf, id...)
+	buf = append(buf, `","object":"chat.completion.chunk","created":`...)
+	buf = strconv.AppendInt(buf, created, 10)
+	buf = append(buf, `,"model":"`...)
+	buf = append(buf, escapedModel...)
+	buf = append(buf, `","choices":[{"index":0,"delta":{`...)
+	if isFirst {
+		buf = append(buf, `"role":"assistant","content":"`...)
+	} else {
+		buf = append(buf, `"content":"`...)
+	}
+	buf = append(buf, escapedContent...)
+	buf = append(buf, `"},"finish_reason":null}]}`...)
+
+	return buf
 }
 
 // BuildOpenAIStreamFinishChunkFast creates the final finish chunk using templates.
 func BuildOpenAIStreamFinishChunkFast(id string, created int64, model string) []byte {
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		id, created, jsonEscapeString(model),
-	))
+	escapedModel := jsonEscapeString(model)
+	capacity := 130 + len(id) + len(escapedModel)
+
+	buf := make([]byte, 0, capacity)
+	buf = append(buf, `{"id":"`...)
+	buf = append(buf, id...)
+	buf = append(buf, `","object":"chat.completion.chunk","created":`...)
+	buf = strconv.AppendInt(buf, created, 10)
+	buf = append(buf, `,"model":"`...)
+	buf = append(buf, escapedModel...)
+	buf = append(buf, `","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`...)
+	return buf
 }
 
 // jsonEscapeString escapes special characters for safe embedding in JSON string values.

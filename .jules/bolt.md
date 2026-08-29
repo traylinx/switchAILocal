@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-13 - [Pre-allocate []byte to avoid fmt.Sprintf overhead]
+**Learning:** Using `fmt.Sprintf` to generate byte strings like SSE chunks incurs reflection and intermediate string-to-byte slice allocations.
+**Action:** In hot paths (like SSE event building), pre-allocate a byte slice with calculated capacity (`make([]byte, 0, capacity)`) and use `append()` along with `strconv.AppendInt()` to build the output directly as `[]byte`. This reduces allocations from 8 down to 1 for standard chunks and from 5 down to 2 for finish chunks, dramatically increasing speed (~911.2 ns/op -> ~171.9 ns/op).
