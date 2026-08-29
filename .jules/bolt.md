@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-05 - Optimize JSON RawMessage Unmarshaling
+**Learning:** Blindly unmarshaling `json.RawMessage` into different types in a fallback chain (string, then array) causes unnecessary reflection overhead and allocations due to failed unmarshals.
+**Action:** Use `bytes.TrimSpace(msg.Content)` and check the first byte (e.g., `"` or `[`) to determine the correct type to unmarshal into, bypassing expensive reflection failures.

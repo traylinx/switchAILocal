@@ -656,17 +656,20 @@ func parseMessages(data []byte) (string, error) {
 	for _, msg := range req.Messages {
 		var contentStr string
 
-		// Try string first
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			// Try array
-			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
-				for _, part := range parts {
-					if part.Type == "text" {
-						contentStr += part.Text
+		trimmedContent := bytes.TrimSpace(msg.Content)
+		if len(trimmedContent) > 0 {
+			if trimmedContent[0] == '"' {
+				var simpleContent string
+				if err := json.Unmarshal(trimmedContent, &simpleContent); err == nil {
+					contentStr = simpleContent
+				}
+			} else if trimmedContent[0] == '[' {
+				var parts []ContentPart
+				if err := json.Unmarshal(trimmedContent, &parts); err == nil {
+					for _, part := range parts {
+						if part.Type == "text" {
+							contentStr += part.Text
+						}
 					}
 				}
 			}
