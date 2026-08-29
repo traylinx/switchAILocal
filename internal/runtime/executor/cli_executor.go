@@ -653,20 +653,43 @@ func parseMessages(data []byte) (string, error) {
 
 	// Build prompt with context from all message types
 	var sb strings.Builder
+	// Calculate a rough capacity to avoid reallocations
+	// Assume 100 bytes per message as a reasonable default
+	sb.Grow(len(req.Messages) * 100)
+
 	for _, msg := range req.Messages {
 		var contentStr string
 
-		// Try string first
-		var simpleContent string
-		if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
-			contentStr = simpleContent
-		} else {
-			// Try array
-			var parts []ContentPart
-			if err := json.Unmarshal(msg.Content, &parts); err == nil {
-				for _, part := range parts {
-					if part.Type == "text" {
-						contentStr += part.Text
+		if len(msg.Content) > 0 {
+			// Try string first. By avoiding unmarshaling to string if the first character is '[' we can save an allocation
+			if msg.Content[0] == '"' {
+				var simpleContent string
+				if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
+					contentStr = simpleContent
+				}
+			} else if msg.Content[0] == '[' {
+				// Try array
+				var parts []ContentPart
+				if err := json.Unmarshal(msg.Content, &parts); err == nil {
+					for _, part := range parts {
+						if part.Type == "text" {
+							contentStr += part.Text
+						}
+					}
+				}
+			} else {
+				// Fallback
+				var simpleContent string
+				if err := json.Unmarshal(msg.Content, &simpleContent); err == nil {
+					contentStr = simpleContent
+				} else {
+					var parts []ContentPart
+					if err := json.Unmarshal(msg.Content, &parts); err == nil {
+						for _, part := range parts {
+							if part.Type == "text" {
+								contentStr += part.Text
+							}
+						}
 					}
 				}
 			}
@@ -674,11 +697,16 @@ func parseMessages(data []byte) (string, error) {
 
 		switch msg.Role {
 		case "system":
-			sb.WriteString("[System]: " + contentStr + "\n\n")
+			sb.WriteString("[System]: ")
+			sb.WriteString(contentStr)
+			sb.WriteString("\n\n")
 		case "user":
-			sb.WriteString(contentStr + "\n")
+			sb.WriteString(contentStr)
+			sb.WriteString("\n")
 		case "assistant":
-			sb.WriteString("[Previous response]: " + contentStr + "\n\n")
+			sb.WriteString("[Previous response]: ")
+			sb.WriteString(contentStr)
+			sb.WriteString("\n\n")
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
