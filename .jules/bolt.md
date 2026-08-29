@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2025-03-08 - Use string concatenation and strconv instead of fmt.Sprintf in streaming handlers
+**Learning:** `fmt.Sprintf` uses reflection and incurs overhead, causing slower execution and more memory allocation in hot loops like streaming SSE handlers.
+**Action:** In all streaming handlers (codex, antigravity, gemini-cli, gemini, and openai translators), `fmt.Sprintf` is replaced with direct string concatenation (`+`) and `strconv.Itoa` / `strconv.FormatInt` for SSE event building and data URI construction.
