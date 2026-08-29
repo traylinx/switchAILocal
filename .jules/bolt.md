@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize SSE string concatenation
+**Learning:** `fmt.Sprintf` uses reflection and allocates memory unnecessarily. In high-throughput streaming endpoints, simple string concatenation is much faster.
+**Action:** Use direct string concatenation combined with `string()` casting when building SSE stream payloads or data URIs to improve API gateway throughput and reduce garbage collector pressure.
