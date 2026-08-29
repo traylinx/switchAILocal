@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize hot path fmt.Sprintf to strconv and string concat in Claude translation
+**Learning:** Using `fmt.Sprintf` inside tight streaming hot loops creates significant GC pressure and performance overhead due to reflection and intermediate allocations.
+**Action:** Always prefer direct string concatenation with `strconv.Itoa` for SSE event building in hot paths to avoid reflection overhead and minimize per-chunk memory allocations.
