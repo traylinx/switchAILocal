@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-15 - Optimize SSE chunk generation
+**Learning:** Using `fmt.Sprintf` to build SSE JSON chunks creates significant memory allocations and uses reflection under the hood for integers and strings. This causes an unexpected performance hit in hot loops where thousands of tokens stream back. We can bypass json.Marshal and fmt.Sprintf by manually building JSON strings via `append` + `strconv.AppendInt` for pre-determined SSE JSON schema, yielding a huge speedup.
+**Action:** Replace `fmt.Sprintf` calls in streaming format builders (like `BuildOpenAIStreamChunkFast`) with a pre-allocated byte slice and byte appending logic. Ensure string fields are properly escaped.
