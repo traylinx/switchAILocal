@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## $(date +%Y-%m-%d) - Optimize SSE string building in Gemini to Claude translator
+**Learning:** `fmt.Sprintf` incurs reflection overhead and unnecessary allocations when building SSE stream chunks in hot loops, especially when outputting pure string data. Converting simple integers with `strconv.Itoa` and using direct string concatenation (`+`) instead significantly reduces allocations and execution time.
+**Action:** When building Server-Sent Events (SSE) string chunks in streaming response translators, prefer direct string concatenation (`+`) and `strconv.Itoa()` over `fmt.Sprintf` to optimize performance and reduce GC pressure.
