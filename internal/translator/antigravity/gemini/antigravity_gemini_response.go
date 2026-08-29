@@ -12,7 +12,7 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"strconv"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -86,5 +86,5 @@ func ConvertAntigravityResponseToGeminiNonStream(_ context.Context, _ string, or
 }
 
 func GeminiTokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }

@@ -7,7 +7,7 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"strconv"
 )
 
 // PassthroughGeminiResponseStream forwards Gemini responses unchanged.
@@ -29,5 +29,5 @@ func PassthroughGeminiResponseNonStream(_ context.Context, _ string, originalReq
 }
 
 func GeminiTokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }

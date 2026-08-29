@@ -13,7 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -490,7 +490,7 @@ func ConvertClaudeResponseToGeminiNonStream(_ context.Context, modelName string,
 }
 
 func GeminiTokenCount(ctx context.Context, count int64) string {
-	return fmt.Sprintf(`{"totalTokens":%d,"promptTokensDetails":[{"modality":"TEXT","tokenCount":%d}]}`, count, count)
+	return `{"totalTokens":` + strconv.FormatInt(count, 10) + `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":` + strconv.FormatInt(count, 10) + `}]}`
 }
 
 // consolidateParts merges consecutive text parts and thinking parts to create a cleaner response.
