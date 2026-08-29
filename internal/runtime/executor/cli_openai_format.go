@@ -6,8 +6,7 @@ package executor
 
 import (
 	"encoding/json"
-	"fmt"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,7 +71,7 @@ type OpenAIStreamChunkDelta struct {
 // BuildOpenAIResponse wraps content in OpenAI chat completion format.
 func BuildOpenAIResponse(model, content string, usage *OpenAIUsage) ([]byte, error) {
 	resp := OpenAIChatResponse{
-		ID:      fmt.Sprintf("chatcmpl-%s", uuid.New().String()),
+		ID:      "chatcmpl-" + uuid.New().String(),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   model,
@@ -90,7 +89,7 @@ func BuildOpenAIResponse(model, content string, usage *OpenAIUsage) ([]byte, err
 // Returns raw JSON (upstream handler adds "data: " prefix).
 func BuildOpenAIStreamChunk(model, content string, isFirst bool) []byte {
 	chunk := OpenAIStreamChunk{
-		ID:      fmt.Sprintf("chatcmpl-%s", uuid.New().String()),
+		ID:      "chatcmpl-" + uuid.New().String(),
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
 		Model:   model,
@@ -117,7 +116,7 @@ func BuildOpenAIStreamDone() []byte {
 func BuildOpenAIStreamFinishChunk(model string) []byte {
 	finishReason := "stop"
 	chunk := OpenAIStreamChunk{
-		ID:      fmt.Sprintf("chatcmpl-%s", uuid.New().String()),
+		ID:      "chatcmpl-" + uuid.New().String(),
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
 		Model:   model,
@@ -134,37 +133,56 @@ func BuildOpenAIStreamFinishChunk(model string) []byte {
 // streamChunkID returns a pre-formatted chunk ID string.
 // Called once per stream to avoid UUID generation per chunk.
 func streamChunkID() string {
-	return fmt.Sprintf("chatcmpl-%s", uuid.New().String())
+	return "chatcmpl-" + uuid.New().String()
 }
 
 // BuildOpenAIStreamChunkFast creates an SSE chunk using pre-formatted string templates.
 // This avoids struct allocation and reflection-based json.Marshal (~5x faster).
 // The id and created are pre-computed once per stream (OpenAI spec: same for all chunks).
 func BuildOpenAIStreamChunkFast(id string, created int64, model, content string, isFirst bool) []byte {
-	escaped := jsonEscapeString(content)
-	var delta string
+	// Pre-calculate exact capacity to avoid reallocations.
+	capacity := 128 + len(id) + len(model) + len(content) + 32
+
+	buf := make([]byte, 0, capacity)
+	buf = append(buf, `{"id":"`...)
+	buf = append(buf, id...)
+	buf = append(buf, `","object":"chat.completion.chunk","created":`...)
+	buf = strconv.AppendInt(buf, created, 10)
+	buf = append(buf, `,"model":"`...)
+	buf = jsonEscapeStringToBuf(buf, model)
+	buf = append(buf, `","choices":[{"index":0,"delta":{`...)
+
 	if isFirst {
-		delta = fmt.Sprintf(`"role":"assistant","content":"%s"`, escaped)
+		buf = append(buf, `"role":"assistant","content":"`...)
+		buf = jsonEscapeStringToBuf(buf, content)
+		buf = append(buf, `"}`...)
 	} else {
-		delta = fmt.Sprintf(`"content":"%s"`, escaped)
+		buf = append(buf, `"content":"`...)
+		buf = jsonEscapeStringToBuf(buf, content)
+		buf = append(buf, `"}`...)
 	}
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{%s},"finish_reason":null}]}`,
-		id, created, jsonEscapeString(model), delta,
-	))
+
+	buf = append(buf, `,"finish_reason":null}]}`...)
+	return buf
 }
 
 // BuildOpenAIStreamFinishChunkFast creates the final finish chunk using templates.
 func BuildOpenAIStreamFinishChunkFast(id string, created int64, model string) []byte {
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		id, created, jsonEscapeString(model),
-	))
+	capacity := 128 + len(id) + len(model) + 32
+	buf := make([]byte, 0, capacity)
+	buf = append(buf, `{"id":"`...)
+	buf = append(buf, id...)
+	buf = append(buf, `","object":"chat.completion.chunk","created":`...)
+	buf = strconv.AppendInt(buf, created, 10)
+	buf = append(buf, `,"model":"`...)
+	buf = jsonEscapeStringToBuf(buf, model)
+	buf = append(buf, `","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`...)
+	return buf
 }
 
-// jsonEscapeString escapes special characters for safe embedding in JSON string values.
-// This handles the common cases without the overhead of json.Marshal.
-func jsonEscapeString(s string) string {
+// jsonEscapeStringToBuf appends the JSON-escaped version of s to buf.
+// This is more efficient than returning a string as it avoids extra allocation.
+func jsonEscapeStringToBuf(buf []byte, s string) []byte {
 	// Fast path: most strings have no special chars
 	needsEscape := false
 	for i := 0; i < len(s); i++ {
@@ -175,31 +193,33 @@ func jsonEscapeString(s string) string {
 		}
 	}
 	if !needsEscape {
-		return s
+		return append(buf, s...)
 	}
 
-	var b strings.Builder
-	b.Grow(len(s) + 8) // small extra for escapes
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch c {
 		case '"':
-			b.WriteString(`\"`)
+			buf = append(buf, `\"`...)
 		case '\\':
-			b.WriteString(`\\`)
+			buf = append(buf, `\\`...)
 		case '\n':
-			b.WriteString(`\n`)
+			buf = append(buf, `\n`...)
 		case '\r':
-			b.WriteString(`\r`)
+			buf = append(buf, `\r`...)
 		case '\t':
-			b.WriteString(`\t`)
+			buf = append(buf, `\t`...)
 		default:
 			if c < 0x20 {
-				fmt.Fprintf(&b, `\u%04x`, c)
+				buf = append(buf, `\u00`...)
+				if c < 0x10 {
+					buf = append(buf, '0')
+				}
+				buf = strconv.AppendInt(buf, int64(c), 16)
 			} else {
-				b.WriteByte(c)
+				buf = append(buf, c)
 			}
 		}
 	}
-	return b.String()
+	return buf
 }
