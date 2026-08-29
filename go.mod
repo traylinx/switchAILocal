@@ -27,7 +27,7 @@ require (
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/tiktoken-go/tokenizer v0.7.0
-	github.com/yalue/onnxruntime_go v1.25.0
+	github.com/yalue/onnxruntime_go v1.27.0
 	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/crypto v0.47.0
 	golang.org/x/net v0.49.0
