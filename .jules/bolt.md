@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-05-01 - [Optimize String Concatenation in Translators]
+**Learning:** In highly trafficked streaming loops within the various translator implementations, replacing `fmt.Sprintf` with direct string concatenation (`+`) significantly reduces allocations and reflection overhead when building SSE events and data URIs.
+**Action:** Always favor direct string concatenation (and `strconv.AppendInt` etc. where appropriate) over `fmt.Sprintf` in hot paths like streaming event construction to minimize memory pressure and improve throughput.
