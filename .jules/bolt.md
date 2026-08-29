@@ -219,3 +219,7 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+## 2026-05-10 - Optimize SSE string building in Gemini to Claude streaming
+**Learning:** Using `fmt.Sprintf` in the hot streaming path for SSE event building introduces unnecessary reflection overhead and allocations.
+**Action:** Replaced `fmt.Sprintf` with string concatenation (`+`) and `strconv.Itoa` in `internal/translator/gemini/claude/gemini_claude_response.go`. This improves latency and reduces memory allocations per chunk.
