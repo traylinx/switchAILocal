@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-04-14 - String Concatenation vs. fmt.Sprintf in SSE Streaming Handlers
+**Learning:** `fmt.Sprintf` incurs reflection overhead when creating SSE events and encoding base64 images in tight loops (streaming responses). Directly concatenating strings with `+` is noticeably faster and uses fewer allocations.
+**Action:** Always prefer string concatenation `+` over `fmt.Sprintf` for constructing Server-Sent Event formats (e.g. `"data: " + data + "\n\n"`) or data URLs (e.g. `"data:" + mimeType + ";base64," + data`) in any handler code in `internal/translator`.
