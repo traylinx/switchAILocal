@@ -7,6 +7,7 @@ package executor
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,24 +143,42 @@ func streamChunkID() string {
 // The id and created are pre-computed once per stream (OpenAI spec: same for all chunks).
 func BuildOpenAIStreamChunkFast(id string, created int64, model, content string, isFirst bool) []byte {
 	escaped := jsonEscapeString(content)
-	var delta string
+	escapedModel := jsonEscapeString(model)
+
+	capacity := len(id) + len(escapedModel) + len(escaped) + 160
+	b := make([]byte, 0, capacity)
+	b = append(b, `{"id":"`...)
+	b = append(b, id...)
+	b = append(b, `","object":"chat.completion.chunk","created":`...)
+	b = strconv.AppendInt(b, created, 10)
+	b = append(b, `,"model":"`...)
+	b = append(b, escapedModel...)
+	b = append(b, `","choices":[{"index":0,"delta":{`...)
+
 	if isFirst {
-		delta = fmt.Sprintf(`"role":"assistant","content":"%s"`, escaped)
+		b = append(b, `"role":"assistant","content":"`...)
 	} else {
-		delta = fmt.Sprintf(`"content":"%s"`, escaped)
+		b = append(b, `"content":"`...)
 	}
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{%s},"finish_reason":null}]}`,
-		id, created, jsonEscapeString(model), delta,
-	))
+	b = append(b, escaped...)
+	b = append(b, `"},"finish_reason":null}]}`...)
+
+	return b
 }
 
 // BuildOpenAIStreamFinishChunkFast creates the final finish chunk using templates.
 func BuildOpenAIStreamFinishChunkFast(id string, created int64, model string) []byte {
-	return []byte(fmt.Sprintf(
-		`{"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		id, created, jsonEscapeString(model),
-	))
+	escapedModel := jsonEscapeString(model)
+	capacity := len(id) + len(escapedModel) + 160
+	b := make([]byte, 0, capacity)
+	b = append(b, `{"id":"`...)
+	b = append(b, id...)
+	b = append(b, `","object":"chat.completion.chunk","created":`...)
+	b = strconv.AppendInt(b, created, 10)
+	b = append(b, `,"model":"`...)
+	b = append(b, escapedModel...)
+	b = append(b, `","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`...)
+	return b
 }
 
 // jsonEscapeString escapes special characters for safe embedding in JSON string values.
