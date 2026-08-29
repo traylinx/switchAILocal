@@ -219,3 +219,9 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Optimize OpenAI stream chunk building
+**Learning:** Using fmt.Sprintf to format JSON string in a byte slice causes performance bottlenecks from intermediate allocations and reflection overhead.
+**Action:** Pre-allocate a byte slice and directly append strings and format ints using strconv.AppendInt() for efficient hot path execution.
+## 2026-05-11 - Optimize OpenAI stream chunk building
+**Learning:** Using fmt.Sprintf to format JSON string in a byte slice causes performance bottlenecks from intermediate allocations and reflection overhead.
+**Action:** Pre-allocate a byte slice and directly append strings and format ints using strconv.AppendInt() for efficient hot path execution.
