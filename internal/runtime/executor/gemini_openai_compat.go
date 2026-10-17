@@ -13,14 +13,7 @@ import (
 // Keep the rule tied to the official endpoint, not an operator-chosen provider
 // label: changing a provider label must not affect unrelated upstreams.
 func normalizeGeminiOpenAICompatPayload(baseURL string, payload []byte) []byte {
-	u, err := url.Parse(baseURL)
-	if err != nil || u.Scheme != "https" || u.User != nil ||
-		!strings.EqualFold(u.Hostname(), "generativelanguage.googleapis.com") ||
-		(u.Port() != "" && u.Port() != "443") || u.RawQuery != "" || u.Fragment != "" {
-		return payload
-	}
-	path := strings.TrimRight(u.Path, "/")
-	if path != "/v1beta/openai" && path != "/v1/openai" {
+	if !isGeminiOpenAICompatEndpoint(baseURL) {
 		return payload
 	}
 	if !gjson.ValidBytes(payload) || !gjson.ParseBytes(payload).IsObject() {
@@ -32,4 +25,18 @@ func normalizeGeminiOpenAICompatPayload(baseURL string, payload []byte) []byte {
 		}
 	}
 	return payload
+}
+
+func isGeminiOpenAICompatEndpoint(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme != "https" || u.User != nil ||
+		!strings.EqualFold(u.Hostname(), "generativelanguage.googleapis.com") ||
+		(u.Port() != "" && u.Port() != "443") || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if path != "/v1beta/openai" && path != "/v1/openai" {
+		return false
+	}
+	return true
 }

@@ -2,9 +2,9 @@ name: Managed server contracts
 on:
   push:
     branches: [main]
-    paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']
+    paths: ['deploy/managed-server/**', 'deploy/release/**', 'channels/**', '.github/workflows/**']
   pull_request:
-    paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']
+    paths: ['deploy/managed-server/**', 'deploy/release/**', 'channels/**', '.github/workflows/**']
 permissions:
   contents: read
 jobs:
@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python3 -m unittest discover -s deploy/managed-server/tests -v
+      - run: python3 -m unittest discover -s deploy/release -v
       - run: bash -n deploy/managed-server/install.sh
       - name: Validate channel transition against base
         env:
