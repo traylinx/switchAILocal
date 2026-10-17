@@ -11,7 +11,7 @@ This guide covers all installation methods for switchAILocal, from quick local s
 
 <Card title="Required" icon="check">
   - **Node.js 18+** - For `npx` install (recommended), or
-  - **Go 1.25+** - For building from source (CGO required)
+  - **Go 1.26.9+** - For building from source (CGO required)
   - **Terminal/Shell** - Command line access
 </Card>
 
@@ -104,7 +104,7 @@ Verify Go and Docker are installed:
 Expected output:
 ```
 [INFO] Running pre-flight checks...
-[OK]   Go detected: 1.24.0
+[OK]   Go detected: 1.26.9
 [OK]   Docker detected.
 [OK]   All systems go.
 ```
@@ -502,7 +502,7 @@ curl http://localhost:18080/v1/models \
 
 The official Dockerfile includes:
 - **Alpine Linux** base image (minimal footprint)
-- **Go 1.25** build environment
+- **Go 1.26.9** build environment
 - **Node.js & npm** for CLI tool support
 - **@google/gemini-cli** pre-installed
 - **Non-root user** for security

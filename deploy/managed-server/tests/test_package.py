@@ -54,7 +54,7 @@ class PackageTests(unittest.TestCase):
             self.assertNotIn('INFRA_REPO_PAT', path.read_text())
             self.assertNotIn('switchailocal-version.txt', path.read_text())
         build = (workflows / 'build.yml').read_text()
-        self.assertIn('ref: ${{ inputs.ref || github.ref }}', build)
+        self.assertIn('ref: ${{ needs.security-gate.outputs.source_commit }}', build)
         self.assertIn('COMMIT=${{ steps.source.outputs.sha }}', build)
         self.assertNotIn('value=stable', build)
         self.assertNotIn('value=latest', build)
@@ -69,6 +69,20 @@ class PackageTests(unittest.TestCase):
         for field in ['main.Version', 'main.Commit', 'main.BuildDate']:
             self.assertIn('-X ' + field + '=', workflow)
         self.assertIn('COMMIT="$(git rev-parse HEAD)"', workflow)
+
+    def test_publication_requires_strict_source_scan(self):
+        workflows = HERE.parents[1] / '.github/workflows'
+        for filename in ('release.yml', 'build.yml'):
+            text = (workflows / filename).read_text()
+            self.assertIn('uses: ./.github/workflows/go-vulnerability-gate.yml', text)
+            self.assertIn('  build:\n    needs: security-gate', text)
+            self.assertIn('ref: ${{ needs.security-gate.outputs.source_commit }}', text)
+            self.assertIn('test \"' + ('$SHA' if filename == 'build.yml' else '$(git rev-parse HEAD)') + '\" = \"$SCANNED_SHA\"', text)
+        gate = (workflows / 'go-vulnerability-gate.yml').read_text()
+        self.assertIn('ref: ${{ inputs.ref || github.ref }}', gate)
+        self.assertIn('- run: govulncheck ./...', gate)
+        self.assertNotIn('continue-on-error', gate)
+        self.assertNotIn('||', gate.split('- run: govulncheck')[1])
 
     def test_profile_examples_do_not_enable_recreation(self):
         profile = json.loads((HERE / 'examples/profile.json').read_text())

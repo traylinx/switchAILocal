@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## v0.6.1 - 2026-10-17
+
+- Build and verify with Go 1.26.9, including patched HTTP/2, TLS, textproto and filesystem behavior.
+- Upgrade affected x/crypto, x/net, x/text, go-git/v6, quic-go and pgx dependencies to their reported fixed versions. The restored govulncheck gate must pass without suppressing findings before release promotion.
+- Pin the scanner tool and run security checks on pull requests as well as main. Keep all managed-router contracts and Google compatibility behavior from v0.6.0.
+
 ## v0.6.0 - 2026-10-17
 
 - Add opt-in, Git-independent managed-server updates for Linux Docker Compose routers: immutable canary/stable manifests, private per-service enrollment profiles, transaction recovery, previous-image rollback, retained rollback guards, quarantine, operator holds and optional five-minute systemd checks.

@@ -18,7 +18,12 @@ permissions:
   contents: read
 
 jobs:
+  security-gate:
+    uses: ./.github/workflows/go-vulnerability-gate.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
   build:
+    needs: security-gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,14 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.security-gate.outputs.source_commit }}
           fetch-depth: 0
       - name: Resolve checked-out identity
         id: source
         env:
-          REQUESTED_REF: ${{ inputs.ref || github.ref }}
+          SCANNED_SHA: ${{ needs.security-gate.outputs.source_commit }}
         run: |
           SHA=$(git rev-parse HEAD)
+          test "$SHA" = "$SCANNED_SHA"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
           IMAGE=ghcr.io/traylinx/switchailocal
