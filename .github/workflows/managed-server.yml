@@ -1,0 +1,25 @@
+name: Managed server contracts
+on:
+  push:
+    branches: [main]
+    paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']
+  pull_request:
+    paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m unittest discover -s deploy/managed-server/tests -v
+      - run: bash -n deploy/managed-server/install.sh
+      - name: Validate channel transition against base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 deploy/managed-server/validate_channels.py --base "$BASE"

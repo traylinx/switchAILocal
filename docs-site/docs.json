@@ -74,6 +74,7 @@
               "guides/setup-providers",
               "guides/auto-routing-setup",
               "guides/docker-deployment",
+              "guides/managed-server",
               "guides/management-dashboard",
               "guides/troubleshooting",
               "guides/cli-integrations"

@@ -58,9 +58,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          COMMIT="${GITHUB_SHA::8}"
+          COMMIT="$(git rev-parse HEAD)"
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${DATE}"
 
           OUTDIR="switchAILocal_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p "${OUTDIR}"
@@ -72,6 +72,7 @@ jobs:
           CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o "${OUTDIR}/bridge-agent" ./cmd/bridge-agent/
 
           cp README.md LICENSE config.example.yaml "${OUTDIR}/"
+          cp -R deploy/managed-server "${OUTDIR}/managed-server"
           [ -f CHANGELOG.md ] && cp CHANGELOG.md "${OUTDIR}/"
 
           tar czf "${OUTDIR}.tar.gz" "${OUTDIR}/"

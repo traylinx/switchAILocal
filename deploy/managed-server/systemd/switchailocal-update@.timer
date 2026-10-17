@@ -1,0 +1,11 @@
+[Unit]
+Description=Check approved switchAILocal channel every five minutes (%i)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=90s
+Unit=switchailocal-update@%i.service
+
+[Install]
+WantedBy=timers.target

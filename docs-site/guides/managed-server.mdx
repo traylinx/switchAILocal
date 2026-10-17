@@ -1,0 +1,18 @@
+---
+title: "Managed server updates"
+description: "Enroll Linux routers once, then reconcile reviewed immutable releases."
+---
+
+Publishing an image does not update a running server. Use separate canary and
+stable promotions, then explicitly enroll each Compose router service.
+
+The [canonical operator manual](https://github.com/traylinx/switchAILocal/blob/main/deploy/managed-server/README.md)
+contains the new-server walkthrough, private profile and probe configuration,
+inert installer, manual apply, timer activation, rollback and recovery commands.
+Keep that code-coupled manual as the single source of truth.
+
+<Warning>
+Available from v0.6.0. Existing Cortex and HoCa deployments are not enrolled
+automatically. Live client tests,
+rollback validation and action-specific deployment approval remain required.
+</Warning>

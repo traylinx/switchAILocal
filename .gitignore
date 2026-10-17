@@ -97,3 +97,6 @@ TEST_RESULTS.md
 *QA_REPORT.md
 multimodal-verification-report.md
 .specs/
+
+# Python operator tools
+__pycache__/
