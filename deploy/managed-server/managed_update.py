@@ -453,21 +453,32 @@ class Engine:
     def retain(self, image: str) -> None:
         self.local_image(image)
         name = "ail-rollback-" + self.profile.name + "-" + image[7:23]
-        ids = self.docker("ps", "--all", "--filter", "name=^/" + name + "$", "--format", "{{.ID}}").split()
+        ids = self.docker("ps", "--all", "--filter", "name=^/" + re.escape(name) + "$", "--format", "{{.ID}}").split()
         if not ids:
-            self.docker("create", "--name", name, "--label", "io.switchailocal.rollback=" + self.profile.name, "--network", "none", "--entrypoint", "/bin/true", "--pull", "never", image)
+            volumes = self.docker("image", "inspect", "--format", "{{json .Config.Volumes}}", image).strip()
+            require(volumes in ("null", "{}"), "ROLLBACK_GUARD_IMAGE_VOLUMES_REFUSED")
+            container = self.docker("create", "--name", name, "--label", "io.switchailocal.rollback=" + self.profile.name, "--network", "none", "--entrypoint", "/bin/true", "--pull", "never", image).strip()
+            require(self.guard_image(container) == image, "ROLLBACK_GUARD_INVALID")
         else:
             require(len(ids) == 1, "ROLLBACK_GUARD_INVALID")
-            actual = self.docker("inspect", "--format", '{{.Image}}|{{index .Config.Labels "io.switchailocal.rollback"}}|{{.State.Running}}', ids[0]).strip()
-            require(actual == image + "|" + self.profile.name + "|false", "ROLLBACK_GUARD_INVALID")
+            require(self.guard_image(ids[0]) == image, "ROLLBACK_GUARD_INVALID")
+
+    def guard_image(self, container: str) -> str:
+        require(re.fullmatch(r"[a-f0-9]{12,64}", container), "ROLLBACK_GUARD_INVALID")
+        template = '{"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.switchailocal.rollback")}},"name":{{json .Name}},"started":{{json .State.StartedAt}},"mounts":{{len .Mounts}},"compose":{{json (index .Config.Labels "com.docker.compose.project")}}}'
+        try:
+            value = json.loads(self.docker("inspect", "--format", template, container))
+        except ValueError:
+            raise UpdateError("ROLLBACK_GUARD_INVALID") from None
+        image = value.get("image", "")
+        require(DIGEST.fullmatch(image) and value.get("owner") == self.profile.name and value.get("name") == "/ail-rollback-" + self.profile.name + "-" + image[7:23], "ROLLBACK_GUARD_INVALID")
+        require(value.get("started") == "0001-01-01T00:00:00Z" and value.get("mounts") == 0 and not value.get("compose"), "ROLLBACK_GUARD_INVALID")
+        return image
 
     def cleanup_guards(self, keep: str) -> None:
         ids = self.docker("ps", "--all", "--filter", "label=io.switchailocal.rollback=" + self.profile.name, "--format", "{{.ID}}").split()
         for container in ids:
-            require(re.fullmatch(r"[a-f0-9]{12,64}", container), "ROLLBACK_GUARD_INVALID")
-            actual = self.docker("inspect", "--format", '{{.Image}}|{{index .Config.Labels "io.switchailocal.rollback"}}|{{.State.Running}}', container).strip().split("|")
-            require(len(actual) == 3 and actual[1:] == [self.profile.name, "false"] and DIGEST.fullmatch(actual[0]), "ROLLBACK_GUARD_INVALID")
-            if actual[0] != keep:
+            if self.guard_image(container) != keep:
                 self.docker("rm", container)
 
     def restore(self, transaction: dict) -> None:

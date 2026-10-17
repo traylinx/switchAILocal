@@ -39,6 +39,7 @@ class FakeRunner:
         self.verify_count = 0
         self.guards = {}
         self.missing_old = False
+        self.bad_guard = False
 
     def run(self, argv, timeout):
         self.calls.append((list(argv), timeout))
@@ -57,6 +58,8 @@ class FakeRunner:
                 raise UpdateError("COMMAND_FAILED")
             return ""
         if args[:2] == ["image", "inspect"]:
+            if "Config.Volumes" in args[3]:
+                return "null"
             if "org.opencontainers.image.revision" in args[3]:
                 return "b" * 40
             if args[-1] == OLD:
@@ -77,7 +80,8 @@ class FakeRunner:
             return ""
         if args[:1] == ["inspect"]:
             if args[-1] in self.guards:
-                return self.guards[args[-1]] + "|" + self.profile.name + "|false"
+                image = self.guards[args[-1]]
+                return json.dumps({'image': image, 'owner': self.profile.name, 'name': '/customer-container' if self.bad_guard else '/ail-rollback-' + self.profile.name + '-' + image[7:23], 'started': '0001-01-01T00:00:00Z', 'mounts': 0, 'compose': ''})
             return json.dumps({"id": "3" * 64, "image": self.current, "running": True, "health": "healthy"})
         if args[:1] != ["compose"]:
             raise AssertionError(argv)
@@ -317,6 +321,19 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(any('com.docker.compose' in arg for arg in guard))
         self.assertNotIn('--mount', guard)
         self.assertEqual(list(self.runner.guards.values()), [OLD])
+
+    def test_same_label_on_unrelated_container_never_authorizes_removal(self):
+        self.runner.guards['6' * 64] = OLD
+        self.runner.bad_guard = True
+        with self.assertRaisesRegex(UpdateError, 'ROLLBACK_GUARD_INVALID'):
+            self.engine.cleanup_guards(NEW)
+        self.assertEqual(list(self.runner.guards.values()), [OLD])
+        self.assertFalse(any('rm' in call for call, _ in self.runner.calls))
+
+    def test_lost_high_water_file_fails_closed(self):
+        (self.engine.directory / 'accepted.json').unlink()
+        with self.assertRaisesRegex(UpdateError, 'ENROLLED_STATE_MISSING'):
+            self.engine.apply(manifest())
 
     def test_env_file_bytes_hashed_not_copied_and_order_preserved(self):
         env = self.root / 'private.env'
