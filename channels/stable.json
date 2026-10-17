@@ -1,0 +1,1 @@
+{"channel":"stable","generation":1,"image":"ghcr.io/traylinx/switchailocal@sha256:f150c205b83e8156b3e4203dd731450ceaa93f5486c62667c21d4182a7b2799e","promoted_at":"2026-10-17T12:56:10.155311+00:00","schema_version":1,"source_commit":"df94165f10321fe1670ac600eafb943848710244","verification_ref":"https://github.com/traylinx/switchAILocal/issues/408","version":"0.6.2"}
