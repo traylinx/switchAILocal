@@ -800,3 +800,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 <div align="center">
   <strong>Maintained by Sebastian Schkudlara</strong>
 </div>
+
+### Managed Linux servers
+
+For repeatable server enrollment, approved channel updates and exact-image rollback,
+see the [managed-server operator manual](deploy/managed-server/README.md).
+A release alone does not deploy servers.

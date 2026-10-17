@@ -217,6 +217,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		if compat := e.resolveCompatConfig(auth); compat.IsKimiHistoryShimEnabled() {
 			translated = applyKimiHistoryShim(translated)
 		}
+		translated = normalizeGeminiOpenAICompatPayload(baseURL, translated)
 	}
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
@@ -450,6 +451,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 	if compat := e.resolveCompatConfig(auth); compat.IsKimiHistoryShimEnabled() {
 		translated = applyKimiHistoryShim(translated)
 	}
+	translated = normalizeGeminiOpenAICompatPayload(baseURL, translated)
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))

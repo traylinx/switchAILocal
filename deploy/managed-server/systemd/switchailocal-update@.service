@@ -1,0 +1,17 @@
+[Unit]
+Description=Reconcile approved switchAILocal channel (%i)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/opt/switchailocal-updater/v1/managed_update.py --profile /etc/switchailocal-updater/profiles/%i.json apply
+TimeoutStartSec=1h
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+# Docker socket access is root-equivalent; this is not a container security boundary.

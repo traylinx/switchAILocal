@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "base_url": "http://127.0.0.1:18080/v1",
+  "key_file": "/etc/switchailocal-updater/router-01-api-key",
+  "chat_model": "ail-compound",
+  "vision_model": "ail-vision",
+  "embedding_model": "ail-embed",
+  "embedding_dimensions": 1024,
+  "max_tokens": 2048,
+  "timeout": 30,
+  "request_fields": {"store": false, "reasoning_effort": "low"}
+}

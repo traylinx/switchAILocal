@@ -72,6 +72,7 @@ jobs:
           CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o "${OUTDIR}/bridge-agent" ./cmd/bridge-agent/
 
           cp README.md LICENSE config.example.yaml "${OUTDIR}/"
+          cp -R deploy/managed-server "${OUTDIR}/managed-server"
           [ -f CHANGELOG.md ] && cp CHANGELOG.md "${OUTDIR}/"
 
           tar czf "${OUTDIR}.tar.gz" "${OUTDIR}/"
