@@ -72,7 +72,7 @@
 | Requirement | Minimum  | Notes                                        |
 | ----------- | -------- | -------------------------------------------- |
 | **Node.js** | 18+      | For `npx` install (recommended)              |
-| **Go**      | 1.25+    | Only needed for building from source         |
+| **Go**      | 1.26.9+    | Only needed for building from source         |
 | **Docker**  | Optional | Only needed for `ail start --docker`         |
 | **macOS**   | Ventura+ | Linux support is experimental                |
 

@@ -4,7 +4,7 @@ One enrollment procedure for Linux servers running a **single Compose router
 service per profile**. Requires Python 3.10+, Docker Engine, current Compose v2+
 and systemd for optional scheduling. No Git checkout or new daemon required.
 
-**Availability:** introduced in v0.6.0. No server is automatically
+**Availability:** introduced in v0.6.1. No server is automatically
 enrolled by installing or publishing this release. Commands below are operator procedures, not a record
 that they have run. There are no placeholder channel manifests: a feed returns
 404 until its first reviewed promotion is actually published.
