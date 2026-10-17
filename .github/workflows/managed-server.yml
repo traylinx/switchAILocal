@@ -1,6 +1,7 @@
 name: Managed server contracts
 on:
   push:
+    branches: [main]
     paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']
   pull_request:
     paths: ['deploy/managed-server/**', 'channels/**', '.github/workflows/**']

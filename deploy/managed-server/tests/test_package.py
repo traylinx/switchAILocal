@@ -59,6 +59,11 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('value=stable', build)
         self.assertNotIn('value=latest', build)
 
+    def test_contract_ci_avoids_zero_base_on_new_branch_push(self):
+        workflow = (HERE.parents[1] / '.github/workflows/managed-server.yml').read_text()
+        self.assertIn('push:\n    branches: [main]', workflow)
+        self.assertIn('pull_request:', workflow)
+
     def test_profile_examples_do_not_enable_recreation(self):
         profile = json.loads((HERE / 'examples/profile.json').read_text())
         self.assertFalse(profile['allow_recreate'])

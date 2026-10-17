@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## v0.6.0 - 2026-10-17
+
+- Add opt-in, Git-independent managed-server updates for Linux Docker Compose routers: immutable canary/stable manifests, private per-service enrollment profiles, transaction recovery, previous-image rollback, retained rollback guards, quarantine, operator holds and optional five-minute systemd checks.
+- Add a bounded synthetic text/tool-replay/vision/stream/local-embedding acceptance probe, inert versioned installer and one canonical new-server/operator guide.
+- Separate image construction from deployment. Remove the automatic tag-to-infrastructure pin push; publish source/version image identities instead of moving latest/stable tags. Existing hosts remain pinned until explicit enrollment.
+- Validate monotonic channel promotions; stable must match a previously published canary and include verification evidence. New-branch checks run through pull requests, avoiding invalid all-zero push bases.
+- Fix official Google OpenAI-compatible requests by omitting unsupported OpenAI storage/cache fields in chat and streaming. Other upstreams are unchanged.
+
 ## v0.5.26 - 2026-08-05
 
 - Add `cortex-answer-schema` Lua plugin: a tightly-scoped compatibility shim for the Cortex grounded-answer pipeline. It fires only on requests carrying a Cortex answer/grounding marker (`classification_code`, `material statement`, `Identify contradictions`) and injects the classification vocabulary the Cortex prompt omits (`SUPPORTED`/`PARTIALLY_SUPPORTED`/`CONFLICTING`/`ABSTAINED`), the correct abstention shape (`{"statements": []}`, since an empty `citation_ids` list is schema-invalid), and `Reasoning: low` so a small model's generate+verify chain fits inside Cortex's 10s read-lease. Inert for all other traffic; remove once the Cortex prompt carries its own vocabulary.
