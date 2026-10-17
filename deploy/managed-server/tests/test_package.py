@@ -70,6 +70,18 @@ class PackageTests(unittest.TestCase):
             self.assertIn('-X ' + field + '=', workflow)
         self.assertIn('COMMIT="$(git rev-parse HEAD)"', workflow)
 
+    def test_publication_requires_strict_source_scan(self):
+        workflows = HERE.parents[1] / '.github/workflows'
+        for filename in ('release.yml', 'build.yml'):
+            text = (workflows / filename).read_text()
+            self.assertIn('uses: ./.github/workflows/go-vulnerability-gate.yml', text)
+            self.assertIn('  build:\n    needs: security-gate', text)
+        gate = (workflows / 'go-vulnerability-gate.yml').read_text()
+        self.assertIn('ref: ${{ inputs.ref || github.ref }}', gate)
+        self.assertIn('- run: govulncheck ./...', gate)
+        self.assertNotIn('continue-on-error', gate)
+        self.assertNotIn('||', gate.split('- run: govulncheck')[1])
+
     def test_profile_examples_do_not_enable_recreation(self):
         profile = json.loads((HERE / 'examples/profile.json').read_text())
         self.assertFalse(profile['allow_recreate'])
