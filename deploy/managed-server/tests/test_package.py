@@ -64,6 +64,12 @@ class PackageTests(unittest.TestCase):
         self.assertIn('push:\n    branches: [main]', workflow)
         self.assertIn('pull_request:', workflow)
 
+    def test_release_binary_identity_uses_actual_linker_symbols(self):
+        workflow = (HERE.parents[1] / '.github/workflows/release.yml').read_text()
+        for field in ['main.Version', 'main.Commit', 'main.BuildDate']:
+            self.assertIn('-X ' + field + '=', workflow)
+        self.assertIn('COMMIT="$(git rev-parse HEAD)"', workflow)
+
     def test_profile_examples_do_not_enable_recreation(self):
         profile = json.loads((HERE / 'examples/profile.json').read_text())
         self.assertFalse(profile['allow_recreate'])

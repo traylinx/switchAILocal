@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add a bounded synthetic text/tool-replay/vision/stream/local-embedding acceptance probe, inert versioned installer and one canonical new-server/operator guide.
 - Separate image construction from deployment. Remove the automatic tag-to-infrastructure pin push; publish source/version image identities instead of moving latest/stable tags. Existing hosts remain pinned until explicit enrollment.
 - Validate monotonic channel promotions; stable must match a previously published canary and include verification evidence. New-branch checks run through pull requests, avoiding invalid all-zero push bases.
+- Fix release-binary version/source/date linker symbols so packaged binaries report the actual reviewed release identity.
 - Fix official Google OpenAI-compatible requests by omitting unsupported OpenAI storage/cache fields in chat and streaming. Other upstreams are unchanged.
 
 ## v0.5.26 - 2026-08-05
