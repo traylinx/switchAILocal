@@ -561,6 +561,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 		scanner := bufio.NewScanner(httpResp.Body)
 		scanner.Buffer(nil, constant.MaxStreamingScannerBuffer)
 		var param any
+		geminiStream := newGeminiOpenAIStream(baseURL)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if watchdog != nil && len(line) > 0 {
@@ -584,6 +585,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *switchai
 			}
 			// OpenAI-compatible streams are SSE: lines typically prefixed with "data: ".
 			// Pass through translator; it yields one or more chunks for the target schema.
+			line = geminiStream.normalize(line)
 			chunks := sdktranslator.TranslateStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(line), &param)
 			for i := range chunks {
 				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {

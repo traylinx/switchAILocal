@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.2] - 2026-10-17
+
+- Fix Gemini OpenAI-compatible streaming tool finish reasons for strict agent SDKs. Preserve truncation, safety, other providers and tool signatures.
+- Build amd64/arm64 OCI images on native runners, then publish an index only when platform artifacts agree on the exact scanned SHA and version. No channel promotion occurs automatically.
+
 ## v0.6.1 - 2026-10-17
 
 - Build and verify with Go 1.26.9, including patched HTTP/2, TLS, textproto and filesystem behavior.

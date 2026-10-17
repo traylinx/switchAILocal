@@ -4,7 +4,7 @@ One enrollment procedure for Linux servers running a **single Compose router
 service per profile**. Requires Python 3.10+, Docker Engine, current Compose v2+
 and systemd for optional scheduling. No Git checkout or new daemon required.
 
-**Availability:** introduced in v0.6.1. No server is automatically
+**Availability:** introduced in v0.6.2. No server is automatically
 enrolled by installing or publishing this release. Commands below are operator procedures, not a record
 that they have run. There are no placeholder channel manifests: a feed returns
 404 until its first reviewed promotion is actually published.
@@ -96,8 +96,7 @@ vision and embedding dimensions before changing the live route. Pinning a router
 image does not pin or update upstream model availability.
 
 For Cortex, preserve local embeddings and search; verify actual deployed Pi
-client chat/tool replay/vision, not just the generic probe. The pending Gemini
-3.8 compatibility change still needs that gate. For HoCa, preserve its template
+client chat/tool replay/vision, not just the generic probe. Provider changes must pass that SDK gate; generic HTTP success is insufficient. For HoCa, preserve its template
 renderer and ordered `.env.production`; local faster-whisper is separate from
 AIL. Do not edit generated HoCa configs or copy credentials between applications.
 

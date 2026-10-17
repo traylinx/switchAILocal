@@ -24,7 +24,15 @@ jobs:
       ref: ${{ inputs.ref || github.ref }}
   build:
     needs: security-gate
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -53,7 +61,6 @@ jobs:
           fi
           echo "TAGS" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: github.event_name != 'workflow_dispatch' || inputs.push
@@ -66,9 +73,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
-          platforms: ${{ github.event_name == 'workflow_dispatch' && !inputs.push && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          tags: ${{ steps.source.outputs.tags }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: ${{ (github.event_name != 'workflow_dispatch' || inputs.push) && 'type=image,name=ghcr.io/traylinx/switchailocal,push-by-digest=true,name-canonical=true,push=true' || '' }}
+          cache-from: type=gha,scope=ail-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=ail-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
             org.opencontainers.image.source=https://github.com/traylinx/switchAILocal
@@ -78,10 +86,56 @@ jobs:
             COMMIT=${{ steps.source.outputs.sha }}
             BUILD_DATE=${{ steps.source.outputs.date }}
           load: ${{ github.event_name == 'workflow_dispatch' && !inputs.push }}
-      - name: Record candidate identity
-        if: steps.image.outputs.digest != ''
+      - name: Native image startup smoke
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: timeout 60 docker run --rm --network none "ghcr.io/traylinx/switchailocal@${DIGEST}" --help
+      - name: Record native candidate
+        if: github.event_name != 'workflow_dispatch' || inputs.push
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
           SHA: ${{ steps.source.outputs.sha }}
+          VERSION: ${{ steps.source.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          printf 'Candidate: ghcr.io/traylinx/switchailocal@%s\nSource: %s\nNo channel promotion or deployment.\n' "$DIGEST" "$SHA" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p native-metadata
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          record = dict(digest=os.environ['DIGEST'], source=os.environ['SHA'], version=os.environ['VERSION'], arch=os.environ['ARCH'])
+          Path('native-metadata/' + record['arch'] + '.json').write_text(json.dumps(record))
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        with:
+          name: native-${{ matrix.arch }}
+          path: native-metadata/*.json
+          retention-days: 7
+
+  publish-index:
+    if: github.event_name != 'workflow_dispatch' || inputs.push
+    needs: [security-gate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.security-gate.outputs.source_commit }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-metadata
+          merge-multiple: true
+      - name: Verify matching native metadata and publish index
+        env:
+          SCANNED_SHA: ${{ needs.security-gate.outputs.source_commit }}
+        run: python3 deploy/release/publish_index.py --metadata native-metadata --source "$SCANNED_SHA"
