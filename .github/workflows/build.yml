@@ -90,7 +90,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.push
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
-        run: timeout 60 docker run --rm --network none "ghcr.io/traylinx/switchailocal@${DIGEST}" --help
+        run: timeout 60 docker run --rm --network none --entrypoint /app/switchAILocal "ghcr.io/traylinx/switchailocal@${DIGEST}" --help
       - name: Record native candidate
         if: github.event_name != 'workflow_dispatch' || inputs.push
         env:

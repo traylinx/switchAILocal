@@ -24,6 +24,7 @@ class PublicationTests(unittest.TestCase):
         self.assertIn('needs: [security-gate, build]', workflow)
         self.assertIn('ref: ${{ needs.security-gate.outputs.source_commit }}', workflow)
         self.assertIn('Native image startup smoke', workflow)
+        self.assertIn('--entrypoint /app/switchAILocal', workflow)
         self.assertNotIn('setup-qemu', workflow)
 
     def test_rejects_mixed_incomplete_or_unscanned_metadata(self):
