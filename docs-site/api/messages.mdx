@@ -1,0 +1,123 @@
+---
+title: 'Messages (Anthropic)'
+description: 'POST /v1/messages and POST /v1/messages/count_tokens'
+---
+
+Anthropic Messages API compatibility, so Claude Code and Anthropic SDKs can use any routed provider. Requests are translated into the selected provider's format, and the replies are translated back into Anthropic format.
+
+**Auth:** client API key. Anthropic SDKs send it as `X-Api-Key`, which the gateway accepts, as is `Authorization: Bearer`. The `anthropic-version` header is not checked.
+
+Point SDKs at the server root (not `/v1`):
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:18080
+export ANTHROPIC_API_KEY=YOUR_API_KEY
+```
+
+---
+
+## POST /v1/messages
+
+### Request
+
+The gateway reads:
+
+<ParamField body="model" type="string" required>
+  Routed like every other endpoint: `claude-sonnet-4-5`, `claudecli:...`, an alias, `ail-compound`, or `auto`. It does not have to be a Claude model.
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  `true` returns Anthropic SSE events.
+</ParamField>
+
+`messages`, `system`, `max_tokens`, `tools`, `tool_choice`, `thinking`, `temperature`, ... are translated for the selected provider.
+
+### Response (non-streaming)
+
+An Anthropic `message` object:
+
+```json
+{
+  "id": "msg_01...",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [{"type": "text", "text": "Hello!"}],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 10, "output_tokens": 3}
+}
+```
+
+Gzip-compressed upstream bodies are decompressed before they are returned.
+
+### Streaming
+
+`text/event-stream` with Anthropic events (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`), written as the translator emits them.
+
+If the provider fails mid-stream, the gateway writes:
+
+```text
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"..."}}
+```
+
+### Errors
+
+<Warning>
+Errors returned **before** a stream starts, and all non-streaming errors, use the OpenAI envelope `{"error":{"message","type","code"}}`, not Anthropic's `{"type":"error",...}`. Only mid-stream errors use the Anthropic shape. Anthropic SDKs still report the HTTP status correctly.
+</Warning>
+
+### Example
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/messages \
+  -H "X-Api-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 512,
+    "messages": [{"role": "user", "content": "Hello, Claude"}]
+  }'
+```
+
+```python Python
+import anthropic
+
+client = anthropic.Anthropic(base_url="http://localhost:18080", api_key="YOUR_API_KEY")
+msg = client.messages.create(
+    model="claude-sonnet-4-5",
+    max_tokens=512,
+    messages=[{"role": "user", "content": "Hello, Claude"}],
+)
+print(msg.content[0].text)
+```
+</CodeGroup>
+
+---
+
+## POST /v1/messages/count_tokens
+
+Counts input tokens for an Anthropic-format request using the selected provider's token counter.
+
+The request body is the same as `/v1/messages`; `model` selects the provider.
+
+```json
+{"input_tokens": 1234}
+```
+
+The exact shape comes from the provider's translator. Providers that cannot count tokens return an error.
+
+```bash
+curl http://localhost:18080/v1/messages/count_tokens \
+  -H "X-Api-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+---
+
+## Model list for Claude Code
+
+`GET /v1/models` returns the Anthropic model-list shape when the `User-Agent` starts with `claude-cli`. See [Models](/api/models#claude-code-clients).

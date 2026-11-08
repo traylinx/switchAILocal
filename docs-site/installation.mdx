@@ -1,857 +1,339 @@
 ---
 title: Installation
-description: Complete installation guide for switchAILocal
+description: Install switchAILocal from a release archive, Docker, or source
 ---
 
-This guide covers all installation methods for switchAILocal, from quick local setup to production Docker deployments.
+switchAILocal is a single Go binary plus a `config.yaml`. Pick the install path
+that matches your platform.
 
-## Prerequisites
+## Platform support
 
-<CardGroup cols={2}>
+| Platform | Release archive | Docker image | Source build |
+| -------- | --------------- | ------------ | ------------ |
+| macOS, Apple Silicon | `darwin_arm64` | yes | yes |
+| macOS, Intel | not published | yes | yes |
+| Linux x86_64 | `linux_amd64` | yes (`linux/amd64`) | yes |
+| Linux arm64 | `linux_arm64` | yes (`linux/arm64`) | yes |
+| Windows | not published | yes | WSL |
 
-<Card title="Required" icon="check">
-  - **Node.js 18+** - For `npx` install (recommended), or
-  - **Go 1.26.10+** - For building from source (CGO required)
-  - **Terminal/Shell** - Command line access
-</Card>
+Optional, depending on the providers you use:
 
-<Card title="Optional" icon="star">
-  - **Docker** - For containerized deployment
-  - **CLI Tools** - `gemini`, `claude`, `vibe` for zero-config providers
-</Card>
+- The `gemini`, `claude`, `codex` or `vibe` CLI, installed and logged in.
+- Ollama, LM Studio or an OpenCode server running locally.
 
-</CardGroup>
+## Release archive
 
-## Installation Methods
-
-<Tabs>
-
-<Tab title="npx (Recommended)">
-
-### One Command Install
-
-The fastest way to get started. Downloads the right binary for your platform and runs it.
-
-```bash
-npx @traylinx/switchailocal
-```
-
-This will:
-1. Download the pre-built binary for your OS/architecture
-2. Cache it locally (subsequent runs start instantly)
-3. Create a default `~/.switchailocal/config.yaml` on first run
-4. Start the server on `http://localhost:18080`
-
-<CodeGroup>
-
-```bash Run specific version
-npx @traylinx/switchailocal --version=v0.1.0
-```
-
-```bash Custom port
-npx @traylinx/switchailocal --port 8080
-```
-
-</CodeGroup>
-
-<Note>
-  Requires Node.js 18+. The npm package has zero dependencies — it's just a 200-line launcher script.
-</Note>
-
-</Tab>
-
-<Tab title="Docker">
-
-### Docker Install
-
-```bash
-docker run -d \
-  --name switchailocal \
-  -p 18080:18080 \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  ghcr.io/traylinx/switchailocal:latest
-```
-
-See the [Docker Deployment Guide](/guides/docker-deployment) for production setups with volumes and compose.
-
-</Tab>
-
-<Tab title="Local (Hub Script)">
-
-### Using ail.sh
-
-The unified operations hub script handles building, dependencies, and lifecycle management automatically.
+Every GitHub release ships one archive per platform plus `checksums.txt`.
 
 <Steps>
+  <Step title="Download and verify">
+    ```bash
+    VERSION=0.6.2
+    OS=darwin ARCH=arm64   # or OS=linux ARCH=amd64 / ARCH=arm64
+    BASE=https://github.com/traylinx/switchAILocal/releases/download/v${VERSION}
+    ARCHIVE=switchAILocal_${VERSION}_${OS}_${ARCH}.tar.gz
 
-<Step title="Clone Repository">
+    curl -LO "$BASE/$ARCHIVE"
+    curl -LO "$BASE/checksums.txt"
+    grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -   # Linux: sha256sum -c -
+    ```
+  </Step>
 
-```bash
-git clone https://github.com/traylinx/switchAILocal.git
-cd switchAILocal
-```
+  <Step title="Unpack">
+    ```bash
+    tar xzf "$ARCHIVE"
+    cd switchAILocal_${VERSION}_${OS}_${ARCH}
+    ```
 
-</Step>
+    The folder contains:
 
-<Step title="Check Dependencies">
+    | File | Purpose |
+    | ---- | ------- |
+    | `switchAILocal` | The gateway |
+    | `bridge-agent` | Optional host-side CLI bridge for Docker setups ([details](#bridge-agent)) |
+    | `config.example.yaml` | Annotated reference of every config section |
+    | `managed-server/` | Optional updater for Linux Compose hosts ([guide](/guides/managed-server)) |
+    | `README.md`, `LICENSE`, `CHANGELOG.md` | Docs |
+  </Step>
 
-Verify Go and Docker are installed:
+  <Step title="Create config.yaml and run">
+    ```bash
+    cat > config.yaml <<'EOF'
+    host: "127.0.0.1"
+    port: 18080
+    auth-dir: "~/.switchailocal"
+    api-keys:
+      - "sk-your-key"
+    EOF
+    chmod 600 config.yaml
+    ./switchAILocal
+    ```
 
-```bash
-./ail.sh check
-```
-
-Expected output:
-```
-[INFO] Running pre-flight checks...
-[OK]   Go detected: 1.26.10
-[OK]   Docker detected.
-[OK]   All systems go.
-```
-
-<Note>
-  **macOS users:** Run `./ail.sh install` to auto-install missing dependencies via Homebrew.
-</Note>
-
-</Step>
-
-<Step title="Start Server">
-
-Build and start in one command:
-
-```bash
-./ail.sh start
-```
-
-The script will:
-1. Create `.ail` state directory
-2. Build the `switchAILocal` binary
-3. Start the server in background
-4. Save PID to `.ail/local.pid`
-5. Write logs to `server.log`
-
-<CodeGroup>
-
-```bash Start with Logs
-./ail.sh start -f
-# Builds, starts, and follows logs
-```
-
-```bash Docker Mode
-./ail.sh start --docker --build
-# Runs in Docker with automatic rebuild
-```
-
-</CodeGroup>
-
-</Step>
-
-<Step title="Verify Installation">
-
-Check server status:
-
-```bash
-./ail.sh status
-```
-
-Test the API:
-
-```bash
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
-```
-
-</Step>
-
+    Optionally put the binary on your `PATH` (`sudo install switchAILocal /usr/local/bin/`).
+    It still reads `config.yaml` from the directory you start it in, or from
+    `-config`.
+  </Step>
 </Steps>
 
-### Hub Script Commands
+<Note>
+  The release archive does not include the management panel file. To use
+  `/management`, place `management.html` in a `static/` folder next to your
+  `config.yaml`:
 
-<ParamField path="start" type="command">
-  Build and start the server
-  
-  **Options:**
-  - `-d, --docker` - Use Docker runtime
-  - `-b, --build` - Force rebuild (Docker only)
-  - `-f, --follow` - Follow logs after starting
-  
   ```bash
-  ./ail.sh start -f
-  ./ail.sh start --docker --build
+  mkdir -p static
+  curl -L -o static/management.html \
+    https://raw.githubusercontent.com/traylinx/switchAILocal/v0.6.2/static/management.html
   ```
-</ParamField>
+</Note>
 
-<ParamField path="stop" type="command">
-  Stop the running server
-  
-  ```bash
-  ./ail.sh stop
-  ./ail.sh stop --docker
-  ```
-</ParamField>
+<Tip>
+  If macOS blocks a binary you downloaded with a browser, remove the quarantine
+  flag: `xattr -d com.apple.quarantine switchAILocal`.
+</Tip>
 
-<ParamField path="restart" type="command">
-  Restart the server (stop + start)
-  
-  ```bash
-  ./ail.sh restart
-  ```
-</ParamField>
+## Docker
 
-<ParamField path="status" type="command">
-  Show status of all instances (local, Docker, bridge)
-  
-  ```bash
-  ./ail.sh status
-  ```
-</ParamField>
-
-<ParamField path="logs" type="command">
-  View server logs
-  
-  **Options:**
-  - `-f, --follow` - Follow log output
-  
-  ```bash
-  ./ail.sh logs        # Last 50 lines
-  ./ail.sh logs -f     # Follow logs
-  ```
-</ParamField>
-
-<ParamField path="check" type="command">
-  Verify dependencies (Go, Docker)
-  
-  ```bash
-  ./ail.sh check
-  ```
-</ParamField>
-
-<ParamField path="install" type="command">
-  Auto-install dependencies (macOS only, requires Homebrew)
-  
-  ```bash
-  ./ail.sh install
-  ```
-</ParamField>
-
-<ParamField path="bridge" type="command">
-  Manage the bridge agent (for advanced integrations)
-  
-  ```bash
-  ./ail.sh bridge start
-  ./ail.sh bridge stop
-  ./ail.sh bridge status
-  ```
-</ParamField>
-
-</Tab>
-
-<Tab title="Manual Build">
-
-### Build from Source
-
-For users who prefer manual control or are on non-standard systems.
-
-<Steps>
-
-<Step title="Clone and Navigate">
+Images are published to GitHub Container Registry for `linux/amd64` and
+`linux/arm64`, tagged by version without a `v` (for example `0.6.2`).
 
 ```bash
-git clone https://github.com/traylinx/switchAILocal.git
-cd switchAILocal
+docker run -d --name switchailocal \
+  -p 18080:18080 \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  -v "$HOME/.switchailocal:/home/appuser/.switchailocal" \
+  ghcr.io/traylinx/switchailocal:0.6.2
 ```
 
-</Step>
+Set `host: ""` in a container config. Compose files, volumes, permissions and
+networking are covered in [Docker deployment](/guides/docker-deployment).
 
-<Step title="Download Dependencies">
+## Build from source
 
-```bash
-go mod download
-```
-
-</Step>
-
-<Step title="Build Binary">
-
-```bash
-go build -o switchAILocal ./cmd/server
-```
-
-For production builds with version information:
-
-```bash
-VERSION=$(git describe --tags --always)
-COMMIT=$(git rev-parse --short HEAD)
-BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-go build \
-  -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
-  -o switchAILocal ./cmd/server
-```
-
-</Step>
-
-<Step title="Verify Build">
-
-```bash
-./switchAILocal --version
-```
-
-</Step>
-
-<Step title="Create Configuration">
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-Edit `config.yaml` with your provider credentials (see [Configuration Guide](/configuration/overview)).
-
-</Step>
-
-<Step title="Run Server">
-
-```bash
-./switchAILocal
-```
-
-The server starts on `http://localhost:18080` by default.
-
-</Step>
-
-</Steps>
-
-### Custom Build Options
-
-<CodeGroup>
-
-```bash Optimized Build
-# Smaller binary, no debug symbols
-go build -ldflags="-s -w" -o switchAILocal ./cmd/server
-```
-
-```bash With Race Detector
-# For debugging concurrency issues
-go build -race -o switchAILocal ./cmd/server
-```
-
-```bash Static Binary (Linux)
-# For containerized environments (requires musl-dev)
-CGO_ENABLED=1 go build -ldflags="-s -w -linkmode external -extldflags '-static'" -o switchAILocal ./cmd/server
-```
-
-</CodeGroup>
-
-</Tab>
-
-<Tab title="Docker">
-
-### Docker Installation
-
-Run switchAILocal in an isolated container with all dependencies included.
-
-<Steps>
-
-<Step title="Clone Repository">
-
-```bash
-git clone https://github.com/traylinx/switchAILocal.git
-cd switchAILocal
-```
-
-</Step>
-
-<Step title="Choose Installation Method">
+Requires Go 1.26.10 or newer with CGO enabled (the embedding engine links
+ONNX Runtime through cgo), so a C compiler must be installed.
 
 <Tabs>
+  <Tab title="ail.sh setup">
+    ```bash
+    git clone https://github.com/traylinx/switchAILocal.git
+    cd switchAILocal
+    ./ail.sh setup
+    ```
 
-<Tab title="docker-build.sh">
+    `setup` runs six steps:
 
-Use the interactive setup script:
+    1. Checks for Go; on macOS it installs Go and Docker with Homebrew if Go is missing.
+    2. Builds `switchAILocal` and `bridge-agent` in the repository root.
+    3. Copies `config.example.yaml` to `config.yaml` unless one exists.
+    4. Creates the `.ail/` state folder.
+    5. On macOS, installs and loads the bridge launchd job
+       `~/Library/LaunchAgents/com.traylinx.switchailocal.bridge.plist`.
+    6. Writes the `ail` wrapper to `~/bin/ail` and adds `~/bin` to `PATH` in
+       `~/.zshrc` (or `~/.bashrc`).
 
-```bash
-./docker-build.sh
-```
+    Then start the server from anywhere with `ail start`.
 
-You'll see:
-```
-=================================================
-  switchAILocal - Docker Build & Run
-=================================================
+    <Warning>
+      `config.yaml` created by `setup` is a copy of `config.example.yaml`. It
+      enables example providers and the test key `sk-test-123`. Edit it before
+      use.
+    </Warning>
+  </Tab>
+  <Tab title="Manual build">
+    ```bash
+    git clone https://github.com/traylinx/switchAILocal.git
+    cd switchAILocal
+    go build -o switchAILocal ./cmd/server
+    ```
 
-1) Pre-built image (traylinx/switchailocal:latest)
-2) Build from source (local Dockerfile)
-3) Exit
+    Embed version information the same way release builds do:
 
-Select option: 
-```
+    ```bash
+    VERSION=$(git describe --tags --always)
+    COMMIT=$(git rev-parse HEAD)
+    BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    CGO_ENABLED=1 go build \
+      -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
+      -o switchAILocal ./cmd/server
+    ```
 
-- **Option 1:** Pull pre-built image from Docker Hub (fastest)
-- **Option 2:** Build from source (recommended for development)
-
-</Tab>
-
-<Tab title="Docker Compose">
-
-Use Docker Compose for production deployments:
-
-```bash
-# Start in detached mode
-docker compose up -d
-
-# Start with rebuild
-docker compose up -d --build
-
-# View logs
-docker compose logs -f
-
-# Stop services
-docker compose down
-```
-
-</Tab>
-
-<Tab title="Manual Commands">
-
-Build and run manually:
-
-```bash
-# Build image
-docker build -t switchailocal:latest .
-
-# Run container
-docker run -d \
-  --name switchailocal \
-  -p 18080:18080 \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  -v ~/.switchailocal:/home/appuser/.switchailocal \
-  -v $(pwd)/logs:/app/logs \
-  switchailocal:latest
-```
-
-</Tab>
-
+    Build the optional bridge with `go build -o bridge-agent ./cmd/bridge-agent`.
+  </Tab>
 </Tabs>
 
-</Step>
-
-<Step title="Configure Volumes">
-
-The Docker setup mounts these directories:
-
-| Host Path | Container Path | Purpose |
-|-----------|----------------|----------|
-| `./config.yaml` | `/app/config.yaml` | Server configuration |
-| `~/.switchailocal` | `/home/appuser/.switchailocal` | Auth credentials & tokens |
-| `./logs` | `/app/logs` | Server logs |
-| `./plugins` | `/app/plugins` | LUA plugins & Cortex Router skills |
-
-<Warning>
-  Ensure `config.yaml` exists before starting Docker. Copy from `config.example.yaml` if needed.
-</Warning>
-
-</Step>
-
-<Step title="Verify Container">
+Check the build: every invocation prints the version first.
 
 ```bash
-# Check container status
-docker ps | grep switchailocal
-
-# View logs
-docker logs -f switchailocal
-
-# Test API
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
+./switchAILocal -h | head -1
+# switchAILocal Version: 0.6.2, Commit: ..., BuiltAt: ...
 ```
 
-</Step>
+There is no `--version` flag.
 
-</Steps>
+### ail.sh reference
 
-### Docker Environment Variables
+`ail.sh` (or the `ail` wrapper after `setup`) manages a source checkout. It
+always runs from the repository folder.
 
-<ParamField path="TZ" type="string" default="UTC">
-  Container timezone
-  
-  ```yaml
-  environment:
-    TZ: "America/New_York"
-  ```
-</ParamField>
+| Command | What it does |
+| ------- | ------------ |
+| `setup` | First-time install (see above) |
+| `start` | `go build` the server, start it in the background, PID in `.ail/local.pid`, output in `server.log` |
+| `stop` | Stop the background server |
+| `restart` | `stop` then `start` |
+| `status` | Local PID status, `docker compose ps`, bridge launchd status |
+| `logs` | Last 50 lines of `server.log` (`-f` to follow) |
+| `check` | Verify Go and Docker are installed |
+| `install` | Install Go and Docker with Homebrew (macOS only) |
+| `bridge` | Show whether the bridge launchd job is loaded (macOS) |
+| `help` | Usage |
 
-<ParamField path="REMOTE_COMMAND_HOST" type="string" default="http://host.docker.internal:18888">
-  Bridge agent connection URL (advanced)
-  
-  ```yaml
-  environment:
-    REMOTE_COMMAND_HOST: "http://192.168.1.100:18888"
-  ```
-</ParamField>
+<Warning>
+  `ail bridge start` and `ail bridge stop` do not reach the bridge in 0.6.2: the
+  argument parser treats `start`/`stop` as the main command, so they start or
+  stop the **server**. Manage the bridge job with `launchctl` directly:
 
-<ParamField path="SWITCH_AI_IMAGE" type="string" default="traylinx/switchailocal:latest">
-  Docker image to use
-  
   ```bash
-  SWITCH_AI_IMAGE=switchailocal:dev docker compose up -d
+  launchctl unload ~/Library/LaunchAgents/com.traylinx.switchailocal.bridge.plist   # stop
+  launchctl load -w ~/Library/LaunchAgents/com.traylinx.switchailocal.bridge.plist  # start
   ```
-</ParamField>
-
-### Dockerfile Overview
-
-The official Dockerfile includes:
-- **Alpine Linux** base image (minimal footprint)
-- **Go 1.26.10** build environment
-- **Node.js & npm** for CLI tool support
-- **@google/gemini-cli** pre-installed
-- **Non-root user** for security
-- **TLS certificates** for HTTPS providers
-
-</Tab>
-
-</Tabs>
-
-## Building the Management UI
-
-The optional web dashboard provides a modern interface for configuration and monitoring.
-
-<Steps>
-
-<Step title="Install Node.js">
-
-Requires Node.js 18+ and npm:
-
-```bash
-node --version  # Should be v18.0.0 or higher
-npm --version
-```
-
-</Step>
-
-<Step title="Build UI">
-
-Run the build script:
-
-```bash
-./ail_ui.sh
-```
-
-This script:
-1. Navigates to `frontend/`
-2. Installs dependencies (`npm install`)
-3. Builds React app (`npm run build`)
-4. Inlines all assets (CSS, JS, SVGs)
-5. Outputs single-file `static/management.html` (~226 KB)
-
-</Step>
-
-<Step title="Verify Build">
-
-```bash
-ls -lh static/management.html
-# Should show ~226 KB file
-```
-
-</Step>
-
-<Step title="Access Dashboard">
-
-Start the server and visit:
-
-```
-http://localhost:18080/management
-```
-
-<Note>
-  The Management UI requires a secret key. See [Management Dashboard](/guides/management-dashboard) for setup.
-</Note>
-
-</Step>
-
-</Steps>
-
-## Post-Installation Configuration
-
-<Steps>
-
-### Copy Configuration Template
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-### Add Your Provider Credentials
-
-Edit `config.yaml` and add API keys or enable local providers:
-
-<CodeGroup>
-
-```yaml Cloud APIs
-gemini-api-key:
-  - api-key: "AIzaSy...YOUR_KEY_HERE"
-
-claude-api-key:
-  - api-key: "sk-ant-...YOUR_KEY_HERE"
-
-codex-api-key:
-  - api-key: "sk-...YOUR_KEY_HERE"
-```
-
-```yaml Local Models
-ollama:
-  enabled: true
-  base-url: "http://localhost:11434"
-  auto-discover: true
-
-lmstudio:
-  enabled: true
-  base-url: "http://localhost:1234/v1"
-  auto-discover: true
-```
-
-```yaml CLI Wrappers
-# No configuration needed!
-# Install CLI tools and switchAILocal detects them automatically:
-# - npm install -g @google/gemini-cli
-# - brew install anthropic/tap/claude
-# - npm install -g @mistralai/vibe
-```
-
-</CodeGroup>
-
-### Set Authentication Keys
-
-Update the API keys that clients use to authenticate to **your** switchAILocal server:
-
-```yaml
-api-keys:
-  - "your-secure-key-here"
-  - "another-key-for-team"
-```
-
-<Warning>
-  Replace the default `sk-test-123` key before deploying to production.
 </Warning>
 
-### Restart Server
-
-Apply configuration changes:
+| Option | Meaning |
+| ------ | ------- |
+| `-d`, `--docker` | Act on the Docker Compose service instead of the local process (`start`, `stop`, `restart`, `logs`) |
+| `-b`, `--build` | With `start -d`: rebuild the image (`docker compose up -d --build`) |
+| `-f`, `--follow` | With `start` or `logs`: follow log output |
 
 ```bash
-./ail.sh restart
+ail start -f          # build, start, follow server.log
+ail start -d --build  # docker compose up -d --build --remove-orphans
+ail logs -d -f        # docker compose logs -f
 ```
 
-</Steps>
+### Bridge agent
 
-## Verification Tests
+`bridge-agent` lets a containerised gateway run the `gemini`, `claude`, `vibe`
+or `codex` CLI on the host. The gateway forwards CLI executions to it when the
+`REMOTE_COMMAND_HOST` environment variable is set (the bundled
+`docker-compose.yml` sets it to `http://host.docker.internal:18888`).
 
-<Tabs>
+| Setting | Default | Meaning |
+| ------- | ------- | ------- |
+| `BRIDGE_AGENT_SECRET` (env) | none, required | Bearer token the agent demands on `POST /run`; it exits at startup without it |
+| `BRIDGE_PORT` (env) | `18888` | Port when `-listen-address` is not set |
+| `-listen-address` (flag) | `127.0.0.1:<BRIDGE_PORT>` | Full listen address |
 
-<Tab title="Health Check">
+<Warning>
+  In 0.6.2 the bridge path is not usable out of the box: the launchd job that
+  `ail.sh setup` installs does not set `BRIDGE_AGENT_SECRET`, so the agent exits
+  and launchd keeps restarting it, and the gateway does not send that secret
+  with its requests, so the agent rejects them. If you do not run the gateway
+  in Docker, unload the job with the `launchctl unload` command above. In
+  Docker, clear `REMOTE_COMMAND_HOST` so CLIs installed in the container run
+  directly.
+</Warning>
+
+### Rebuild the management panel
+
+The panel source lives in `frontend/` and builds to a single
+`static/management.html`.
+
+```bash
+cd frontend && npm install && cd ..
+./ail_ui.sh            # runs `npm run build` in frontend/, writes static/management.html
+```
+
+`ail_ui.sh` then opens `http://localhost:18080/management` on macOS.
+
+## npx
+
+The npm package `@traylinx/switchailocal` is a small launcher that downloads a
+release binary and runs it with your arguments.
+
+```bash
+npx @traylinx/switchailocal                  # latest GitHub release
+npx @traylinx/switchailocal --version=v0.6.2 # a specific release tag
+```
+
+- `--version` is read by the launcher; every other argument is passed to
+  `switchAILocal`.
+- Binaries are cached per version in `~/Library/Caches/switchailocal` (macOS),
+  `$XDG_CACHE_HOME/switchailocal` or `~/.cache/switchailocal` (Linux), or
+  `%LOCALAPPDATA%\switchailocal` (Windows).
+- The binary runs in your current directory, so `config.yaml` must exist there
+  (or pass `-config`). The launcher does not create one.
+
+<Warning>
+  Known issue: the launcher expects the binary at the top level of the archive,
+  but current release archives place it inside a versioned folder, so
+  extraction fails. It also requests assets that are not published
+  (`darwin_amd64`, Windows). Until the launcher is fixed, use the
+  [release archive](#release-archive) or [Docker](#docker).
+</Warning>
+
+## Files switchAILocal creates
+
+| Path | Created by | Contents |
+| ---- | ---------- | -------- |
+| `auth-dir` (`~/.switchailocal` in the example config) | Logins, management panel | Provider credential files such as `claude-<email>.json`, `codex-<email>.json`, `ollama-local.json` |
+| `~/.switchailocal/cli-sandbox/` | CLI providers | Empty working folder for CLI calls (unless `billboard` is enabled) |
+| `~/.switchailocal/cache/discovery/` | Model discovery | Cached model lists |
+| `.switchailocal/steering`, `.switchailocal/hooks` (relative to the start folder) | Startup | Rule folders for steering and hooks |
+| `logs/` (relative to the start folder, or `$WRITABLE_PATH/logs`) | `logging-to-file`, `request-log` | `main.log` and request logs |
+| `static/management.html` next to `config.yaml` | Panel updater | Management panel |
+
+## Upgrade
+
+- **Archive:** download the new archive, replace the binary, keep your
+  `config.yaml` and `auth-dir`. Read `CHANGELOG.md` for config changes.
+- **Docker:** change the image tag (for example `0.6.2` to the next version) and
+  recreate the container.
+- **Source:** `git pull`, then `ail restart` (rebuilds) or rebuild manually.
+- **Managed Linux servers:** see [Managed server updates](/guides/managed-server).
+
+## Verify the installation
 
 ```bash
 curl http://localhost:18080/health
+# {"status":"ok"}
+
+curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-your-key"
 ```
-
-Expected response:
-```json
-{"status": "ok"}
-```
-
-</Tab>
-
-<Tab title="List Models">
-
-```bash
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
-```
-
-Expected response:
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "geminicli:gemini-2.5-pro",
-      "object": "model",
-      "owned_by": "google"
-    },
-    {
-      "id": "ollama:llama3.2",
-      "object": "model",
-      "owned_by": "ollama"
-    }
-  ]
-}
-```
-
-</Tab>
-
-<Tab title="Chat Completion">
-
-```bash
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{
-    "model": "gemini-2.5-pro",
-    "messages": [{"role": "user", "content": "Say hello"}]
-  }'
-```
-
-Expected response:
-```json
-{
-  "id": "chatcmpl-...",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "gemini-2.5-pro",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "Hello! How can I help you today?"
-    },
-    "finish_reason": "stop"
-  }]
-}
-```
-
-</Tab>
-
-</Tabs>
 
 ## Troubleshooting
 
 <AccordionGroup>
-
-<Accordion title="Go version too old">
-  **Error:** `go: directive requires go version >= 1.25`
-  
-  **Solution:**
-  ```bash
-  # Check current version
-  go version
-  
-  # Update Go
-  # macOS
-  brew upgrade go
-  
-  # Linux
-  wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
-  sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
-  ```
-</Accordion>
-
-<Accordion title="Port 18080 already in use">
-  **Error:** `bind: address already in use`
-  
-  **Solution:**
-  ```bash
-  # Find process using port
-  lsof -i :18080
-  
-  # Kill existing process
-  kill -9 <PID>
-  
-  # OR change port in config.yaml
-  port: 18081
-  ```
-</Accordion>
-
-<Accordion title="Docker build fails">
-  **Error:** `error building image`
-  
-  **Solution:**
-  ```bash
-  # Clean Docker cache
-  docker system prune -a
-  
-  # Rebuild without cache
-  docker build --no-cache -t switchailocal .
-  
-  # Check disk space
-  df -h
-  ```
-</Accordion>
-
-<Accordion title="Config file not found">
-  **Error:** `config.yaml not found`
-  
-  **Solution:**
-  ```bash
-  # Create from template
-  cp config.example.yaml config.yaml
-  
-  # Verify file exists
-  ls -la config.yaml
-  
-  # Check working directory
-  pwd  # Should be in switchAILocal root
-  ```
-</Accordion>
-
-<Accordion title="Module download fails">
-  **Error:** `go: error loading module requirements`
-  
-  **Solution:**
-  ```bash
-  # Clean module cache
-  go clean -modcache
-  
-  # Tidy dependencies
-  go mod tidy
-  
-  # Re-download
-  go mod download
-  
-  # Verify go.sum
-  go mod verify
-  ```
-</Accordion>
-
+  <Accordion title="failed to read config file: ... no such file or directory">
+    The server looks for `config.yaml` in the current directory. Create it, `cd`
+    to its folder, or pass `-config /absolute/path/config.yaml`.
+  </Accordion>
+  <Accordion title="invalid config path: ...">
+    `-config` paths may not contain `..` or `~`, and absolute paths must be under
+    your home directory, `/etc/`, `/usr/` or `/var/`. Use `$HOME/...` (the shell
+    expands it) instead of a quoted `~`.
+  </Accordion>
+  <Accordion title="Go build fails">
+    Check `go version` (1.26.10+ required by `go.mod`) and that a C compiler is
+    available (`CGO_ENABLED=1`). Then retry `go mod download`.
+  </Accordion>
+  <Accordion title="bind: address already in use">
+    Another process owns the port. Find it with `lsof -i :18080`, or change
+    `port` in `config.yaml`.
+  </Accordion>
 </AccordionGroup>
 
-## System Requirements
-
-<CardGroup cols={2}>
-
-<Card title="Minimum" icon="gauge-min">
-  - **CPU:** 2 cores
-  - **RAM:** 512 MB
-  - **Disk:** 100 MB
-  - **OS:** Linux, macOS, Windows
-</Card>
-
-<Card title="Recommended" icon="gauge-high">
-  - **CPU:** 4+ cores
-  - **RAM:** 2 GB
-  - **Disk:** 1 GB (for logs & cache)
-  - **OS:** Linux/macOS for CLI tools
-</Card>
-
-</CardGroup>
-
-<Note>
-  Additional RAM required if running local models with Ollama or LM Studio.
-</Note>
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={3}>
-
-<Card title="Configure Providers" icon="plug" href="/providers">
-  Set up multiple AI providers and accounts
-</Card>
-
-<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
-  Make your first API request
-</Card>
-
-<Card title="Configuration" icon="gear" href="/configuration">
-  Explore advanced settings
-</Card>
-
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Make your first request
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    How `config.yaml` works
+  </Card>
+  <Card title="Server command" icon="terminal" href="/cli/server">
+    Flags and environment variables
+  </Card>
 </CardGroup>

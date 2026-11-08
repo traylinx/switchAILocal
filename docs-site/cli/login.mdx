@@ -1,296 +1,236 @@
 ---
 title: "Login Commands"
-description: "Authenticate with various AI providers using OAuth and other methods"
+description: "Store provider credentials with OAuth, cookies, service accounts or local connectors"
 ---
 
 ## Overview
 
-SwitchAILocal supports multiple authentication methods for different AI providers. Login commands handle OAuth flows, API key configuration, and service account imports.
-
-## Gemini / Google
-
-### OAuth Login
+Login flags run a one-off flow, save a credential file into `auth-dir`, and
+exit. They do not start the server. A running server picks up new credential
+files automatically.
 
 ```bash
-switchAILocal --login [--project_id PROJECT_ID] [--no-browser]
+switchAILocal -claude-login
 ```
 
-<ParamField path="--login" type="boolean">
-  Initiates Google OAuth login for Gemini API access. Opens browser for authentication unless `--no-browser` is specified.
-</ParamField>
-
-<ParamField path="--project_id" type="string" optional>
-  Google Cloud Project ID. Not required for standard Gemini API but needed for Vertex AI.
-</ParamField>
-
-<ParamField path="--no-browser" type="boolean" optional>
-  Don't automatically open browser. Displays URL for manual authentication.
-</ParamField>
-
-<CodeGroup>
-```bash Standard Login
-# Opens browser for Google OAuth
-switchAILocal --login
-```
-
-```bash With Project ID
-# Login with specific GCP project
-switchAILocal --login --project_id my-gcp-project
-```
-
-```bash Headless Server
-# Login without browser (copy URL manually)
-switchAILocal --login --no-browser
-```
-</CodeGroup>
-
-### Vertex AI Import
-
-```bash
-switchAILocal --vertex-import /path/to/service-account.json
-```
-
-<ParamField path="--vertex-import" type="string">
-  Path to Google Cloud service account JSON key file for Vertex AI authentication.
-</ParamField>
-
-```bash
-# Import Vertex AI service account
-switchAILocal --vertex-import ~/gcp-keys/vertex-service-account.json
-```
+You only need these when you want switchAILocal to hold the credential itself.
+Installed and logged-in `gemini`, `claude`, `codex` and `vibe` CLIs are used
+directly without any login here, and API keys go into `config.yaml`
+([Providers](/configuration/providers)).
 
 <Note>
-  The service account must have the following roles:
-  - `roles/aiplatform.user` for Vertex AI access
-  - `roles/ml.developer` for model access
+  Login commands load the configuration first, so run them where your
+  `config.yaml` is (or pass `-config`). Credentials are written to the folder
+  set by `auth-dir`, for example `~/.switchailocal`.
 </Note>
 
-## Claude / Anthropic
+## Summary
 
-```bash
-switchAILocal --claude-login [--no-browser]
-```
+| Flag | Provider | Method | Local callback port | Required environment |
+| ---- | -------- | ------ | ------------------- | -------------------- |
+| `-login` | Google Gemini (Code Assist) | OAuth | `8085` | `GEMINI_CLIENT_ID`, `GEMINI_CLIENT_SECRET` |
+| `-claude-login` | Anthropic Claude | OAuth (PKCE) | `54545` | none |
+| `-codex-login` | OpenAI Codex | OAuth (PKCE) | `1455` | none |
+| `-qwen-login` | Qwen | Device code | none | `QWEN_CLIENT_ID` |
+| `-iflow-login` | iFlow | OAuth | `11451` | `IFLOW_CLIENT_ID`, `IFLOW_CLIENT_SECRET` |
+| `-iflow-cookie` | iFlow | Browser cookie | none | none |
+| `-antigravity-login` | Antigravity | OAuth | `51121` | `ANTIGRAVITY_CLIENT_ID`, `ANTIGRAVITY_CLIENT_SECRET` |
+| `-vertex-import <file>` | Google Vertex AI | Service account JSON | none | none |
+| `-ollama-login` | Ollama | Connectivity check | none | none |
+| `-vibe-login` | Mistral Vibe | Local enable | none | none |
 
-<ParamField path="--claude-login" type="boolean">
-  Authenticate with Claude using OAuth flow. Opens browser for Anthropic account login.
+Export the OAuth client variables in your shell. They are read before the
+`.env` file is loaded, so putting them in `.env` has no effect.
+
+## Common flag
+
+<ParamField path="-no-browser" type="boolean" default="false">
+  Print the authorization URL instead of opening a browser. Use it over SSH or
+  on headless machines. The provider still redirects to
+  `http://localhost:<callback port>`, so either open the URL on the same machine,
+  forward the port (`ssh -L 54545:localhost:54545 host`), or paste the final
+  redirect URL when prompted. The paste prompt appears after 15 seconds for
+  Claude, Codex, iFlow and Antigravity, and for Gemini when `-project_id` is
+  given.
 </ParamField>
 
-<CodeGroup>
-```bash Browser Login
-switchAILocal --claude-login
+## Google Gemini
+
+```bash
+switchAILocal -login [-project_id PROJECT_ID] [-no-browser]
 ```
 
-```bash Headless
-switchAILocal --claude-login --no-browser
-# Follow the URL displayed in terminal
-```
-</CodeGroup>
+Signs in with your Google account and onboards a Google Cloud project for
+Gemini Code Assist. Without `-project_id`, the command lists your projects and
+asks you to pick one, or type `ALL` to onboard every listed project.
 
-**Output:**
+Requires `GEMINI_CLIENT_ID` and `GEMINI_CLIENT_SECRET` (an OAuth client of your
+own). If you already use the `gemini` CLI, you do not need this login: the CLI
+is detected automatically.
+
+Saved as `<email>-<project>.json`, or `gemini-<email>-all.json` for `ALL`.
+
+## Claude
+
+```bash
+switchAILocal -claude-login [-no-browser]
 ```
-Claude OAuth Login
-==================
-Opening browser for authentication...
-Callback URL: http://localhost:8765/callback
-Waiting for authentication...
-✓ Successfully authenticated with Claude
-Credentials saved to: ~/.switchailocal/auths/claude.json
+
+```text
+Opening browser for Claude authentication
+Waiting for Claude authentication callback...
+Claude authentication successful
+Authentication saved to /Users/you/.switchailocal/claude-you@example.com.json
+Claude authentication successful!
 ```
+
+Saved as `claude-<email>.json`.
 
 ## Codex
 
 ```bash
-switchAILocal --codex-login [--no-browser]
+switchAILocal -codex-login [-no-browser]
 ```
 
-<ParamField path="--codex-login" type="boolean">
-  Authenticate with OpenAI Codex using OAuth.
-</ParamField>
+Signs in to your OpenAI account. Saved as `codex-<email>.json`.
 
 ## Qwen
 
 ```bash
-switchAILocal --qwen-login [--no-browser]
+switchAILocal -qwen-login [-no-browser]
 ```
 
-<ParamField path="--qwen-login" type="boolean">
-  Authenticate with Alibaba Qwen AI using OAuth.
-</ParamField>
+Device-code flow: open the printed URL, approve, and the command finishes once
+the token is issued. Requires `QWEN_CLIENT_ID`. Saved as `qwen-<email>.json`.
+
+## iFlow
+
+<Tabs>
+  <Tab title="OAuth">
+    ```bash
+    switchAILocal -iflow-login [-no-browser]
+    ```
+
+    Requires `IFLOW_CLIENT_ID` and `IFLOW_CLIENT_SECRET`. Saved as
+    `iflow-<email>-<timestamp>.json`.
+  </Tab>
+  <Tab title="Cookie">
+    ```bash
+    switchAILocal -iflow-cookie
+    ```
+
+    Log in to iFlow in your browser, copy the cookie from the developer tools,
+    and paste it at the prompt:
+
+    ```text
+    Enter iFlow Cookie (from browser cookies):
+    ```
+
+    If a credential with the same `BXAuth` value already exists, the command
+    stops and names the existing file. On success it prints the issued API key
+    and its expiry, so do not run it where the terminal is recorded.
+  </Tab>
+</Tabs>
 
 ## Antigravity
 
 ```bash
-switchAILocal --antigravity-login [--no-browser]
+switchAILocal -antigravity-login [-no-browser]
 ```
 
-<ParamField path="--antigravity-login" type="boolean">
-  Authenticate with Antigravity AI platform using OAuth.
-</ParamField>
+Requires `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET`. Saved as
+`antigravity-<email>.json`.
 
-## Ollama (Local)
+## Vertex AI service account
 
 ```bash
-switchAILocal --ollama-login
+switchAILocal -vertex-import /path/to/service-account.json
 ```
 
-<ParamField path="--ollama-login" type="boolean">
-  Connect to local Ollama instance. No authentication required, but verifies connectivity.
-</ParamField>
+Imports a Google Cloud service account key. The JSON must contain `project_id`
+(and normally `client_email`). The key is stored as `vertex-<project>.json` and
+the command prints the saved path:
 
-**Expected Output:**
-```
-Connecting to Ollama...
-Ollama endpoint: http://localhost:11434
-✓ Successfully connected to Ollama
-Models available: 3
-  - llama2:latest
-  - codellama:7b
-  - mistral:latest
+```text
+Vertex credentials imported: /Users/you/.switchailocal/vertex-my-project.json
 ```
 
-<Warning>
-  Ensure Ollama is running before attempting connection:
-  ```bash
-  ollama serve
-  ```
-</Warning>
+The service account needs Vertex AI access in that project (for example the
+`roles/aiplatform.user` role).
 
-## Vibe (Local)
+For third-party services that only mimic Vertex AI paths with a plain API key,
+use `vertex-api-key` in `config.yaml` instead.
+
+## Ollama
 
 ```bash
-switchAILocal --vibe-login
+switchAILocal -ollama-login
 ```
 
-<ParamField path="--vibe-login" type="boolean">
-  Connect to local Vibe AI instance.
-</ParamField>
+Checks `ollama.base-url` (default `http://localhost:11434`) by calling
+`/api/tags`, lists the installed models, and writes `ollama-local.json`.
 
-## iFlow
+```text
+Checking Ollama at http://localhost:11434...
+✅ Ollama connected! Found 2 model(s):
+   - llama3.2:latest
+   - qwen3:8b
+Ollama configuration saved to /Users/you/.switchailocal/ollama-local.json
+Ollama provider enabled successfully!
+```
 
-### OAuth Login
+If Ollama is not running, the command fails with
+`Ollama is not running at ... Please start Ollama with: ollama serve`.
+
+For normal use, enabling the `ollama:` block in `config.yaml` is enough; this
+command is optional.
+
+## Vibe
 
 ```bash
-switchAILocal --iflow-login [--no-browser]
+switchAILocal -vibe-login
 ```
 
-<ParamField path="--iflow-login" type="boolean">
-  Authenticate with iFlow using OAuth.
-</ParamField>
+Writes `vibe-local.json` to enable the local Vibe provider. No account login
+happens here; the `vibe` CLI must already be set up.
 
-### Cookie Authentication
+## Managing credentials
 
-```bash
-switchAILocal --iflow-cookie
-```
-
-<ParamField path="--iflow-cookie" type="boolean">
-  Authenticate with iFlow using browser cookies. Useful when OAuth is not available.
-</ParamField>
-
-**Cookie Login Flow:**
-```
-iFlow Cookie Authentication
-============================
-1. Log in to iFlow in your browser
-2. Open browser DevTools (F12)
-3. Go to Application > Cookies
-4. Copy the session cookie value
-5. Paste below:
-
-Session Cookie: ************************
-✓ Cookie authenticated successfully
-```
-
-## Common Flags
-
-All login commands support the following optional flags:
-
-<ParamField path="--no-browser" type="boolean" default="false">
-  Disable automatic browser opening. Instead, display the OAuth URL in the terminal for manual authentication.
-  
-  Useful for:
-  - Headless servers / SSH sessions
-  - CI/CD environments
-  - Security policies preventing browser automation
-</ParamField>
-
-## Authentication Storage
-
-Credentials are stored in the auth directory defined in your config:
-
-```
-~/.switchailocal/auths/
-├── gemini.json
-├── claude.json
-├── codex.json
-└── ...
-```
-
-<Accordion title="Security Best Practices">
-  - **File Permissions**: Auth files are automatically created with `0600` permissions (owner read/write only)
-  - **Token Encryption**: Sensitive tokens are encrypted at rest
-  - **Token Rotation**: OAuth tokens are automatically refreshed when expired
-  - **Centralized Storage**: Use PostgreSQL, Git, or Object Store backends for team deployments
-</Accordion>
-
-## Verifying Authentication
-
-After logging in, verify your authentication status:
-
-```bash
-# Check provider health (includes auth validation)
-switchAILocal heartbeat status
-```
-
-Expected output:
-```
-PROVIDER    STATUS     LATENCY    MODELS    MESSAGE
-gemini      healthy    142ms      15        
-claude      healthy    98ms       8         
-ollama      healthy    12ms       3         
-```
+- Credential files are JSON with mode `0600`. Keep `auth-dir` at `0700`.
+- To remove a credential, delete its file from `auth-dir` (the server notices),
+  or use `DELETE /v0/management/auth-files` from the
+  [Management API](/api/management/overview).
+- OAuth tokens are refreshed automatically by the running server (checked every
+  15 minutes). Re-run the login if a refresh fails.
+- The management panel can also start OAuth flows; those callbacks arrive on
+  the server's own port (`/anthropic/callback`, `/codex/callback`,
+  `/google/callback`, `/iflow/callback`, `/antigravity/callback`).
 
 ## Troubleshooting
 
 <AccordionGroup>
-  <Accordion title="OAuth Callback Failed">
-    If the OAuth callback fails:
-    
-    1. Ensure no other service is using the callback port (usually 8765)
-    2. Check firewall settings allow localhost connections
-    3. Try `--no-browser` and manually complete authentication
-    
-    ```bash
-    # Manual OAuth
-    switchAILocal --claude-login --no-browser
-    # Copy URL to browser, complete auth, return to terminal
-    ```
+  <Accordion title="Callback never arrives / port already in use">
+    The OAuth flows listen on fixed local ports (see the table). Free the port
+    (`lsof -i :54545`), then retry. On a remote machine use `-no-browser` and
+    forward the port over SSH, or paste the redirect URL when prompted.
   </Accordion>
-
-  <Accordion title="Credentials Not Persisting">
-    Check auth directory permissions and storage backend:
-    
-    ```bash
-    # Check auth directory
-    ls -la ~/.switchailocal/auths/
-    
-    # Verify storage backend
-    echo $PGSTORE_DSN    # PostgreSQL
-    echo $GITSTORE_GIT_URL  # Git
-    ```
+  <Accordion title="Gemini login fails immediately">
+    `GEMINI_CLIENT_ID` and `GEMINI_CLIENT_SECRET` are empty by default. Set them,
+    or use the `gemini` CLI instead.
   </Accordion>
-
-  <Accordion title="Token Expired">
-    OAuth tokens are refreshed automatically, but you can re-authenticate:
-    
-    ```bash
-    # Re-run login to refresh credentials
-    switchAILocal --claude-login
-    ```
+  <Accordion title="failed to read config file">
+    Login commands need a loadable config. Run them in the folder with
+    `config.yaml`, or pass `-config`.
+  </Accordion>
+  <Accordion title="Credentials not picked up">
+    Check that the file landed in the `auth-dir` the server uses
+    (`ls -la ~/.switchailocal`). With a PostgreSQL, object or Git store,
+    credentials are kept in the store instead of `auth-dir`.
   </Accordion>
 </AccordionGroup>
 
-## Related Commands
+## Related
 
-- [Server Command](/cli/server) - Start the proxy server
-- [Heartbeat Commands](/cli/heartbeat) - Verify provider connectivity
+- [Server command](/cli/server)
+- [Providers](/configuration/providers)
+- [Security](/configuration/security)

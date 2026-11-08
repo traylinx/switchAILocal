@@ -3,165 +3,141 @@ title: "Introduction"
 description: "One local endpoint. All your AI providers."
 ---
 
-# Welcome to switchAILocal
-
-**switchAILocal** is a unified AI gateway that lets you use **all your AI providers** — Gemini, Claude, Ollama, OpenAI, and more — through a single local endpoint. No cloud, no complexity.
-
-## Get Started in 30 Seconds
+**switchAILocal** is a gateway that runs on your machine and exposes one
+OpenAI-compatible API. Each request is forwarded to the provider you pick:
+CLI tools you are already logged in to, local model servers, or cloud API keys.
+Claude-compatible (`/v1/messages`) and Gemini-compatible (`/v1beta`) routes are
+served on the same port.
 
 ```bash
-npx @traylinx/switchailocal
+./switchAILocal          # reads ./config.yaml, listens on the configured port
 ```
 
-That's it. Your AI gateway is now running at `http://localhost:18080`. Any OpenAI-compatible app or tool works with it immediately.
+Point any OpenAI SDK or tool at `http://localhost:18080/v1` (the port used by
+`config.example.yaml`) and use model names such as `geminicli:gemini-2.5-pro`
+or `ollama:llama3.2`.
 
 <CardGroup cols={2}>
-  <Card title="Quick Start" icon="rocket" href="/quickstart">
-    Make your first request in 5 minutes
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run the server and make a first request
   </Card>
-  <Card title="Installation Options" icon="download" href="/installation">
-    npx, Docker, or build from source
+  <Card title="Installation" icon="download" href="/installation">
+    Release archive, Docker, or build from source
   </Card>
-  <Card title="Provider Setup" icon="plug" href="/guides/setup-providers">
-    Connect your AI providers
+  <Card title="Providers" icon="plug" href="/configuration/providers">
+    Connect CLIs, local models and API keys
   </Card>
   <Card title="API Reference" icon="code" href="/api/overview">
-    Explore the OpenAI-compatible API
+    The OpenAI-compatible API
   </Card>
 </CardGroup>
 
-## Key Features
+## What it does
 
 <CardGroup cols={2}>
-  <Card title="Unified Endpoint" icon="network-wired">
-    Single `http://localhost:18080` endpoint for all providers
+  <Card title="One endpoint" icon="network-wired">
+    All providers behind one base URL and one client key
   </Card>
-  <Card title="OpenAI Compatible" icon="infinity">
-    Works with any OpenAI SDK or tool out of the box
+  <Card title="OpenAI compatible" icon="infinity">
+    Works with OpenAI SDKs and tools without code changes
   </Card>
-  <Card title="CLI Wrappers" icon="terminal">
-    Use your existing Gemini, Claude, and Codex CLI subscriptions
+  <Card title="CLI subscriptions" icon="terminal">
+    Logged-in `gemini`, `claude`, `codex` and `vibe` CLIs become providers
   </Card>
-  <Card title="Local Models" icon="server">
-    Integrate Ollama and LM Studio for private inference
+  <Card title="Local models" icon="server">
+    Ollama, LM Studio and an OpenCode server
   </Card>
-  <Card title="Intelligent Routing" icon="brain">
-    Cortex Router automatically selects optimal models
+  <Card title="Routing and failover" icon="shield-halved">
+    Prefixes, aliases, virtual models, circuit breakers and retries
   </Card>
-  <Card title="Load Balancing" icon="scale-balanced">
-    Round-robin across multiple accounts per provider
-  </Card>
-  <Card title="Auto Failover" icon="shield-halved">
-    Smart routing to alternatives on provider failures
-  </Card>
-  <Card title="Self-Healing" icon="wand-magic-sparkles">
-    Superbrain monitors and auto-recovers from errors
+  <Card title="Operations" icon="gauge">
+    Management panel and API, Prometheus metrics, JSON logs
   </Card>
 </CardGroup>
 
-## Supported Providers
+## Supported providers
 
-### CLI Tools (Use Your Subscriptions)
+### CLI tools
 
-<AccordionGroup>
-  <Accordion title="Google Gemini (geminicli:)" icon="google">
-    Use the `gemini` CLI tool with your existing Google AI subscription. No API keys needed.
-  </Accordion>
-  <Accordion title="Anthropic Claude (claudecli:)" icon="robot">
-    Use the `claude` CLI tool with your Claude Code subscription. No API keys needed.
-  </Accordion>
-  <Accordion title="OpenAI Codex (codex:)" icon="openai">
-    Use the `codex` CLI tool with your OpenAI subscription.
-  </Accordion>
-  <Accordion title="Mistral Vibe (vibe:)" icon="bolt">
-    Use the `vibe` CLI tool with your Mistral subscription.
-  </Accordion>
-  <Accordion title="OpenCode (opencode:)" icon="code">
-    Use the `opencode` CLI tool for local coding assistance.
-  </Accordion>
-</AccordionGroup>
+Detected automatically at startup when the binary is on `PATH`. The CLI's own
+login is used; no keys go into `config.yaml`.
 
-### Local Models
+| Provider | Binary | Prefix |
+| -------- | ------ | ------ |
+| Google Gemini CLI | `gemini` | `geminicli:` |
+| Anthropic Claude Code | `claude` | `claudecli:` |
+| OpenAI Codex | `codex` | `codex:` |
+| Mistral Vibe | `vibe` | `vibecli:` |
 
-<CardGroup cols={2}>
-  <Card title="Ollama" icon="llama" href="/concepts/providers#ollama">
-    Run open-source models locally with Ollama
-  </Card>
-  <Card title="LM Studio" icon="desktop" href="/concepts/providers#lm-studio">
-    Use LM Studio's local inference engine
-  </Card>
-</CardGroup>
+### Local servers
+
+| Provider | Prefix | Config block |
+| -------- | ------ | ------------ |
+| Ollama | `ollama:` | `ollama` |
+| LM Studio | `lmstudio:` | `lmstudio` |
+| OpenCode (`opencode serve`) | `opencode:` | `opencode` |
 
 ### Cloud APIs
 
-- **Google AI Studio** - Gemini models via API key
-- **Anthropic API** - Claude models via API key
-- **OpenAI API** - GPT models via API key
-- **switchAI Cloud** - Unified access to 100+ models
-- **OpenRouter** - Route to multiple cloud providers
+| Provider | Prefix | Config key |
+| -------- | ------ | ---------- |
+| Google AI Studio | `gemini:` | `gemini-api-key` |
+| Anthropic API | `claude:` | `claude-api-key` |
+| OpenAI API | `codex:` | `codex-api-key` |
+| Traylinx switchAI | `switchai:` | `switchai-api-key` |
+| Groq, OpenRouter, DeepSeek and any OpenAI-compatible API | your `prefix` | `openai-compatibility` |
 
-## How It Works
+OAuth logins for Gemini, Claude, Codex, Qwen, iFlow and Antigravity are also
+available; see [Login commands](/cli/login).
+
+## How a request flows
 
 ```mermaid
 graph LR
-    A[Your Application] --> B[switchAILocal :18080]
-    B --> C[Gemini CLI]
-    B --> D[Claude CLI]
-    B --> E[Ollama]
-    B --> F[Cloud APIs]
-    B --> G[LM Studio]
+    A[Your app] --> B[switchAILocal]
+    B --> C[CLI tools]
+    B --> D[Ollama / LM Studio]
+    B --> E[Cloud APIs]
 ```
 
-1. **Point your app** to `http://localhost:18080/v1`
-2. **Use any model** with optional `provider:model` prefix
-3. **switchAILocal routes** your request to the right provider
-4. **Get responses** in OpenAI-compatible format
+1. Your app sends an OpenAI-format request to `/v1/chat/completions`.
+2. switchAILocal checks the client key against `api-keys`.
+3. The `model` field selects the provider: an explicit `provider:model` prefix,
+   an alias from `config.yaml`, a virtual model, or any provider that serves
+   that model name.
+4. The response comes back in the format of the route you called.
 
 <Note>
-All processing happens locally. Your data never leaves your machine unless you explicitly use cloud providers.
+  The gateway itself runs locally. Requests routed to CLI tools or cloud APIs
+  are sent to those providers; requests routed to Ollama or LM Studio stay on
+  your machine.
 </Note>
 
-## Use Cases
-
-<CardGroup cols={2}>
-  <Card title="Multi-Provider Apps" icon="layer-group">
-    Build apps that seamlessly switch between AI providers
-  </Card>
-  <Card title="Cost Optimization" icon="dollar-sign">
-    Route expensive queries to local models, complex ones to cloud
-  </Card>
-  <Card title="Privacy-First AI" icon="lock">
-    Keep sensitive data local with Ollama and LM Studio
-  </Card>
-  <Card title="Development Testing" icon="flask">
-    Test against multiple models without changing code
-  </Card>
-</CardGroup>
-
-## Next Steps
+## Next steps
 
 <Steps>
-  <Step title="Install switchAILocal">
-    Follow the [installation guide](/installation) to set up the gateway
+  <Step title="Install">
+    Follow the [installation guide](/installation).
   </Step>
   <Step title="Run the quickstart">
-    Complete the [quickstart](/quickstart) to make your first request
+    Make your first request with the [quickstart](/quickstart).
   </Step>
-  <Step title="Connect providers">
-    Set up your [AI providers](/guides/setup-providers) for full functionality
+  <Step title="Configure">
+    Add providers and keys: [configuration overview](/configuration/overview).
   </Step>
-  <Step title="Explore features">
-    Learn about [intelligent routing](/intelligent-systems/cortex-router) and [advanced features](/advanced/lua-plugins)
+  <Step title="Secure it">
+    Set client keys and a management secret before exposing the port:
+    [security](/configuration/security).
   </Step>
 </Steps>
 
-## Community & Support
+## Community
 
 <CardGroup cols={2}>
   <Card title="GitHub Repository" icon="github" href="https://github.com/traylinx/switchAILocal">
-    Star the project and contribute
+    Source, releases and discussions
   </Card>
   <Card title="Report Issues" icon="bug" href="https://github.com/traylinx/switchAILocal/issues">
-    Found a bug? Let us know
+    Found a bug? Open an issue
   </Card>
 </CardGroup>

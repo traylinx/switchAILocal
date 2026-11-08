@@ -1,353 +1,204 @@
 ---
-title: Node.js SDK
-description: Use switchAILocal with the OpenAI Node.js SDK for seamless AI provider access
+title: Node.js
+description: Call switchAILocal from JavaScript or TypeScript with the official OpenAI SDK
 icon: node-js
 ---
 
 ## Overview
 
-switchAILocal is fully compatible with the OpenAI Node.js SDK. Point the SDK to your local switchAILocal instance to access all configured providers through one unified API.
+There is no switchAILocal client library for Node.js. switchAILocal speaks the OpenAI API, so you use the official `openai` package with `baseURL` pointed at your local server. Every configured provider is then reachable by changing the `model` string.
+
+<Note>
+The npm package `@traylinx/switchailocal` is a **launcher**, not a client: `npx @traylinx/switchailocal` downloads the release binary for your platform and runs the server. Arguments after the package name are passed to the binary.
+</Note>
+
+**Use this when** your Node.js or TypeScript code already uses the OpenAI SDK, or you want one client for several providers.
 
 ## Installation
 
-Install the official OpenAI Node.js SDK:
-
 ```bash
 npm install openai
-# or
-yarn add openai
-# or
-pnpm add openai
 ```
 
-## Quick Start
+You need a running switchAILocal server (default `http://localhost:18080`). `apiKey` is a **client key from `api-keys` in your `config.yaml`**, not a provider key. If `api-keys` is empty, any value is accepted.
 
-<CodeGroup>
-
-```javascript Basic Usage
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123', // Must match a key in config.yaml
-});
-
-async function main() {
-  // Auto-routing: switchAILocal picks the best available provider
-  const completion = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages: [
-      { role: 'user', content: 'What is the meaning of life?' }
-    ],
-  });
-
-  console.log(completion.choices[0].message.content);
-}
-
-main();
-```
-
-```javascript Streaming
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
-
-async function main() {
-  const stream = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages: [{ role: 'user', content: 'Tell me a story' }],
-    stream: true,
-  });
-
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content;
-    if (content) {
-      process.stdout.write(content);
-    }
-  }
-}
-
-main();
-```
-
-```javascript Provider Selection
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
-
-async function main() {
-  // Force Ollama provider
-  const ollamaResponse = await client.chat.completions.create({
-    model: 'ollama:llama3.2',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  });
-
-  // Force Gemini CLI
-  const geminiResponse = await client.chat.completions.create({
-    model: 'geminicli:gemini-2.5-pro',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  });
-
-  // Use switchAI cloud provider
-  const switchaiResponse = await client.chat.completions.create({
-    model: 'switchai:switchai-fast',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  });
-}
-
-main();
-```
-
-</CodeGroup>
-
-## Advanced Features
-
-### Multi-turn Conversations
+## Quick start
 
 ```javascript
 import OpenAI from 'openai';
 
 const client = new OpenAI({
   baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
+  apiKey: 'sk-test-123', // must match an entry in api-keys
 });
 
-async function conversation() {
-  const messages = [
-    { role: 'system', content: 'You are a helpful coding assistant.' },
-    { role: 'user', content: 'Write a JavaScript function to calculate factorial' }
-  ];
-
-  const response = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages,
-  });
-
-  // Add assistant response to conversation
-  messages.push({
-    role: 'assistant',
-    content: response.choices[0].message.content
-  });
-
-  // Continue conversation
-  messages.push({
-    role: 'user',
-    content: 'Now add TypeScript types'
-  });
-
-  const followUp = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages,
-  });
-
-  console.log(followUp.choices[0].message.content);
-}
-
-conversation();
-```
-
-### Temperature and Parameters
-
-```javascript
 const completion = await client.chat.completions.create({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', content: 'Write a creative story' }],
-  temperature: 0.9,      // Higher = more creative
-  max_tokens: 1000,      // Limit response length
-  top_p: 0.95,           // Nucleus sampling
+  model: 'ollama:llama3.2',
+  messages: [{ role: 'user', content: 'What is the capital of France?' }],
 });
+console.log(completion.choices[0].message.content);
 ```
 
-### CLI Attachments (Files & Folders)
+The SDK also reads `OPENAI_BASE_URL` and `OPENAI_API_KEY` from the environment, so `new OpenAI()` works once those are exported.
 
-Pass local files and folders to CLI providers:
+## Choosing a model
+
+| Form | Example | Routes to |
+|------|---------|-----------|
+| `provider:model` | `ollama:llama3.2`, `claudecli:claude-sonnet-4-5` | That provider only. Valid prefixes: `ollama`, `geminicli`, `claudecli`, `vibecli`, `codex`, `opencode`, `gemini`, `claude`, `openai`, `switchai`, `openai-compat` |
+| Alias or model ID | `sonnet`, `llama-3.3-70b` | Any provider that registered that ID |
+| `prefix/model` | `groq/llama-3.3-70b` | Credentials configured with `prefix: groq` |
+| Virtual model | `ail-compound` | A pool from `virtual-models` (see [Virtual models](/advanced/virtual-models)) |
+| `auto`, `auto:<intent>`, `cortex` | `auto:coding` | Auto-routing (see [Auto-routing setup](/guides/auto-routing-setup)) |
+
+<Note>
+Any other `name:model` string (for example `lmstudio:qwen2.5`) is treated as a plain model ID. It only works if a provider registered exactly that string, such as an `alias:` under `openai-compatibility`.
+</Note>
+
+## Streaming
 
 ```javascript
+const stream = await client.chat.completions.create({
+  model: 'ollama:llama3.2',
+  messages: [{ role: 'user', content: 'Tell me a short story' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
+}
+```
+
+See [Streaming](/examples/streaming) for keep-alives, timeouts and error behaviour.
+
+## TypeScript
+
+```typescript
+import OpenAI from 'openai';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+
+const client = new OpenAI({ baseURL: 'http://localhost:18080/v1', apiKey: 'sk-test-123' });
+
+export async function ask(prompt: string): Promise<string> {
+  const messages: ChatCompletionMessageParam[] = [{ role: 'user', content: prompt }];
+  const completion = await client.chat.completions.create({ model: 'ail-compound', messages });
+  return completion.choices[0].message.content ?? '';
+}
+```
+
+## CLI provider options (attachments, flags, sessions)
+
+CLI providers (`geminicli:`, `claudecli:`, `vibecli:`, `codex:`) read a literal `extra_body.cli` object from the request body. The Node SDK sends unknown body fields unchanged, so add an `extra_body` key directly (TypeScript needs a cast):
+
+```typescript
 const completion = await client.chat.completions.create({
   model: 'geminicli:gemini-2.5-pro',
   messages: [{ role: 'user', content: 'Explain the logic in this file' }],
   extra_body: {
     cli: {
       attachments: [
-        { type: 'file', path: '/path/to/script.js' },
-        { type: 'folder', path: './src/internal' }
-      ]
-    }
-  }
-});
+        { type: 'file', path: './src/main.ts' },
+        { type: 'folder', path: './src/lib' },
+      ],
+      flags: { sandbox: true, auto_approve: false, yolo: false },
+      session_id: 'latest',
+    },
+  },
+} as any);
 ```
 
-### CLI Flags (Auto-approve, Sandbox)
+| Field | Effect | Supported by |
+|-------|--------|--------------|
+| `attachments[]` | Prepends `@path` references. Paths must be inside the switchAILocal server's working directory | `gemini`, `vibe` |
+| `flags.sandbox` | Adds the CLI's sandbox flag | `gemini`, `codex` |
+| `flags.auto_approve` / `flags.yolo` | Adds the CLI's auto-approve flag | `gemini`, `vibe`, `claude`, `codex` |
+| `session_id` | Resumes a CLI session | `gemini`, `claude`, `vibe` |
+
+CLI calls time out after 5 minutes. See [CLI attachments](/api/cli-attachments).
+
+## Other endpoints
 
 ```javascript
-const completion = await client.chat.completions.create({
-  model: 'vibe:mistral-large',
-  messages: [{ role: 'user', content: 'Update the version in package.json' }],
-  extra_body: {
-    cli: {
-      flags: {
-        auto_approve: true,  // Auto-approve actions
-        sandbox: true        // Run in sandbox mode
-      }
-    }
-  }
-});
+// Models visible to clients (hidden/private aliases are filtered out)
+const models = await client.models.list();
+for (const m of models.data) console.log(m.id);
+
+// Embeddings are routed to a provider (Ollama or an OpenAI-compatible API)
+const emb = await client.embeddings.create({ model: 'ollama:nomic-embed-text', input: 'hello world' });
+
+// Images: use the strict /openai/v1 namespace for OpenAI-shaped image responses
+const images = new OpenAI({ baseURL: 'http://localhost:18080/openai/v1', apiKey: 'sk-test-123' });
+const img = await images.images.generate({ model: 'ail-image', prompt: 'a lighthouse at dusk' });
 ```
 
-### Session Management
+## Anthropic SDK
+
+`/v1/messages` speaks the Anthropic Messages API and accepts the `x-api-key` header:
 
 ```javascript
-const completion = await client.chat.completions.create({
-  model: 'geminicli:gemini-2.5-pro',
-  messages: [{ role: 'user', content: 'Continue our previous discussion' }],
-  extra_body: {
-    cli: {
-      session_id: 'latest'  // Or use a custom session name
-    }
-  }
+import Anthropic from '@anthropic-ai/sdk';
+
+const anthropic = new Anthropic({ baseURL: 'http://localhost:18080', apiKey: 'sk-test-123' });
+const msg = await anthropic.messages.create({
+  model: 'claude:claude-sonnet-4-5', // or any other routable model
+  max_tokens: 512,
+  messages: [{ role: 'user', content: 'Hello' }],
 });
 ```
 
-## List Available Models
-
-```javascript
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
-
-async function listModels() {
-  const models = await client.models.list();
-  
-  for (const model of models.data) {
-    console.log(`${model.id} (${model.owned_by})`);
-  }
-}
-
-listModels();
-```
-
-## Error Handling
-
-```javascript
-import OpenAI from 'openai';
-import { APIConnectionError, APIError } from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
-
-async function handleErrors() {
-  try {
-    const completion = await client.chat.completions.create({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', content: 'Hello!' }],
-    });
-    console.log(completion.choices[0].message.content);
-  } catch (error) {
-    if (error instanceof APIConnectionError) {
-      console.error(`Connection error: ${error.message}`);
-    } else if (error instanceof APIError) {
-      console.error(`API error: ${error.status} - ${error.message}`);
-    } else {
-      console.error(`Unexpected error: ${error}`);
-    }
-  }
-}
-
-handleErrors();
-```
-
-## TypeScript Support
-
-The OpenAI SDK includes built-in TypeScript types:
-
-```typescript
-import OpenAI from 'openai';
-import type { ChatCompletion, ChatCompletionMessageParam } from 'openai/resources/chat';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
-
-async function typedExample(): Promise<string> {
-  const messages: ChatCompletionMessageParam[] = [
-    { role: 'user', content: 'What is TypeScript?' }
-  ];
-
-  const completion: ChatCompletion = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages,
-  });
-
-  return completion.choices[0].message.content || '';
-}
-```
-
-## Provider Prefixes
-
-| Prefix | Provider | Example |
-|--------|----------|----------|
-| `geminicli:` | Google Gemini CLI | `geminicli:gemini-2.5-pro` |
-| `claudecli:` | Anthropic Claude CLI | `claudecli:claude-sonnet-4` |
-| `ollama:` | Ollama (local) | `ollama:llama3.2` |
-| `lmstudio:` | LM Studio (local) | `lmstudio:mistral-7b` |
-| `switchai:` | Traylinx switchAI | `switchai:switchai-fast` |
-| `gemini:` | Google AI Studio | `gemini:gemini-2.5-pro` |
-| `claude:` | Anthropic API | `claude:claude-3-5-sonnet` |
-| `openai:` | OpenAI API | `openai:gpt-4` |
-
-<Tip>
-Omit the prefix to let switchAILocal automatically route to the best available provider.
-</Tip>
-
-## Environment Variables
+## Error handling
 
 ```javascript
 import OpenAI from 'openai';
 
-// Set environment variables before importing
-process.env.OPENAI_BASE_URL = 'http://localhost:18080/v1';
-process.env.OPENAI_API_KEY = 'sk-test-123';
-
-// Client automatically uses environment variables
-const client = new OpenAI();
-
-async function main() {
-  const completion = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  });
-  
-  console.log(completion.choices[0].message.content);
+try {
+  await client.chat.completions.create({ model: 'ail-compound', messages: [{ role: 'user', content: 'hi' }] });
+} catch (err) {
+  if (err instanceof OpenAI.APIConnectionError) {
+    console.error('switchAILocal is not reachable');
+  } else if (err instanceof OpenAI.APIError) {
+    console.error(err.status, err.message);
+  } else {
+    throw err;
+  }
 }
-
-main();
 ```
+
+| Status | Typical cause |
+|--------|---------------|
+| 401 | `apiKey` is not in `api-keys` |
+| 400 `unknown provider for model X` | No provider registered `X` |
+| 503 `Provider 'x' is not active` | Valid prefix, but the provider has no credentials |
+| 429 `model_cooldown` | All credentials cooling down; see `Retry-After` |
+| 422 `no_eligible_backend` | Virtual model has no member for this request type |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="fetch failed / ECONNREFUSED">
+    The server is not running or listens elsewhere. Check `curl http://localhost:18080/health`.
+  </Accordion>
+  <Accordion title="Browser requests fail">
+    Do not ship a client key to browsers. Call switchAILocal from your backend, or bind it to `127.0.0.1` for local tools only.
+  </Accordion>
+  <Accordion title="TypeScript rejects extra_body">
+    It is not part of the SDK types. Cast the params object (`as any`) or build the request with `fetch`.
+  </Accordion>
+</AccordionGroup>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Python SDK" icon="python" href="/sdk/python">
-    Use switchAILocal with Python
+  <Card title="Python" icon="python" href="/sdk/python">
+    The same patterns in Python
   </Card>
   <Card title="Go SDK" icon="golang" href="/sdk/go">
-    Embed switchAILocal in Go applications
+    Embed the gateway in Go
   </Card>
-  <Card title="Examples" icon="code" href="/examples/basic-usage">
-    See more usage examples
+  <Card title="Streaming" icon="wave-square" href="/examples/streaming">
+    Streaming details
   </Card>
-  <Card title="API Reference" icon="book" href="/api-reference">
-    Complete API documentation
+  <Card title="Multi-provider" icon="diagram-project" href="/examples/multi-provider">
+    Pools and failover
   </Card>
 </CardGroup>

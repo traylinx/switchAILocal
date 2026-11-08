@@ -1,616 +1,122 @@
 ---
 title: 'Auto-Routing'
-description: 'Intelligent provider selection for optimal cost and performance'
+description: 'What happens when you send model "auto", "auto:<intent>", or "cortex", and how to observe the decision'
 ---
 
-## Overview
+Send `"model": "auto"` (or `auto:<intent>`) and switchAILocal chooses the model for you. Resolution happens in up to three layers. The first one that produces a model wins.
 
-Auto-routing enables switchAILocal to automatically select the best available provider for your request. Omit the provider prefix from your model name to activate intelligent routing.
+## 1. Cortex router plugin (optional)
 
-## How It Works
+If the Lua plugin system is enabled with the bundled `cortex-router` plugin, requests whose model is exactly `auto` or `cortex` are classified (using `intelligence.router-model`, skills, and `intelligence.matrix`) and rewritten to a concrete model before anything else runs.
 
-### Cortex Intelligent Routing
-
-Use the `auto` or `auto:<intent>` model prefix to activate the Cortex Router. It evaluates all available providers using a composite scoring algorithm and selects the best one.
-
-```bash
-# Basic: Let Cortex pick the best model
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello!"}]}'
-
-# Intent-based: Route to coding-optimized models
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a Go sorting algorithm"}]}'
+```yaml config.yaml
+plugin:
+  enabled: true
+  enabled-plugins: ["cortex-router"]
+intelligence:
+  enabled: true
+  router-model: "ollama:qwen:0.5b"
+  matrix:
+    coding: "ail-compound"
+    fast: "ollama:llama3.2"
 ```
 
-Supported intents: `coding`, `reasoning`, `creative`, `fast`, `secure`, `vision`, `audio`.
+## 2. Auto-routing engine (`auto-routing.enabled: true`)
 
-### Scoring Formula
+Applies to `auto`, `auto:<intent>`, `cortex`, and an empty `model`. The engine scores the candidate models found by provider discovery and picks the best one, with a fallback chain.
 
-Each candidate model is scored using configurable weights:
+### Intent hints
 
+`auto:<hint>` passes an intent. Hints are normalized:
+
+| You send | Intent |
+|---|---|
+| `code`, `coding`, `program`, `programming`, `dev` | `coding` |
+| `reason`, `reasoning`, `think`, `thinking`, `math`, `logic` | `reasoning` |
+| `creative`, `write`, `writing`, `story`, `poem` | `creative` |
+| `fast`, `quick`, `simple`, `chat` | `fast` |
+| `vision`, `image`, `visual`, `screenshot` | `vision` |
+| `secure`, `private`, `local`, `sensitive` | `secure` |
+| anything else | passed through as-is |
+
+Without a hint, the intent is classified heuristically from the request body.
+
+### Scoring
+
+```text
+BaseScore  = availability·W_a + quota·W_q + latency·W_l + success_rate·W_s
+FinalScore = (BaseScore + tier boost + preference boost) × conservation multiplier
 ```
-BaseScore    = W_a × Availability + W_q × Quota + W_l × Latency + W_s × SuccessRate
-TierScore    = BaseScore + TierBoost(provider_tier)
-PrefScore    = TierScore + PreferenceBoost(model)
-FinalScore   = PrefScore × ConservationMultiplier(tier, complexity)
-```
 
-The model with the highest `FinalScore` wins. Configure weights in `config.yaml`:
+### Configuration
 
 ```yaml config.yaml
 auto-routing:
   enabled: true
-  weights:
-    availability: 0.35
-    quota: 0.25
-    latency: 0.20
-    success-rate: 0.20
-```
-
-### Token Conservation
-
-When enabled, simple requests (short prompts below `simple-threshold-tokens`) automatically penalize expensive premium-tier models, routing to cheaper alternatives:
-
-```yaml config.yaml
-auto-routing:
-  conservation:
+  max-resolution-ms: 5ms
+  weights: {availability: 0.35, quota: 0.25, latency: 0.20, success-rate: 0.20}
+  preferences:
+    - model: "ail-compound"
+      preference: 0.9
+      reason: "default assistant"
+  providers:                       # tier per provider: premium | standard | free | local | reserve
+    ollama: {tier: local}
+  intent-matrix:                   # restrict candidates per intent
+    coding: ["claude:claude-sonnet-4-5", "geminicli:gemini-2.5-pro"]
+  disabled-providers: ["claude"]   # never selected
+  conservation:                    # steer simple prompts away from premium tiers
     enabled: true
     simple-threshold-tokens: 500
     premium-conservation-at: 0.20
-```
-
-### Autonomous Lab (Self-Optimizing Weights)
-
-The Lab runs shadow experiments to continuously improve routing quality:
-
-1. **Hypothesis**: Generate slightly perturbed weights
-2. **Shadow Score**: Score every request with both production and shadow weights
-3. **Observe**: Accumulate RQS (Routing Quality Score) over the adaptation interval
-4. **Promote/Discard**: If shadow weights produce ≥5% higher RQS, promote them
-
-```yaml config.yaml
-auto-routing:
-  lab:
+  discovery:
+    enabled: true
+    probe-on-startup: true
+    probe-interval: 15m
+    probe-timeout: 5s
+  lab:                             # shadow-test perturbed weights and promote winners
     enabled: true
     adaptation-interval: 24h
     max-weight-drift: 0.10
 ```
 
-### Intent Matrix
+At startup, candidates come from probing the Gemini CLI, Claude CLI, Codex, configured Gemini and Claude API keys, and Ollama (when `ollama.enabled`).
 
-Define which models are eligible for specific intents:
+### Response headers
 
-```yaml config.yaml
-auto-routing:
-  intent-matrix:
-    coding:
-      - "claude:claude-3-5-sonnet-20241022"
-      - "geminicli:gemini-2.5-pro"
-    fast:
-      - "switchai:switchai-fast"
-      - "geminicli:gemini-2.5-flash"
-    reasoning:
-      - "claude:claude-3-5-sonnet-20241022"
+When the engine picks the model, the response carries:
+
+```text
+X-Auto-Routed: true
+X-Selected-Model: <model>
+X-Selected-Provider: <provider>
 ```
 
-### Telemetry API
+## 3. Legacy fallback
 
-Monitor routing decisions in real-time:
+If the engine is disabled or cannot decide, and the model is exactly `auto`, the gateway picks the first available model from `routing.auto-model-priority`, then the newest registered model:
+
+```yaml config.yaml
+routing:
+  auto-model-priority:
+    - "ollama:llama3.2"     # provider:model pins the owner
+    - "gemini-2.5-pro"
+```
+
+`auto:<intent>`, `cortex`, and an empty model have no legacy fallback. If neither layer 1 nor layer 2 handled them, the request fails with `400 unknown provider for model ...`.
+
+## Observing decisions
+
+These management endpoints need the [management key](/api/management/overview#authentication):
 
 ```bash
-# Current Lab status + live weights
-curl http://localhost:18080/v0/management/autoroute/status
-
-# Recent routing decisions journal
-curl http://localhost:18080/v0/management/autoroute/journal
+curl http://localhost:18080/v0/management/autoroute/status \
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+curl "http://localhost:18080/v0/management/autoroute/journal?limit=20" \
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
 ```
 
-Or view the dashboard at `http://localhost:18080/management`.
+`status` reports the live and shadow weights and the lab hypothesis. `journal` lists recent decisions. Both return `503` when the engine is not initialized. See [Configuration & Monitoring](/api/management/config#auto-routing-telemetry).
 
-### Legacy Provider-Priority Routing
+## Routing without `auto`
 
-You can also route by simply omitting the provider prefix from your model name:
-
-### Routing Algorithm
-
-switchAILocal evaluates providers in this order:
-
-1. **Provider Availability**: Check if provider supports the model
-2. **Provider Health**: Skip unhealthy or quota-exceeded providers
-3. **Priority Order**: Follow configured priority preferences
-4. **Cost Optimization**: Prefer CLI and local providers (free)
-5. **Success Rate**: Favor providers with better historical performance
-6. **Fallback**: Try alternative providers if primary fails
-
-## Routing Priority
-
-### Default Priority
-
-By default, switchAILocal prioritizes in this order:
-
-1. **CLI Providers** (`geminicli:`, `claudecli:`, etc.) - Uses your paid subscriptions
-2. **Local Providers** (`ollama:`, `lmstudio:`) - Free and private
-3. **switchAI** (`switchai:`) - Unified gateway with auto-selection
-4. **API Providers** (`gemini:`, `claude:`, etc.) - Direct API access
-
-### Custom Priority
-
-Override the default priority in `config.yaml`:
-
-```yaml config.yaml
-routing:
-  priority:
-    - ollama      # Try local models first
-    - geminicli   # Then CLI providers
-    - switchai    # Then switchAI
-    - gemini      # Finally APIs
-```
-
-## Intelligent Features
-
-### Health-Based Routing
-
-switchAILocal monitors provider health and automatically routes away from failing providers:
-
-```yaml config.yaml
-heartbeat:
-  enabled: true
-  interval: 60  # Check every 60 seconds
-  providers:
-    - geminicli
-    - ollama
-    - switchai
-```
-
-Unhealthy providers are automatically skipped during routing.
-
-### Quota-Aware Routing
-
-When a provider exceeds quota, switchAILocal automatically fails over:
-
-```python
-# First request succeeds with geminicli
-response1 = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-# Used: geminicli
-
-# If geminicli hits quota, automatically switches
-response2 = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-# Used: gemini (API fallback)
-```
-
-### Success Rate Optimization
-
-With Memory system enabled, switchAILocal learns which providers perform best:
-
-```yaml config.yaml
-memory:
-  enabled: true
-  provider_selection:
-    enabled: true
-    min_samples: 10  # Learn after 10 requests
-```
-
-Providers with higher success rates are preferred in future requests.
-
-### Model Mapping
-
-Automatically map unavailable models to alternatives:
-
-```yaml config.yaml
-ampcode:
-  model_mappings:
-    - from: "gpt-5"
-      to: "gemini-2.5-pro"
-      regex: false
-    - from: "claude-opus-4"
-      to: "claude-sonnet-4"
-      regex: false
-```
-
-Requests for unavailable models are automatically redirected.
-
-## Configuration
-
-### Enable Auto-Routing
-
-```yaml config.yaml
-routing:
-  auto_routing: true  # Default: true
-  fallback_enabled: true  # Try alternatives on failure
-  max_retries: 3  # Retry attempts per provider
-```
-
-### Provider Weights
-
-Assign weights to providers for load distribution:
-
-```yaml config.yaml
-routing:
-  weights:
-    geminicli: 0.5    # 50% of requests
-    ollama: 0.3       # 30% of requests
-    switchai: 0.2     # 20% of requests
-```
-
-### Exclude Providers
-
-Exclude specific providers from auto-routing:
-
-```yaml config.yaml
-routing:
-  exclude:
-    - expensive-provider
-    - slow-provider
-```
-
-## Examples
-
-### Cost-Optimized Routing
-
-```yaml config.yaml
-routing:
-  priority:
-    - ollama      # Free local models
-    - geminicli   # Free CLI (with subscription)
-    - switchai    # Paid unified gateway
-```
-
-```python
-# Automatically uses cheapest available provider
-response = client.chat.completions.create(
-    model="llama3.2",  # Available in Ollama
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-# Used: ollama (free)
-```
-
-### Performance-Optimized Routing
-
-```yaml config.yaml
-routing:
-  priority:
-    - switchai    # Fast cloud API
-    - gemini      # Fast Google API
-    - geminicli   # Slower CLI
-    - ollama      # Depends on hardware
-```
-
-### Privacy-Optimized Routing
-
-```yaml config.yaml
-routing:
-  priority:
-    - ollama      # Fully local
-    - geminicli   # Local CLI execution
-  exclude:
-    - switchai    # Cloud service
-    - gemini      # Cloud service
-    - claude      # Cloud service
-```
-
-### Hybrid Strategy
-
-Combine local and cloud for best of both:
-
-```python
-def route_by_task(task_type):
-    if task_type == "simple":
-        # Use local for simple tasks
-        return "llama3.2"  # Routed to Ollama
-    elif task_type == "complex":
-        # Use cloud for complex tasks
-        return "gemini-2.5-pro"  # Routed to best Gemini provider
-    elif task_type == "coding":
-        # Use CLI for coding (supports attachments)
-        return "geminicli:gemini-2.5-pro"
-
-response = client.chat.completions.create(
-    model=route_by_task("complex"),
-    messages=[{"role": "user", "content": "Explain quantum computing"}]
-)
-```
-
-## Routing Transparency
-
-### Response Headers
-
-Check which provider was used via response headers:
-
-```python
-from openai import OpenAI
-import httpx
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-    http_client=httpx.Client()
-)
-
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-
-# Check routing decision (implementation-dependent)
-print(f"Provider used: {response.model}")  # May include prefix
-```
-
-### Logs
-
-View routing decisions in logs:
-
-```bash
-tail -f logs/main.log | grep routing
-```
-
-```
-[INFO] Auto-routing: selected 'geminicli' for model 'gemini-2.5-pro'
-[INFO] Provider 'geminicli' quota exceeded, trying fallback
-[INFO] Auto-routing: selected 'gemini' for model 'gemini-2.5-pro'
-```
-
-### Management API
-
-Query routing decisions:
-
-```bash
-curl http://localhost:18080/v0/management/analytics \
-  -H "X-Management-Key: your-secret-key"
-```
-
-```json
-{
-  "routing": {
-    "total_requests": 1000,
-    "provider_usage": {
-      "geminicli": 650,
-      "gemini": 200,
-      "switchai": 100,
-      "ollama": 50
-    },
-    "fallback_rate": 0.15
-  }
-}
-```
-
-## Advanced Patterns
-
-### Conditional Routing
-
-Route based on request attributes:
-
-```python
-def smart_route(messages, needs_tools=False, needs_vision=False):
-    if needs_vision:
-        return "geminicli:gemini-2.5-pro"  # Best vision
-    elif needs_tools:
-        return "switchai:auto"  # Best tools
-    elif len(str(messages)) > 10000:
-        return "gemini-2.5-pro"  # Large context (auto-route)
-    else:
-        return "ollama:llama3.2"  # Fast local
-
-response = client.chat.completions.create(
-    model=smart_route(messages, needs_vision=True),
-    messages=messages
-)
-```
-
-### Time-Based Routing
-
-Route differently based on time of day:
-
-```python
-from datetime import datetime
-
-def time_based_route(model):
-    hour = datetime.now().hour
-    
-    if 9 <= hour <= 17:  # Business hours
-        # Use paid APIs for better performance
-        return f"switchai:{model}"
-    else:  # Off-hours
-        # Use free providers
-        return model  # Auto-route to free providers
-
-response = client.chat.completions.create(
-    model=time_based_route("gemini-2.5-pro"),
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-```
-
-### Budget-Based Routing
-
-```python
-class BudgetRouter:
-    def __init__(self, daily_budget):
-        self.daily_budget = daily_budget
-        self.spent_today = 0
-    
-    def route(self, model):
-        if self.spent_today >= self.daily_budget:
-            # Budget exceeded, use free providers only
-            return model  # Auto-route to geminicli, ollama
-        else:
-            # Budget available, allow paid APIs
-            return f"switchai:{model}"
-    
-    def record_cost(self, cost):
-        self.spent_today += cost
-
-router = BudgetRouter(daily_budget=10.0)  # $10/day
-
-response = client.chat.completions.create(
-    model=router.route("gemini-2.5-pro"),
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-
-router.record_cost(0.01)  # Track usage
-```
-
-## Monitoring
-
-### Usage Statistics
-
-Track provider usage:
-
-```bash
-curl http://localhost:18080/v0/management/usage \
-  -H "X-Management-Key: your-secret-key"
-```
-
-```json
-{
-  "total_requests": 5000,
-  "by_provider": {
-    "geminicli": {
-      "requests": 3000,
-      "tokens": 1500000,
-      "cost": 0
-    },
-    "gemini": {
-      "requests": 1500,
-      "tokens": 750000,
-      "cost": 15.50
-    },
-    "ollama": {
-      "requests": 500,
-      "tokens": 250000,
-      "cost": 0
-    }
-  }
-}
-```
-
-### Provider Health
-
-Monitor provider availability:
-
-```bash
-curl http://localhost:18080/v0/management/heartbeat/status \
-  -H "X-Management-Key: your-secret-key"
-```
-
-```json
-{
-  "providers": [
-    {
-      "id": "geminicli",
-      "status": "healthy",
-      "last_check": "2026-03-09T10:30:00Z",
-      "response_time_ms": 250,
-      "success_rate": 0.98
-    },
-    {
-      "id": "gemini",
-      "status": "quota_exceeded",
-      "last_check": "2026-03-09T10:30:00Z",
-      "response_time_ms": 500,
-      "success_rate": 0.75
-    }
-  ]
-}
-```
-
-## Troubleshooting
-
-### No Providers Available
-
-**Error**: `No providers available for model 'gemini-2.5-pro'`
-
-**Solutions**:
-1. Verify providers are configured and authenticated
-2. Check provider status: `GET /v1/providers`
-3. Try explicit routing: `geminicli:gemini-2.5-pro`
-4. Check logs for provider initialization errors
-
-### All Providers Failing
-
-**Error**: `All providers failed for model 'gemini-2.5-pro'`
-
-**Solutions**:
-1. Check provider health: `GET /v0/management/heartbeat/status`
-2. Verify API keys are valid
-3. Check quota limits
-4. Try different model: `GET /v1/models`
-
-### Unexpected Provider Used
-
-**Issue**: Wrong provider selected during auto-routing
-
-**Solutions**:
-1. Check routing priority: Review `config.yaml`
-2. Verify provider health: Unhealthy providers are skipped
-3. Use explicit routing: Add provider prefix
-4. Check logs: Review routing decisions
-
-## Best Practices
-
-<AccordionGroup>
-  <Accordion title="Use Auto-Routing by Default">
-    Start with auto-routing and only use explicit prefixes when needed:
-    ```python
-    # Good: Auto-routing
-    model = "gemini-2.5-pro"
-    
-    # Use explicit only when necessary
-    if needs_cli_features:
-        model = "geminicli:gemini-2.5-pro"
-    ```
-  </Accordion>
-
-  <Accordion title="Configure Priorities">
-    Set priorities based on your preferences:
-    ```yaml
-    routing:
-      priority:
-        - geminicli  # Free with subscription
-        - ollama     # Free local
-        - switchai   # Paid unified
-    ```
-  </Accordion>
-
-  <Accordion title="Enable Health Monitoring">
-    Use Heartbeat for automatic failover:
-    ```yaml
-    heartbeat:
-      enabled: true
-      interval: 60
-    ```
-  </Accordion>
-
-  <Accordion title="Monitor Usage">
-    Track provider usage to optimize costs:
-    ```bash
-    curl http://localhost:18080/v0/management/usage
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
-    Learn about explicit provider routing
-  </Card>
-  <Card title="Heartbeat" icon="heart-pulse" href="/intelligent-systems/heartbeat">
-    Configure provider health monitoring
-  </Card>
-  <Card title="Memory" icon="brain" href="/intelligent-systems/memory">
-    Enable success rate optimization
-  </Card>
-  <Card title="Configuration" icon="gear" href="/configuration/providers">
-    Configure routing preferences
-  </Card>
-</CardGroup>
+Requests for a concrete model ID never go through the auto-routing engine. When several providers serve the same ID, credentials rotate according to `routing.strategy` (`round-robin` or `fill-first`), with failover and the circuit breaker (`performance.circuit-breaker`). Virtual models (`ail-compound`) do weighted member selection on their own. See [Provider Prefixes & Model Routing](/api/provider-prefixes).

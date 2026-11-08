@@ -1,0 +1,95 @@
+---
+title: 'Gemini API'
+description: 'Native Gemini routes: /v1beta/models and the local /v1internal bridge'
+---
+
+Gemini-format routes for Google GenAI SDKs and the Gemini CLI. As with every other surface, the `model` in the path is routed through the gateway, so it can point at any provider. The request is translated from Gemini format and the reply is translated back.
+
+**Auth:** client API key. Gemini SDKs send it as `X-Goog-Api-Key` or `?key=`, both accepted.
+
+## GET /v1beta/models
+
+Lists models registered for the Gemini handler.
+
+```json
+{
+  "models": [
+    {
+      "name": "models/gemini-2.5-pro",
+      "displayName": "Gemini 2.5 Pro",
+      "supportedGenerationMethods": ["generateContent"]
+    }
+  ]
+}
+```
+
+`name` always starts with `models/`. `supportedGenerationMethods` defaults to `["generateContent"]` when the registry has none.
+
+```bash
+curl "http://localhost:18080/v1beta/models?key=YOUR_API_KEY"
+```
+
+## GET /v1beta/models/{model}
+
+Returns static metadata for a fixed set of IDs: `gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gpt-5`. Any other ID returns:
+
+```json
+{"error": {"message": "Not Found", "type": "not_found"}}
+```
+
+with status `404`. This endpoint does not reflect your configured models; use the list endpoint above.
+
+## POST /v1beta/models/{model}:{method}
+
+| `method` | Behaviour |
+|---|---|
+| `generateContent` | Non-streaming. Returns a Gemini `GenerateContentResponse` |
+| `streamGenerateContent` | Streaming. With no `alt` query or `alt=sse`: SSE lines `data: <chunk>`. With another `alt` value (for example `alt=json`): raw chunks written back to back |
+| `countTokens` | Returns the provider's token count in Gemini format |
+
+- `$alt` is accepted as a synonym for `alt`.
+- A path without exactly one `:` returns `404 {"error":{"message":"<path> not found.","type":"invalid_request_error"}}`.
+- Other method names are not handled and return `200` with an empty body.
+
+The request body is a normal Gemini request (`contents`, `systemInstruction`, `generationConfig`, `tools`, ...), translated for the selected provider.
+
+<CodeGroup>
+```bash generateContent
+curl "http://localhost:18080/v1beta/models/gemini-2.5-pro:generateContent" \
+  -H "X-Goog-Api-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
+```
+
+```bash streamGenerateContent
+curl -N "http://localhost:18080/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse" \
+  -H "X-Goog-Api-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Tell me a story"}]}]}'
+```
+
+```python Python (google-genai)
+from google import genai
+from google.genai import types
+
+client = genai.Client(
+    api_key="YOUR_API_KEY",
+    http_options=types.HttpOptions(base_url="http://localhost:18080"),
+)
+print(client.models.generate_content(model="gemini-2.5-pro", contents="Hello").text)
+```
+</CodeGroup>
+
+Errors use the OpenAI envelope `{"error":{"message","type","code"}}` (see [API Overview](/api/overview#errors)).
+
+---
+
+## POST /v1internal:{method}
+
+A bridge for the Gemini CLI's internal Code Assist protocol.
+
+- **Not behind the API-key middleware.** Instead, it returns `403 {"error":{"message":"CLI reply only allow local access","type":"forbidden"}}` unless the TCP peer address is IPv4 `127.0.0.1` (IPv6 `::1` is rejected).
+- `/v1internal:generateContent` and `/v1internal:streamGenerateContent` are routed through the gateway using the body's `model` field.
+- Any other method is forwarded as-is, with your request headers, to Google's Code Assist endpoint (`https://cloudcode-pa.googleapis.com`) through the configured `proxy-url`.
+
+Most users never call this directly.

@@ -1,473 +1,228 @@
 ---
 title: 'Providers'
-description: 'Understanding provider types and implementations in switchAILocal'
+description: 'Every provider family switchAILocal supports, how each is enabled, and how its models get a routable name'
 icon: 'plug'
 ---
 
-## Overview
+## What a provider is
 
-Providers are the backbone of switchAILocal, enabling access to various AI services through a unified interface. Each provider type has unique characteristics and authentication requirements.
+A **provider** in switchAILocal is two things joined by a lower-case **provider ID**:
 
-## Provider Types
+1. An **executor** that knows how to talk to one backend (a CLI binary, a local server, or a cloud API).
+2. One or more **credentials** for that executor (an API key from `config.yaml`, an OAuth token file in `auth-dir`, or an implicit "local" credential).
 
-switchAILocal supports three distinct categories of providers:
+The provider ID is what you write before the colon in `ollama:llama3.2`, what you put in a virtual model member's `provider:` field, and what appears in logs and in `GET /v1/providers`.
 
-<CardGroup cols={3}>
-  <Card title="CLI Providers" icon="terminal" color="#10b981">
-    Local command-line tools running on your machine
-  </Card>
-  <Card title="Cloud Providers" icon="cloud" color="#3b82f6">
-    Remote API services accessed via HTTP
-  </Card>
-  <Card title="OAuth Providers" icon="key" color="#f59e0b">
-    Services requiring OAuth2 authentication flows
-  </Card>
-</CardGroup>
+## Provider families at a glance
 
-## CLI Providers
+| Provider ID | Backend | How it is enabled | Colon prefix | Where its model list comes from |
+|-------------|---------|-------------------|--------------|---------------------------------|
+| `geminicli` | Google Gemini CLI (`gemini` binary) or Gemini OAuth (Code Assist API) | `gemini` on `PATH`, or `--login` | `geminicli:` | Model list fetched from the public Gemini CLI repository |
+| `claudecli` | Claude Code CLI (`claude` binary) | `claude` on `PATH` | `claudecli:` | Built-in static list |
+| `codex` | OpenAI Codex CLI (`codex` binary), Codex OAuth, or `codex-api-key` | `codex` on `PATH`, `--codex-login`, or config | `codex:` | Built-in static list (CLI), your `models:` (API key) |
+| `vibecli` | Mistral Vibe CLI (`vibe` binary) | `vibe` on `PATH` | `vibecli:` | Built-in static list |
+| `ollama` | Ollama server | `ollama.enabled: true` | `ollama:` | `GET /api/tags` when `auto-discover: true` |
+| `lmstudio` | LM Studio server | `lmstudio.enabled: true` | none | Not discovered (reach it through a [virtual model](/advanced/virtual-models)) |
+| `opencode` | OpenCode server (agents) | `opencode.enabled: true` | `opencode:` | `GET /agent` on the OpenCode server |
+| `gemini` | Google Gemini API (AI Studio key) | `gemini-api-key` | `gemini:` | Your `models:` list |
+| `claude` | Anthropic Messages API | `claude-api-key` | `claude:` | Your `models:` list |
+| `switchai` | Hosted switchAI endpoint | `switchai-api-key` | `switchai:` | Your `models:` list, plus `models-url` |
+| `vertex` | Vertex AI (service account) or Vertex-style API-key gateways | `--vertex-import`, or `vertex-api-key` | none | Built-in Gemini list, or your `models:` |
+| `<name>` | Any OpenAI-compatible API (Groq, OpenRouter, DeepSeek, MiniMax, Kimi, Alibaba DashScope, ...) | `openai-compatibility` entry | only `openai:` / `openai-compat:` names | Your `models:` list, plus `models-url` |
+| `antigravity` | Antigravity (Google OAuth) | `--antigravity-login` | none | Fetched from the upstream after login |
+| `qwen` | Qwen portal (OAuth) | `--qwen-login` | none | None registered in this release |
+| `iflow` | iFlow (OAuth or cookie) | `--iflow-login`, `--iflow-cookie` | none | None registered in this release |
+| `aistudio` | Google AI Studio via the WebSocket relay | a relay client connected to `/v1/ws` with a channel ID starting `aistudio-` | none | None registered in this release |
 
-CLI providers execute locally-installed AI tools and expose them through the proxy.
+"Colon prefix" means `provider:model` is parsed as an explicit provider pin. Only these prefixes are recognized (`internal/util/provider.go`): `switchai`, `gemini`, `geminicli`, `claude`, `claudecli`, `codex`, `ollama`, `vibecli`, `openai`, `openai-compat`, `opencode`. Any other `xxx:yyy` string is treated as an ordinary model name. See [Routing](/concepts/routing) for the full resolution order.
+
+<Note>
+Detailed, copy-paste setup for each family is in the [Provider Setup Guide](/guides/setup-providers).
+</Note>
+
+## CLI providers (local binaries)
+
+At startup switchAILocal scans `PATH` for four binaries (`internal/cli/discovery.go`) and registers each one it finds as a provider. No configuration is needed.
+
+| Binary | Provider ID | Invocation | Streams | `@` attachments | Model forwarded |
+|--------|-------------|------------|---------|-----------------|-----------------|
+| `gemini` | `geminicli` | prompt on stdin, `--output-format=json` / `stream-json` | yes | yes | yes, as `--model=<name>` |
+| `claude` | `claudecli` | `--print`, `--output-format=json` / `stream-json` | yes | no | no (CLI default) |
+| `codex` | `codex` | `-p <prompt>` | no (buffered) | no | no (CLI default) |
+| `vibe` | `vibecli` | `-p <prompt>` | no (buffered) | yes | no (CLI default) |
+
+Behaviour worth knowing:
+
+- Requests run as a subprocess per call, using your existing CLI login and subscription.
+- `claude` gets `--dangerously-skip-permissions` automatically when there is no TTY; `gemini` always gets `-y` and `--include-directories` scoped to a sandbox (or the [billboard](#billboard) directory).
+- Per-request CLI options (attachments, sandbox/auto-approve flags, session resume) are passed in `extra_body.cli`; see [CLI Attachments](/api/cli-attachments).
+- If `REMOTE_COMMAND_HOST` is set, CLI calls are forwarded to a `bridge-agent` instance instead of being run locally (the bridge only runs `gemini`, `claude`, `vibe`, `codex` and requires `BRIDGE_AGENT_SECRET`).
+
+<Warning>
+A CLI provider and an HTTP credential share the provider ID. If you also have an OAuth login file or an API key that maps to `geminicli` or `codex`, the HTTP executor for that credential takes over the provider ID and the CLI binary is no longer used. Use one or the other per provider ID.
+</Warning>
+
+## Local server providers
 
 ### Ollama
-
-Local model server for running open-source LLMs.
 
 ```yaml
 ollama:
   enabled: true
-  base-url: "http://localhost:11434"
-  auto-discover: true  # Automatically fetch available models
+  base-url: "http://localhost:11434"   # default
+  auto-discover: true                  # register models from /api/tags
 ```
 
-<Accordion title="Implementation Details">
-The **OllamaExecutor** (`internal/runtime/executor/ollama_executor.go`) translates OpenAI format to Ollama's native API:
-
-```go
-type OllamaExecutor struct {
-    cfg     *config.Config
-    baseURL string
-    client  *http.Client
-}
-```
-
-Key features:
-- **Auto-discovery**: Queries `/api/tags` for available models
-- **Vision support**: Handles base64-encoded images
-- **Streaming**: Real-time response chunks
-- **No authentication**: Direct HTTP access
-</Accordion>
-
-**Example models**:
-- `ollama:llama3.2`
-- `ollama:mistral`
-- `ollama:qwen3-vl:235b-instruct-cloud`
-
-### OpenCode
-
-Local AI coding agent for development tasks.
-
-```yaml
-opencode:
-  enabled: true
-  base-url: "http://localhost:4096"
-  default-agent: "build"
-```
-
-<Note>
-OpenCode agents are specialized for different tasks: `build`, `debug`, `test`, `refactor`.
-</Note>
+Chat goes to Ollama's native `/api/chat` (translated to and from OpenAI format, including images and streaming); embeddings go to `/v1/embeddings`. Because Ollama is a trusted local provider, `ollama:<any-model>` is forwarded even when the model was not discovered.
 
 ### LM Studio
-
-GUI application for running local models with OpenAI-compatible API.
 
 ```yaml
 lmstudio:
   enabled: true
-  base-url: "http://localhost:1234/v1"
-  auto-discover: true
+  base-url: "http://localhost:1234/v1"  # default
 ```
 
-### Gemini CLI
+Requests are forwarded unchanged to `<base-url>/chat/completions` (the body, including the client's `model` value, is not rewritten). LM Studio models are **not** auto-discovered in this release and `lmstudio:` is not a recognized prefix, so route to it through a virtual model whose ID equals the LM Studio model ID, with one member `provider: lmstudio`. The `auto-discover`, `models`, `models-url` and `headers` keys are accepted but not used.
 
-Access Google's Gemini via OAuth credentials without API keys.
+### OpenCode
 
 ```yaml
-# Use OAuth login instead of API keys
-# Run: switchAILocal -login
+opencode:
+  enabled: true
+  base-url: "http://localhost:4096"  # default
+  default-agent: "build"
 ```
 
-<Accordion title="Authentication Flow">
-The **GeminiCLIExecutor** uses OAuth2 with device flow:
+OpenCode agents (from `GET /agent`) are registered as model IDs, and `opencode:<agent>` routes to the OpenCode server. Each request opens an OpenCode session and sends only the **last user message**; earlier messages are not replayed. To continue a conversation, send the same `session_id` (top level or in `extra_body.session_id`) and switchAILocal reuses the mapped OpenCode session. The agent name and `default-agent` are not forwarded in this release, so OpenCode answers with its own configured agent.
 
-```go
-type GeminiCLIExecutor struct {
-    cfg *config.Config
-}
+## Cloud API-key providers
 
-func prepareGeminiCLITokenSource(ctx, cfg, auth) (TokenSource, error) {
-    // Exchange refresh token for access token
-    // Endpoint: https://cloudcode-pa.googleapis.com
-}
-```
+All of these live in `config.yaml`, support several entries (keys) per provider, and accept `prefix`, `proxy-url`, `headers` and `models` (all but `vertex-api-key` also accept `excluded-models`). `models-url` adds discovered models for `switchai-api-key`; on `gemini-api-key` / `claude-api-key` it is only used by the auto-routing probe.
 
-Scopes required:
-- `https://www.googleapis.com/auth/cloud-platform`
-- `https://www.googleapis.com/auth/userinfo.email`
-</Accordion>
+<Warning>
+`gemini-api-key`, `claude-api-key` and `codex-api-key` ship **no default model list** in this release. Only models you list under `models:` are registered for that key. A key with no `models:` loads but cannot serve requests (`no active credentials found for provider ...`).
+</Warning>
 
-## Cloud Providers
+| Block | Provider ID | Default upstream | Notes |
+|-------|-------------|------------------|-------|
+| `gemini-api-key` | `gemini` | `https://generativelanguage.googleapis.com` | Native Gemini protocol; duplicates of the same key are dropped. |
+| `claude-api-key` | `claude` | `https://api.anthropic.com` | Native Messages API. |
+| `codex-api-key` | `codex` | none in config (OAuth tokens use the ChatGPT Codex backend) | `base-url` is **required**; entries without it are dropped. Requests go to `<base-url>/responses`. |
+| `switchai-api-key` | `switchai` | `https://switchai.traylinx.com/v1` | OpenAI-compatible. |
+| `vertex-api-key` | `vertex` | none | `base-url` required; the executor appends `/v1/publishers/google/models/{model}:{action}` and sends the key as `x-goog-api-key`. |
 
-Cloud providers access remote APIs using API keys or OAuth tokens.
+### OpenAI-compatible providers
 
-### Gemini API
-
-Google's Gemini models via REST API.
-
-```yaml
-gemini-api-key:
-  - api-key: "AIzaSy..."
-    prefix: "google"
-    base-url: "https://generativelanguage.googleapis.com"
-```
-
-**Supported endpoints**:
-- `/v1beta/models/{model}:generateContent`
-- `/v1beta/models/{model}:streamGenerateContent`
-- `/v1beta/models/{model}:countTokens`
-
-<Tip>
-Use the `prefix` to disambiguate when you have multiple Gemini providers configured. Access as `google/gemini-2.0-flash`.
-</Tip>
-
-### Claude (Anthropic)
-
-Anthropic's Claude models.
-
-```yaml
-claude-api-key:
-  - api-key: "sk-ant-..."
-    models:
-      - name: "claude-3-5-sonnet-20241022"
-        alias: "sonnet"
-      - name: "claude-3-opus-20240229"
-        alias: "opus"
-```
-
-<Accordion title="Message Format Translation">
-The **ClaudeExecutor** translates between OpenAI and Claude formats:
-
-```go
-// OpenAI format
-{
-  "model": "gpt-4",
-  "messages": [{"role": "user", "content": "Hello"}]
-}
-
-// Claude format (translated)
-{
-  "model": "claude-3-5-sonnet-20241022",
-  "messages": [{"role": "user", "content": "Hello"}],
-  "max_tokens": 4096
-}
-```
-
-Note: Claude requires explicit `max_tokens` parameter.
-</Accordion>
-
-### OpenAI / Codex
-
-OpenAI's GPT models.
-
-```yaml
-codex-api-key:
-  - api-key: "sk-..."
-    base-url: "https://api.openai.com/v1"
-```
-
-**Available models**:
-- GPT-4 series: `gpt-4`, `gpt-4-turbo`, `gpt-4o`
-- GPT-3.5 series: `gpt-3.5-turbo`
-- O-series: `o1`, `o1-mini`, `o1-preview`
-
-### SwitchAI Cloud
-
-Unified access to 100+ cloud models through single API key.
-
-```yaml
-switchai-api-key:
-  - api-key: "sk-lf-..."
-    base-url: "https://switchai.traylinx.com/v1"
-    models:
-      - name: "openai/gpt-oss-120b"
-        alias: "switchai-fast"
-      - name: "deepseek-reasoner"
-        alias: "switchai-reasoner"
-```
-
-<Note>
-SwitchAI provides access to models from OpenAI, Anthropic, Google, DeepSeek, and more through a single endpoint.
-</Note>
-
-## OpenAI-Compatible Providers
-
-Many providers offer OpenAI-compatible endpoints that can be configured using `openai-compatibility`.
+Any service that speaks the OpenAI REST API is added as an `openai-compatibility` entry. The entry's `name` (lower-cased) becomes the provider ID.
 
 ```yaml
 openai-compatibility:
-  - name: "groq"
-    prefix: "groq"
-    base-url: "https://api.groq.com/openai/v1"
+  - name: "deepseek"
+    base-url: "https://api.deepseek.com/v1"     # required; entries without it are dropped
+    models-url: "https://api.deepseek.com/v1/models"  # optional discovery
     api-key-entries:
-      - api-key: "gsk_..."
-  
-  - name: "openrouter"
-    prefix: "or"
-    base-url: "https://openrouter.ai/api/v1"
-    api-key-entries:
-      - api-key: "sk-or-v1-..."
-  
-  - name: "together"
-    prefix: "together"
-    base-url: "https://api.together.xyz/v1"
-    api-key-entries:
-      - api-key: "..."
+      - api-key: "sk-your-deepseek-key"
+    models:
+      - name: "deepseek-v4-pro"        # upstream model name
+        alias: "deepseek-pro"          # public ID clients send
+        context_length: 1000000        # shown in /v1/models
 ```
 
-<Accordion title="OpenAICompatExecutor Implementation">
-The **OpenAICompatExecutor** is a generic executor for OpenAI-compatible APIs:
+Per-model options: `alias`, `expose: false` / `visibility: private` (routable but hidden from `/v1/models`), `context_length`, `capabilities` (same shape as [virtual model capabilities](/advanced/virtual-models#capabilities), advertised in `/v1/models`), and `native_tools` (provider-native tools such as MiniMax `web_search`, advertised so agent clients can opt in).
 
-```go
-type OpenAICompatExecutor struct {
-    provider string  // e.g., "groq", "openrouter"
-    cfg      *config.Config
-}
+Per-entry options: `prefix`, `headers` (for example a custom `User-Agent`), `proxy-url`, `excluded-models`, and `kimi-history-shim` (default `true`: inserts a placeholder `reasoning_content` on replayed assistant tool-call messages, which thinking-mode Kimi and DeepSeek endpoints require; harmless elsewhere).
 
-func (e *OpenAICompatExecutor) Identifier() string {
-    return e.provider
-}
-```
+The OpenAI-compatible executor serves chat, completions, Responses, embeddings, image generation and edits, audio transcription/translation/speech, and music/lyrics. MiniMax speech and music requests go through dedicated adapters; see [Media Generation](/advanced/media).
 
-Supports:
-- Chat completions: `/chat/completions` (incl. native tools like `web_search` for MiniMax)
-- Embeddings: `/embeddings`
-- Image generation: `/images/generations` (path auto-rewritten to `/image_generation` for MiniMax)
-- Audio transcription: `/audio/transcriptions`
-- Audio speech: `/audio/speech` — for MiniMax, OpenAI-shape or MiniMax-native requests are translated to native `/t2a_v2` by an adapter in `internal/runtime/executor/minimax_tts.go`. MiniMax error codes (1002/2013/2061) are mapped onto HTTP status so the failover taxonomy can classify them correctly.
-- Music generation + covers: `/music/generations` — for MiniMax, adapter in `internal/runtime/executor/minimax_music.go` routes to upstream `/v1/music_generation`, hex-decodes the audio, and returns `{data: {audio: <base64>, duration_ms, sample_rate, channels, bitrate}}`. Passing `stream: true` switches the response to `Content-Type: audio/mpeg` with raw MP3 bytes streamed progressively (~20s TTFB) — the adapter unwraps MiniMax's SSE, drops the duplicated terminal frame, and uses a music-tuned watchdog floor (60s first-byte, 120s stall) so the legitimately-slow happy path isn't killed.
-- Lyrics generation: `/music/lyrics` — MiniMax `/v1/lyrics_generation` pass-through with mode defaulting.
-</Accordion>
+## OAuth and login-based providers
 
-### Supported Services
+Logins run once from the command line and write a token file into `auth-dir` (default `~/.switchailocal`). Tokens are refreshed automatically.
 
-<CardGroup cols={2}>
-  <Card title="Groq" icon="bolt">
-    Ultra-fast inference with LPU technology
-    
-    Models: Llama, Mixtral, Gemma
-  </Card>
-  <Card title="OpenRouter" icon="route">
-    Access to 100+ models with unified billing
-    
-    Models: GPT-4, Claude, Gemini, and more
-  </Card>
-  <Card title="Together AI" icon="users">
-    Open-source models with fast inference
-    
-    Models: Llama, Mistral, Qwen
-  </Card>
-  <Card title="Anyscale" icon="server">
-    Serverless endpoints for OSS models
-    
-    Models: Llama, Mixtral, CodeLlama
-  </Card>
-</CardGroup>
+| Flag | Provider ID | Token file | Needs env vars |
+|------|-------------|------------|----------------|
+| `--login` (Gemini / Code Assist) | `geminicli` | `<email>-<project>.json` | `GEMINI_CLIENT_ID`, `GEMINI_CLIENT_SECRET` |
+| `--codex-login` | `codex` | `codex-<email>.json` | none |
+| `--claude-login` | `claudecli` | `claude-<email>.json` | none |
+| `--qwen-login` | `qwen` | `qwen-<email>.json` | `QWEN_CLIENT_ID` |
+| `--iflow-login` / `--iflow-cookie` | `iflow` | `iflow-<email>-<ts>.json` | `IFLOW_CLIENT_ID`, `IFLOW_CLIENT_SECRET` (OAuth only) |
+| `--antigravity-login` | `antigravity` | `antigravity-<email>.json` | `ANTIGRAVITY_CLIENT_ID`, `ANTIGRAVITY_CLIENT_SECRET` |
+| `--vertex-import <key.json>` | `vertex` | service-account credential | none |
 
-## Provider Lifecycle
+<Warning>
+Known limitations in this release (from reading the code; verify on your build):
+- `--claude-login` tokens are loaded under the `claudecli` ID, which only has a CLI executor. Use the `claude` binary or a `claude-api-key` instead.
+- Login credentials only serve models registered *for that credential*. `--codex-login`, `--qwen-login`, `--iflow-login` and the AI Studio relay register none, so requests cannot be routed to them. `--login` (Gemini) registers the discovered Gemini CLI list once the discovery cache is filled (after the first background discovery run; restart if it is empty). `--antigravity-login` fetches its list from the upstream.
+- `--vibe-login` and `--ollama-login` only write a placeholder file. Vibe is enabled by `PATH` detection; Ollama by the `ollama:` config block.
+</Warning>
 
-### Registration
+See [Authentication](/concepts/authentication) for callback ports, headless login and token storage backends.
 
-Providers are registered during service initialization:
+## How models become routable
 
-```go
-// Register executors in service builder
-func (b *ServiceBuilder) Build() (*Service, error) {
-    // Register Gemini CLI
-    geminiCLIExec := executor.NewGeminiCLIExecutor(b.cfg)
-    b.coreManager.RegisterExecutor(geminiCLIExec)
-    
-    // Register Ollama
-    ollamaExec := executor.NewOllamaExecutor(b.cfg)
-    b.coreManager.RegisterExecutor(ollamaExec)
-    
-    // Register OpenAI compat providers
-    for _, compatCfg := range b.cfg.OpenAICompatibility {
-        exec := executor.NewOpenAICompatExecutor(compatCfg.Name, b.cfg)
-        b.coreManager.RegisterExecutor(exec)
-    }
-}
-```
+A model ID is routable when some credential has registered it in the model registry:
 
-### Discovery
+- **Config lists:** each `models:` entry registers its `alias` (or `name` if no alias).
+- **Discovery:** at startup a background job fetches the Gemini CLI model list, Ollama `/api/tags`, OpenCode `/agent`, and every `models-url`, and adds static lists for `claudecli`, `codex` and `vibecli`. Results are cached in `<auth-dir>/cache/discovery`. Re-run it with `POST /v1/models/refresh` (optionally `?provider=<id>`).
+- **Prefixes:** a credential with `prefix: team-a` also registers `team-a/<model>` for each of its models. Those prefixed IDs are hidden from `/v1/models` unless `force-model-prefix: true`, in which case *only* prefixed IDs are registered.
+- **Exclusions:** `excluded-models` (per key) and `oauth-excluded-models` (per provider ID, for OAuth/file credentials) remove matching IDs. Patterns are case-insensitive and support `*` wildcards.
 
-Providers with `auto-discover: true` fetch available models:
+Use `GET /v1/models` to see the public catalog and `GET /v1/providers?filter=active` to see which provider IDs have models registered.
 
-```go
-// Ollama auto-discovery
-func (e *OllamaExecutor) DiscoverModels() ([]string, error) {
-    resp, err := e.client.Get(e.baseURL + "/api/tags")
-    // Parse and return model list
-}
-```
-
-### Health Checking
-
-Providers can implement health checks:
-
-```go
-type ProviderHealthChecker interface {
-    CheckHealth(ctx context.Context) error
-}
-```
-
-## Model Naming Conventions
-
-Providers use prefixes to avoid naming conflicts:
-
-```bash
-# Without prefix (uses first matching provider)
-model: gpt-4o
-
-# With provider prefix
-model: openrouter/gpt-4o
-model: groq/llama-3.2-90b
-model: ollama:mistral
-
-# With custom alias
-model: sonnet  # Maps to claude-3-5-sonnet-20241022
-```
-
-<Tip>
-Use `force-model-prefix: true` in config to require explicit prefixes for all requests.
-</Tip>
-
-## Provider Metadata
-
-Each provider auth includes metadata:
-
-```go
-type Auth struct {
-    Provider   string
-    Metadata   map[string]any
-    Attributes map[string]string
-}
-
-// Example metadata
-metadata: {
-    "source": "config_yaml",
-    "base_url": "https://api.groq.com/openai/v1",
-    "prefix": "groq",
-    "auto_discover": true
-}
-```
-
-## Proxy Configuration
-
-Providers can use HTTP proxies:
+## Billboard
 
 ```yaml
-# Global proxy for all providers
-proxy-url: "socks5://user:pass@192.168.1.1:1080/"
+billboard:
+  enabled: true
+  base-dir: "~/.switchailocal/billboard"
+```
 
-# Per-provider proxy
+When enabled, CLI providers receive a system note telling the model to use this folder for file operations when no path is given, and `gemini` gets it as its `--include-directories` workspace.
+
+## Proxies
+
+```yaml
+proxy-url: "socks5://user:pass@127.0.0.1:1080/"   # global
 gemini-api-key:
-  - api-key: "AIzaSy..."
-    proxy-url: "http://proxy.example.com:8080"
+  - api-key: "your-gemini-key"
+    proxy-url: "http://proxy.internal:8080"        # per credential
 ```
 
-<Note>
-Supported proxy protocols: `http://`, `https://`, `socks5://`
-</Note>
+Supported schemes: `http`, `https`, `socks5`. `openai-compatibility` also accepts `proxy-url` per entry and per `api-key-entries` item.
 
-## Error Handling
+## Troubleshooting
 
-Providers implement standardized error responses:
+<AccordionGroup>
+  <Accordion title="Provider 'gemini' is not active (503)">
+    The `gemini:` prefix was used but no Gemini API key has registered models. Add a `models:` list to the `gemini-api-key` entry. The same applies to `claude:` and `codex:` with API keys.
+  </Accordion>
+  <Accordion title="no active credentials found for provider 'x'">
+    A credential exists but does not list the requested model. Add the model under that credential's `models:` (or enable `models-url`), or check `excluded-models`.
+  </Accordion>
+  <Accordion title="A CLI provider is not detected">
+    The binary must be on the `PATH` of the switchAILocal process (services and launch agents often have a reduced `PATH`). Run with `debug: true` and look for `Discovered local CLI tool` / `Local CLI tool not found`.
+  </Accordion>
+  <Accordion title="lmstudio:my-model returns model not found">
+    `lmstudio` is not a recognized colon prefix. Create a virtual model named like the LM Studio model, with a member `provider: lmstudio`.
+  </Accordion>
+  <Accordion title="Kimi or DeepSeek returns 400 about reasoning_content">
+    Keep `kimi-history-shim` enabled (the default) on that `openai-compatibility` entry.
+  </Accordion>
+</AccordionGroup>
 
-```go
-type Error struct {
-    Code       string  // "auth_failed", "quota_exceeded", etc.
-    Message    string
-    HTTPStatus int     // 401, 429, 500, etc.
-    Retryable  bool
-}
-```
-
-Common error codes:
-- `401`: Invalid API key or expired token
-- `402/403`: Payment required or forbidden
-- `404`: Model not found
-- `429`: Rate limit exceeded (triggers cooldown)
-- `500/502/503/504`: Transient server errors
-
-## Provider Quotas
-
-Quota management prevents excessive retry storms:
-
-```go
-type QuotaState struct {
-    Exceeded      bool
-    Reason        string
-    NextRecoverAt time.Time
-    BackoffLevel  int  // Exponential backoff level
-}
-```
-
-Backoff schedule:
-- Level 0: 1 second
-- Level 1: 2 seconds  
-- Level 2: 4 seconds
-- ...
-- Max: 30 minutes
-
-<Accordion title="Quota Recovery">
-When a provider returns `429 Too Many Requests`:
-
-1. Mark the credential as quota-exceeded
-2. Set `NextRecoverAt` based on `Retry-After` header or exponential backoff
-3. Skip this credential during selection until recovery time
-4. Reset quota state on successful request
-
-```go
-case 429:
-    var next time.Time
-    if result.RetryAfter != nil {
-        next = now.Add(*result.RetryAfter)
-    } else {
-        cooldown, nextLevel := nextQuotaCooldown(backoffLevel)
-        next = now.Add(cooldown)
-        backoffLevel = nextLevel
-    }
-    state.Quota = QuotaState{
-        Exceeded:      true,
-        NextRecoverAt: next,
-        BackoffLevel:  backoffLevel,
-    }
-```
-</Accordion>
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Add Provider" href="/configuration/providers" icon="plus">
-    Configure a new provider in your setup
+  <Card title="Provider Setup Guide" href="/guides/setup-providers" icon="list-check">
+    Step-by-step configuration per provider
   </Card>
-  <Card title="Routing Strategies" href="/concepts/routing" icon="route">
-    Learn how requests are routed to providers
+  <Card title="Routing" href="/concepts/routing" icon="route">
+    How a model name is turned into a provider and a credential
+  </Card>
+  <Card title="Virtual Models" href="/advanced/virtual-models" icon="layer-group">
+    Stable public names over weighted provider pools
   </Card>
   <Card title="Authentication" href="/concepts/authentication" icon="key">
-    Understand authentication flows
-  </Card>
-  <Card title="Model Discovery" href="/features/discovery" icon="magnifying-glass">
-    Automatic model discovery and registration
+    Client keys, OAuth logins and token storage
   </Card>
 </CardGroup>

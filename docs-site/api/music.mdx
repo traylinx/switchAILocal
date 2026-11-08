@@ -1,200 +1,186 @@
 ---
 title: 'Music & Lyrics'
-description: 'Generate songs (text-to-music + style-transfer cover) and structured lyrics via MiniMax music-2.6 / music-cover.'
+description: 'POST /v1/music/generations and POST /v1/music/lyrics (MiniMax music-2.6 / music-cover)'
 ---
 
-## Two endpoints
+Two routes under `/v1/music/*`. Both need a MiniMax provider configured as an `openai-compatibility` entry whose name contains `minimax`. Any other provider returns `501`. They are not reachable via `/v1/chat/completions` and have no `/openai/v1` alias.
 
+**Auth:** client API key.
+
+## Prerequisite: model aliases
+
+Routing goes through the model registry, so the music models must exist as aliases. The example config defines them like this:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "minimax"
+    base-url: "https://api.minimax.io/v1"
+    api-key-entries:
+      - api-key: "YOUR_MINIMAX_KEY"
+    models:
+      - name: "music-2.6"
+        alias: "ail-music"
+      - name: "music-cover"
+        alias: "ail-music-cover"
+
+intelligence:
+  matrix:
+    music_generation: "ail-music"
+    lyrics_generation: "ail-music"
 ```
-POST /v1/music/generations    # text-to-music + reference-audio cover
-POST /v1/music/lyrics         # structured lyrics, JSON only
-```
 
-Music endpoints live under `/v1/music/*` (mirroring `/v1/images/generations`). They are **not** part of `/v1/chat/completions`. Calling chat-completions with a music model will return `unknown model` because chat handlers don't route to the music adapter.
+Before routing, `/v1/music/generations` maps common spellings to these aliases:
 
-<Warning>
-**Common 400 mistakes** (these are why your agent app is failing):
+| You send | Routed as |
+|---|---|
+| `music-2.6`, `music-2.6-free`, `ail-music`, `minimax/ail-music`, and anything starting with `minimax:music-2.` or `minimax/music-2.` | `ail-music` |
+| `music-cover`, `music-cover-free`, `ail-music-cover`, `minimax/ail-music-cover`, and anything starting with `minimax:music-cover` or `minimax/music-cover` | `ail-music-cover` |
+| anything else | unchanged |
 
-1. **Wrong path.** `/v1/music`, `/v1/music_generate`, `/v1/song`, `/v1/t2a` — none exist. Use `/v1/music/generations`.
-2. **Bare model name.** `"model": "music-2.6"` → `unknown provider for model music-2.6`. Use the alias `"model": "minimax:music-2.6"` (or omit and let `intelligence.matrix.music_generation` resolve it).
-3. **Missing `lyrics`.** Empty body → `code=2013 invalid params, lyrics is required`. Generate them first via `/v1/music/lyrics` if you don't have any.
-4. **Music routed via `/v1/chat/completions`.** Music has its own handlers (`MusicGenerations` / `MusicLyrics`). Chat-completions doesn't know about music models.
-</Warning>
+So if `ail-music` / `ail-music-cover` are not configured, those names fail with `unknown provider for model ail-music`.
 
 ---
 
-## `POST /v1/music/generations`
+## POST /v1/music/generations
 
-Generates a song from lyrics + style prompt. Synthesis is synchronous by default and typically takes 30–90 s for a 1–2 min song. Pass `stream: true` to receive raw MP3 bytes progressively (~20 s TTFB).
+Generates a song. A synchronous call usually takes 30–90 s, so use a long client timeout.
 
-### Request body
+### Request
 
 <ParamField body="model" type="string">
-  `minimax:music-2.6` (text-to-music, default) or `minimax:music-cover` (reference-audio style transfer). Omit to fall back to `intelligence.matrix.music_generation` from `config.yaml`.
-</ParamField>
-
-<ParamField body="lyrics" type="string" required>
-  Required for `music-2.6`. Optional structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Inst]`, `[Outro]`. Max 3500 chars.
-</ParamField>
-
-<ParamField body="prompt" type="string">
-  Style description. Required for `music-cover` (10–300 chars).
-</ParamField>
-
-<ParamField body="audio_url" type="string">
-  Reference audio URL for `music-cover`. 6 s – 6 min, ≤50 MB, mp3/wav/flac. Mutually exclusive with `audio_base64`.
-</ParamField>
-
-<ParamField body="audio_base64" type="string">
-  Reference audio as base64. Mutually exclusive with `audio_url`.
-</ParamField>
-
-<ParamField body="stream" type="boolean" default={false}>
-  If true, response is `Content-Type: audio/mpeg` with raw MP3 bytes. ~20 s to first byte vs 30–90 s sync.
-</ParamField>
-
-### Response (sync, JSON)
-
-```json
-{
-  "data": {
-    "audio": "<base64-encoded MP3>",
-    "duration_ms": 80117,
-    "bitrate": 256000,
-    "sample_rate": 44100,
-    "channels": 2,
-    "format": "mp3",
-    "size_bytes": 2568348
-  },
-  "model": "minimax:music-2.6",
-  "trace_id": "..."
-}
-```
-
-The upstream returns hex-encoded audio; SwitchAILocal re-encodes to base64 because every OpenAI client already understands it (`base64.StdEncoding.DecodeString` → bytes).
-
-### Examples
-
-**Text-to-music:**
-
-```bash
-curl -sS http://localhost:18080/v1/music/generations \
-  -H 'Authorization: Bearer sk-test-123' \
-  -H 'Content-Type: application/json' \
-  --max-time 180 \
-  -d '{
-    "model": "minimax:music-2.6",
-    "prompt": "calm lo-fi piano with soft rain, 60 bpm",
-    "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"
-  }' \
-  -o resp.json
-
-jq -r '.data.audio' resp.json | base64 -d > track.mp3
-```
-
-**Streaming (start playback while still rendering):**
-
-```bash
-curl -sN http://localhost:18080/v1/music/generations \
-  -H 'Authorization: Bearer sk-test-123' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"minimax:music-2.6","stream":true,"lyrics":"[Verse]\nNeon dreams"}' \
-  > track.mp3
-```
-
-**Music-cover (reference-audio style transfer):**
-
-```bash
-curl -sS http://localhost:18080/v1/music/generations \
-  -H 'Authorization: Bearer sk-test-123' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "minimax:music-cover",
-    "prompt": "rework in piano-jazz style",
-    "lyrics": "[Verse]\nNew take on the same melody",
-    "audio_url": "https://example.com/reference.mp3"
-  }'
-```
-
-**Plan limits:** MiniMax Plus plan = 100 songs/day each for `music-2.6` and `music-cover`. Errors map: `2013` (invalid_params) aborts; `1002` (rate_limit) and `2061` (plan_not_support) are advance-eligible.
-
----
-
-## `POST /v1/music/lyrics`
-
-Generates structured song lyrics. Pure JSON in / JSON out — no audio. Latency 2–5 s.
-
-### Request body
-
-<ParamField body="prompt" type="string" required>
-  Description of the song you want lyrics for.
-</ParamField>
-
-<ParamField body="mode" type="string" default="write_full_song">
-  `write_full_song` (default) or `edit` (extend/rewrite existing `lyrics`).
+  See the mapping above. Defaults to `intelligence.matrix.music_generation`; with neither, the request fails with `400`. The upstream model name is sent to MiniMax, and `music-2.6` is used if it is still empty.
 </ParamField>
 
 <ParamField body="lyrics" type="string">
-  Required only in `edit` mode. Existing lyrics to extend (max 3500 chars).
+  Song lyrics, optionally with section tags (`[Verse]`, `[Chorus]`, `[Bridge]`, ...). MiniMax requires it for `music-2.6` (code `2013` otherwise). For covers, if it is shorter than 10 characters, the lyrics MiniMax extracts from the reference are used.
 </ParamField>
 
-<ParamField body="title" type="string">
-  Optional song title hint.
+<ParamField body="prompt" type="string">Style description. Forwarded.</ParamField>
+
+<ParamField body="audio_url | audio_base64" type="string">
+  Reference audio for `music-cover`. The gateway first runs MiniMax's preprocessing step to get a `cover_feature_id`, then generates. A WAV `audio_base64` reference shorter than 30 s is rejected with `400`.
 </ParamField>
 
-### Response
+<ParamField body="stream" type="boolean" default="false">
+  `true` streams raw MP3 bytes (see below).
+</ParamField>
+
+Other fields (for example `output_format`, `cover_feature_id`) are forwarded to MiniMax.
+
+### Response (sync)
 
 ```json
 {
-  "song_title": "Rainy Day Study",
-  "style_tags": "lo-fi, chill, study, ambient, piano, rain",
-  "lyrics": "[Intro]\n\n[Verse]\nSoft piano keys begin to play\n...",
+  "model": "music-2.6",
+  "trace_id": "0632...",
+  "data": {
+    "audio": "<base64 MP3>",
+    "format": "mp3",
+    "size_bytes": 3150729,
+    "duration_ms": 98298,
+    "sample_rate": 44100,
+    "channels": 2,
+    "bitrate": 256000
+  },
+  "extra_info": {"music_duration": 98298, "music_sample_rate": 44100, "bitrate": 256000}
+}
+```
+
+- MiniMax returns hex. The gateway re-encodes it as base64 in `data.audio`.
+- If MiniMax returns a URL (for example with `output_format: "url"`), `data.format` is `"url"` and `data.audio_url` holds it.
+- `model` is the upstream model name, not your alias.
+
+### Streaming
+
+With `"stream": true` the response is `200 Content-Type: audio/mpeg`: raw MP3 bytes arriving progressively, so playback can start before the song is finished. The first byte typically takes about 20 s.
+
+- Errors before the first byte return a normal JSON error with the right status.
+- Errors after bytes are flushed just close the connection. The MP3 frames received so far are still playable.
+- An upstream stream that ends without audio returns `502`.
+
+### Examples
+
+<CodeGroup>
+```bash Sync
+curl -sS http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  --max-time 300 \
+  -d '{"model": "ail-music", "prompt": "calm lo-fi piano, 60 bpm",
+       "lyrics": "[Verse]\nCode flows through the night\n[Chorus]\nDebugging makes it right"}' \
+  | jq -r .data.audio | base64 -d > song.mp3
+```
+
+```bash Stream
+curl -sN http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-music", "stream": true, "lyrics": "[Verse]\nNeon dreams"}' > song.mp3
+```
+
+```bash Cover
+curl -sS http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  --max-time 300 \
+  -d '{"model": "ail-music-cover", "prompt": "piano jazz rework",
+       "audio_url": "https://example.com/reference.mp3"}'
+```
+</CodeGroup>
+
+---
+
+## POST /v1/music/lyrics
+
+Generates structured lyrics. JSON in, JSON out, usually in a few seconds.
+
+<ParamField body="model" type="string">
+  Only used for routing; it is removed before the upstream call. Defaults to `intelligence.matrix.lyrics_generation`, then `music_generation`.
+</ParamField>
+<ParamField body="mode" type="string" default="write_full_song">`write_full_song` or `edit`.</ParamField>
+<ParamField body="prompt" type="string">Theme or style of the song.</ParamField>
+<ParamField body="lyrics" type="string">Existing lyrics to continue (for `edit`).</ParamField>
+<ParamField body="title" type="string">Desired title.</ParamField>
+
+The MiniMax response is returned unchanged:
+
+```json
+{
+  "song_title": "Midnight Code",
+  "style_tags": "lo-fi, chill, piano",
+  "lyrics": "[Intro]\n\n[Verse]\nScreen glow bright...",
   "base_resp": {"status_code": 0, "status_msg": "success"}
 }
 ```
 
-### Example
-
 ```bash
-curl -sS http://localhost:18080/v1/music/lyrics \
-  -H 'Authorization: Bearer sk-test-123' \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"a calm lo-fi study session, soft piano, gentle rain"}'
+curl http://localhost:18080/v1/music/lyrics \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a calm lo-fi study session with gentle rain"}'
 ```
 
-**Plan limits:** 100 lyrics/day on the Plus plan.
+A common workflow is to call `/v1/music/lyrics`, then pass `style_tags` as `prompt` and `lyrics` to `/v1/music/generations`.
 
 ---
 
-## Recommended workflow
+## Errors
 
-1. `POST /v1/music/lyrics` with a prompt → get `{song_title, style_tags, lyrics}`.
-2. `POST /v1/music/generations` with `style_tags` as `prompt` and the returned `lyrics`.
-3. Decode `data.audio` from base64 → MP3.
+MiniMax reports failures in `base_resp.status_code`. The gateway maps them to HTTP statuses:
 
-This burns one quota slot from each bucket (lyrics_generation + music-2.6) per song.
+| MiniMax code | HTTP | Meaning |
+|---|---|---|
+| `1002` | `429` | Rate limit |
+| `1004`, `1008` | `401` | Invalid key / insufficient balance |
+| `2013` | `400` | Invalid parameters (often missing `lyrics`) |
+| `2061` | `402` | Plan does not include this model |
+| other | `502` | Upstream error |
 
----
+Gateway-level errors:
 
-## Endpoint matrix
-
-| Endpoint | Status |
+| Status | When |
 |---|---|
-| `POST /v1/music/generations` | ✅ Works — base64 MP3 in JSON, or `audio/mpeg` stream |
-| `POST /v1/music/lyrics` | ✅ Works — JSON only, fast |
-| `POST /v1/music` | ❌ 404 (never existed) |
-| `POST /v1/music_generate` | ❌ 404 (use `/v1/music/generations`) |
-| `POST /v1/song` | ❌ 404 |
-| `POST /v1/t2a` | ❌ 404 (use `/v1/audio/speech` for TTS) |
-
----
-
-## Error reference
-
-| `base_resp.status_code` | HTTP | Meaning | Retryable |
-|---|---|---|---|
-| `0` | 200 | success | — |
-| `1002` | 429 | rate limit (RPM exceeded) | yes (advance to next slot) |
-| `1004` | 401 | bad MiniMax key | no |
-| `2013` | 400 | invalid params (often missing `lyrics`) | no — fix the request |
-| `2061` | 403 | plan does not support this model | yes (advance) |
+| `400` | No model and no matrix slot configured, unknown model, or a WAV cover reference shorter than 30 s |
+| `401` | Missing or invalid client API key |
+| `501` | `music_generation not supported for provider "<name>"` (provider is not MiniMax) |
+| `502` | Empty audio payload or empty stream from upstream |

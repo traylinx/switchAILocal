@@ -1,80 +1,93 @@
 ---
 title: Cortex Answer Schema Plugin
-description: Interim compatibility shim that lets the Cortex grounded-answer pipeline run through small/local models
+description: A narrowly scoped Lua plugin that adds a missing classification vocabulary to grounded-answer prompts served by small local models
 icon: shield-check
 ---
 
-**Cortex Answer Schema Steering** (`plugins/cortex-answer-schema`) is a minimal Lua
-plugin that makes the [Cortex](https://github.com/traylinx/cortex) grounded-answer
-pipeline work through switchAILocal when the terminal model is a small or local
-model such as `gpt-oss:20b` served by Ollama.
+`plugins/cortex-answer-schema` is a small bundled Lua plugin. It exists for one integration: a grounded-answer client called **Cortex** that sends prompts through switchAILocal to a small or local model such as `gpt-oss:20b` on Ollama. It is a compatibility shim, not a general feature. Despite the shared name, it is unrelated to the [Cortex Router](/intelligent-systems/cortex-router).
 
-It is an **interim proxy-side shim** for a defect on the Cortex side, not a general
-feature. It is inert for any request that is not a Cortex answer/grounding call.
+The plugin ignores every request whose body doesn't contain one of its marker strings. Leave it disabled unless you run that client.
 
 ## The problem it solves
 
-Cortex's generic answer prompt asks the model to emit a `classification_code` per
-statement but never lists the allowed values, while the Cortex gateway hard-validates
-each code against a fixed enum:
+The client's answer prompt asks the model to emit a `classification_code` for each statement but doesn't list the allowed values. The client then validates each code against a fixed set:
 
 ```
 SUPPORTED · PARTIALLY_SUPPORTED · CONFLICTING · ABSTAINED
 ```
 
-Without the vocabulary the model guesses (`"FACT"`, `"factual"`, …), the gateway
-rejects the answer, and its regeneration loop retries until Cortex's 10-second
-client read-lease expires. The caller sees `AUTH_REVOKED` and gets no answer.
+Without the list, a small model guesses (`"FACT"`, `"factual"`), validation fails, and the client keeps regenerating until its own deadline expires.
 
-## How it works
+## What it does
 
-The plugin's `on_request` hook uses `switchai.json_inject` to prepend a system
-message, gated on marker substrings so ordinary traffic is untouched:
+`on_request` uses `switchai.json_inject` to add a system message at the start of `messages`. Nothing is injected unless the body contains a marker:
 
-```lua
+| Marker substring in the request body | Injected system message |
+|---|---|
+| `classification_code` | The four allowed codes, an instruction to abstain by returning `{"statements": []}` (never a statement with an empty `citation_ids` list), `Reasoning: low`, and "Output JSON only" |
+| `material statement` or `Identify contradictions` | `Reasoning: low` and "Output JSON only" |
+
+`Reasoning: low` is the reasoning-effort control phrase for `gpt-oss` models. It shortens the hidden reasoning, which keeps generate-then-verify chains within tight client deadlines.
+
+```lua plugins/cortex-answer-schema/handler.lua (excerpt)
 function Plugin:on_request(req)
     if not req.body then return req end
     if string.find(req.body, "classification_code", 1, true) then
-        req.body = switchai.json_inject(req.body, STEER)   -- enum + abstention + Reasoning: low
+        req.body = switchai.json_inject(req.body, STEER)
     elseif string.find(req.body, "material statement", 1, true)
         or string.find(req.body, "Identify contradictions", 1, true) then
-        req.body = switchai.json_inject(req.body, LEAN)    -- Reasoning: low only
+        req.body = switchai.json_inject(req.body, LEAN)
     end
     return req
 end
 ```
 
-The injected steering does three things:
-
-1. **Supplies the four classification codes** the prompt omits, so validation passes
-   on the first attempt (no regeneration loop).
-2. **Corrects abstention** — abstain by returning `{"statements": []}`, because a
-   statement with an empty `citation_ids` list is schema-invalid (`min_length: 1`).
-3. **Sets `Reasoning: low`** — the harmony control token for `gpt-oss`. It drops
-   output from ~600 reasoning tokens (>10 s) to ~300 tokens (~3.5 s), keeping the
-   full generate + verify chain inside the client lease.
-
-## Measured effect
-
-Against a 6-document corpus, `Cortex → switchAILocal (ail-compound) → Ollama
-gpt-oss:20b`:
-
-| Case | Result | Latency (p50) |
-|---|---|---|
-| On-corpus question | Grounded answer, 1 citation | ~6.8 s |
-| Off-corpus question | Correct abstention | ~2.5 s |
-
 ## Enable
 
-```yaml
+```yaml config.yaml
 plugin:
   enabled: true
+  plugin-dir: "./plugins"          # required; no plugins load without it
   enabled-plugins:
     - "cortex-answer-schema"
 ```
 
-## Lifecycle
+Restart the server and look for `loading plugin: Cortex Answer Schema Steering (cortex-answer-schema)` in the log.
 
-Once the Cortex answer prompt carries its own classification vocabulary, remove the
-plugin from `enabled-plugins`. See [Lua Plugins](/advanced/lua-plugins) and
-[Payload Injection](/advanced/payload-injection) for the underlying primitives.
+## Example request
+
+Any OpenAI-format request whose body contains a marker is modified before routing:
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama:gpt-oss:20b",
+    "messages": [{"role": "user", "content": "Answer from the evidence. Return statements with classification_code and citation_ids."}]
+  }'
+```
+
+The upstream model receives an extra first message with `role: system` that lists the four codes.
+
+## Defaults and limits
+
+- The plugin runs on every request, including requests with a provider prefix such as `ollama:…`, because Lua `on_request` hooks run for both prefixed and unprefixed models.
+- Matching is a plain substring test on the raw JSON body and is case-sensitive.
+- `json_inject` only touches bodies with a top-level `messages` array. Other bodies are left as they are, apart from a fallback that appends the text when the body isn't valid JSON.
+- It can run alongside `cortex-router`. All loaded plugins run in turn, and the order between them isn't guaranteed.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="The plugin doesn't load">
+    Check that `plugin-dir` is set and contains `cortex-answer-schema/schema.lua` and `handler.lua`. `schema.lua`'s `name` must match the folder name.
+  </Accordion>
+  <Accordion title="Validation still fails">
+    Check that the client's prompt contains the literal `classification_code`. Run with `debug: true` to see hook errors.
+  </Accordion>
+</AccordionGroup>
+
+## Removing it
+
+Once the client's prompt includes its own classification vocabulary, remove the plugin from `enabled-plugins`. See [Lua Plugins](/advanced/lua-plugins) for the hook API and [Payload Injection](/advanced/payload-injection) for config-only parameter overrides.

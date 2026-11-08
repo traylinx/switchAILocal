@@ -1,0 +1,207 @@
+---
+title: Hooks & Events
+description: YAML rules that run a webhook, log line or allow-listed command when a routing decision or health event occurs
+icon: bolt
+---
+
+Hooks are small YAML files. Each one subscribes to an internal event, optionally filters it with an expression, and runs an action such as calling a webhook or writing a warning to the log. They load at startup from a directory and reload automatically when the files change.
+
+## When to use it
+
+- Post to Slack, a status page or your own service when a request fails or a provider goes down.
+- Log a warning when a request is slow or hits a specific provider.
+- Run a desktop notification (`notify-send`) on a workstation.
+
+Hooks observe events. They can't change, block or retry the request that triggered them.
+
+## Minimal working setup
+
+<Steps>
+  <Step title="Point the server at a hooks directory">
+    ```yaml config.yaml
+    hooks:
+      hooks-dir: "/home/you/.switchailocal/hooks"   # absolute path recommended
+      hot-reload: true
+    ```
+    The default `hooks-dir` is `.switchailocal/hooks`, relative to the server's working directory, and `~` is not expanded. The directory is created if it doesn't exist.
+  </Step>
+  <Step title="Add a hook file">
+    ```yaml /home/you/.switchailocal/hooks/failed-requests.yaml
+    id: failed-requests
+    name: Notify on failed requests
+    description: Post every failed proxied request to a webhook
+    event: routing_decision
+    condition: "Data.success == false"
+    action: notify_webhook
+    enabled: true          # required; hooks without it are skipped
+    params:
+      url: "https://hooks.example.com/switchailocal"
+      secret: "replace-with-a-random-string"
+    ```
+  </Step>
+  <Step title="Check it is loaded">
+    ```bash
+    curl http://localhost:18080/v0/management/hooks/status \
+      -H "X-Management-Key: $MANAGEMENT_KEY"
+    ```
+    ```json
+    {
+      "enabled": true,
+      "hooks_count": 1,
+      "hooks_dir": "/home/you/.switchailocal/hooks",
+      "hooks": [{"id": "failed-requests", "name": "Notify on failed requests", "event": "routing_decision", "condition": "Data.success == false", "action": "notify_webhook", "params": {"url": "https://hooks.example.com/switchailocal", "secret": "replace-with-a-random-string"}, "enabled": true}]
+    }
+    ```
+    The status response includes `params`, including any webhook secret. Keep the management key private.
+  </Step>
+</Steps>
+
+<Note>
+In 0.6.2 the hook manager always starts. `hooks.enabled` isn't checked: any `*.yaml` or `*.yml` file with `enabled: true` in `hooks-dir` is active. To turn hooks off, remove the files or set `enabled: false` in each one.
+</Note>
+
+## Hook file format
+
+| Field | Required | Description |
+|---|---|---|
+| `id` | yes | Identifier, included in webhook payloads |
+| `name` | yes | Shown in logs (`Executing hook: <name>`) |
+| `description` | no | Free text |
+| `event` | yes | One of the events below |
+| `condition` | no | An [expr](https://expr-lang.org) expression that must return a boolean. Empty or `"true"` matches every event. |
+| `action` | yes | One of the actions below |
+| `params` | depends | Action parameters |
+| `enabled` | yes | Must be `true`. The default is `false`. |
+
+Files are discovered recursively under `hooks-dir`.
+
+## Events
+
+| Event | Emitted in 0.6.2 | Source |
+|---|---|---|
+| `routing_decision` | Yes, once per proxied request, on success and on failure | Request handlers. Streaming requests emit it when the stream starts. |
+| `provider_unavailable` | Yes, if `heartbeat.enabled` | [Heartbeat](/intelligent-systems/heartbeat): a provider changed to unavailable |
+| `health_check_failed` | Yes, if `heartbeat.enabled` | Heartbeat: one probe attempt failed |
+| `quota_warning`, `quota_exceeded` | No | Built-in checkers don't report quota |
+| `model_discovered` | No | Not wired |
+| `request_received`, `request_failed` | No | Defined but never published. Use `routing_decision` with `Data.success == false` instead. |
+
+### Values available to conditions
+
+| Name | Type | Notes |
+|---|---|---|
+| `Event` | string | Event name |
+| `Timestamp` | time | Event time |
+| `Provider` | string | For `routing_decision`, the text before the first `:` of the selected model, or the whole model name if there is no colon. This isn't always the provider ID. For heartbeat events, it is the checker name (`ollama`, `gemini`, an `openai-compatibility` name). |
+| `Data` | map | Event-specific fields, see below |
+
+`routing_decision` `Data` fields: `model` (as requested), `selected_model`, `success`, `latency_ms`, `response_time_ms`, `tier`, `confidence`, `api_key_hash`, `intent` (empty), `quality_score` (0).
+
+Heartbeat event `Data` fields: `status`, `previous_status`, `last_check`, `response_time`, `models_count`, `quota_used`, `quota_limit`. `health_check_failed` also has `error` and `attempt`.
+
+Condition examples:
+
+```yaml
+condition: "Data.success == false"
+condition: "Data.latency_ms > 10000"
+condition: "Provider == 'ollama' && Data.success == false"
+condition: "Data.model == 'auto'"
+condition: "Data.status == 'unavailable'"
+```
+
+The error message of a failed request isn't exposed to conditions, but `notify_webhook` includes it in the payload as `error`.
+
+## Actions
+
+| Action | Params | Behavior |
+|---|---|---|
+| `log_warning` | `message` | Writes `[Hook: <name>] <message> (Event: <event>)` at warning level |
+| `notify_webhook` | `url`, `secret` (optional) | `POST`s JSON to `url`. Details below. |
+| `run_command` | `command` | Runs the command without a shell, splitting arguments on whitespace. Only `echo`, `logger` and `notify-send` are allowed. |
+| `retry_with_fallback`, `prefer_provider`, `rotate_credential`, `restart_provider` | `provider` (some) | **Placeholders in 0.6.2.** They only write an info log line. |
+
+### Webhook delivery
+
+- `url` must start with `https://` or `http://localhost`. `http://127.0.0.1` and other plain-HTTP URLs are rejected.
+- Rate limit: 10 calls per minute per URL. Calls over the limit are dropped with an error in the log.
+- Timeout: 5 seconds per attempt, with up to 3 retries after 1 s, 2 s and 4 s. A response with status 400 or higher counts as a failure.
+- Headers: `Content-Type: application/json`, `User-Agent: switchAILocal-Hooks/1.0`. When `secret` is set, `X-Hook-Signature: sha256=<hex HMAC-SHA256 of the raw body>` is added.
+
+Payload:
+
+```json
+{
+  "event": "routing_decision",
+  "timestamp": "2026-11-08T10:31:07Z",
+  "hook_id": "failed-requests",
+  "provider": "MiniMax-M3",
+  "model": "MiniMax-M3",
+  "error": "upstream returned 429",
+  "data": {
+    "model": "ail-compound",
+    "selected_model": "MiniMax-M3",
+    "success": false,
+    "latency_ms": 2311,
+    "response_time_ms": 0,
+    "tier": "semantic",
+    "confidence": 1,
+    "api_key_hash": "sha256:3f1c...e9a2",
+    "intent": "",
+    "quality_score": 0
+  }
+}
+```
+
+To verify the signature on the receiving side, compute the HMAC-SHA256 of the raw request body with the shared secret and compare it to the hex value after `sha256=` using a constant-time comparison.
+
+## Reloading
+
+With `hot-reload: true` (the default), changes in `hooks-dir` are picked up about 100 ms after they are written. You can also reload by hand:
+
+```bash
+curl -X POST http://localhost:18080/v0/management/hooks/reload \
+  -H "X-Management-Key: $MANAGEMENT_KEY"
+```
+
+```json
+{"success": true, "message": "Hooks reloaded successfully", "hooks_count": 1}
+```
+
+## Defaults and limits
+
+| Setting | Default |
+|---|---|
+| `hooks.hooks-dir` | `.switchailocal/hooks` (relative to the working directory) |
+| `hooks.hot-reload` | `true` |
+| Event queue | 1000 events. When it is full, new events are dropped with `Event queue full, dropping event`. |
+| Webhook rate limit | 10 per minute per URL |
+
+Actions run in their own goroutines and never delay the request.
+
+## Steering rules (loaded, not applied)
+
+The `steering:` block (`rules-dir`, alias `steering-dir`, default `.switchailocal/steering`; `hot-reload`, default `true`) loads YAML routing rules with `name`, `activation.condition`, `activation.priority` and `preferences` (`primary_model`, `fallback_models`, `context_injection`, `time_based_rules`). On first start the directory is created with `intents/`, `providers/` and `users/` subfolders.
+
+In 0.6.2 these rules are parsed and can be listed with `GET /v0/management/steering/rules` and reloaded with `POST /v0/management/steering/reload`, but **they aren't applied to request routing**. To steer traffic today, use [virtual models](/concepts/routing), [payload injection](/advanced/payload-injection) or a [Lua plugin](/advanced/lua-plugins).
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="hooks_count is 0">
+    - The file needs `enabled: true`.
+    - The extension must be `.yaml` or `.yml`.
+    - Check `hooks_dir` in the status response. A relative default resolves against the server's working directory.
+    - A YAML parse error is logged as `Failed to parse hook <path>`.
+  </Accordion>
+  <Accordion title="The hook loads but never fires">
+    - Check that the event is one that is emitted (see the table). `request_failed` never fires, so use `routing_decision` with `Data.success == false`.
+    - Heartbeat events need `heartbeat.enabled: true`.
+    - A condition that fails to compile, or doesn't return a boolean, is logged as `Failed to evaluate hook condition`.
+  </Accordion>
+  <Accordion title="Webhook errors: insecure webhook url">
+    Use `https://`, or `http://localhost:<port>` for local receivers.
+  </Accordion>
+  <Accordion title="run_command: command is not in the whitelist">
+    Only `echo`, `logger` and `notify-send` can run. For anything else, use `notify_webhook` to call a local service.
+  </Accordion>
+</AccordionGroup>
