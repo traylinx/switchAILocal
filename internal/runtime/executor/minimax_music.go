@@ -685,7 +685,7 @@ func (e *OpenAICompatExecutor) executeMinimaxMusicStream(ctx context.Context, au
 	payload, _ = sjson.SetBytes(payload, "stream", true)
 
 	url := strings.TrimSuffix(baseURL, "/") + minimaxMusicEndpoint
-	log.Infof("MINIMAX music stream: posting to %s with body=%s", url, truncate(string(payload), 400))
+	log.Debugf("MINIMAX music stream: posting to %s (%d bytes)", url, len(payload))
 
 	streamCtx, streamCancel := context.WithCancel(ctx)
 	httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, url, bytes.NewReader(payload))
@@ -873,7 +873,7 @@ func (e *OpenAICompatExecutor) postMinimaxJSON(ctx context.Context, auth *switch
 	var lastErr error
 	var lastBody []byte
 	for attempt := 1; attempt <= minimaxJSONMaxAttempts; attempt++ {
-		log.Infof("MINIMAX %s: posting to %s attempt=%d/%d with body=%s", endpoint, url, attempt, minimaxJSONMaxAttempts, truncate(string(body), 400))
+		log.Debugf("MINIMAX %s: posting to %s attempt=%d/%d (%d bytes)", endpoint, url, attempt, minimaxJSONMaxAttempts, len(body))
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
