@@ -5,7 +5,11 @@
 // Binary source: GitHub Releases (https://github.com/traylinx/switchAILocal/releases)
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  createWriteStream, existsSync, mkdirSync, mkdtempSync, chmodSync, readdirSync,
+  readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync,
+} from "node:fs";
 import { get as httpsGet } from "node:https";
 import { homedir, platform, arch } from "node:os";
 import { join } from "node:path";
@@ -13,6 +17,8 @@ import { join } from "node:path";
 const REPO = "traylinx/switchAILocal";
 const BINARY_NAME = "switchAILocal";
 const DEFAULT_PORT = 18080;
+// Platforms the release workflow publishes (.github/workflows/release.yml).
+const PUBLISHED = new Set(["darwin/arm64", "linux/amd64", "linux/arm64"]);
 
 // ── Platform Detection ──────────────────────────────────────────
 
@@ -24,10 +30,22 @@ function getPlatform() {
   const archMap = { arm64: "arm64", x64: "amd64", ia32: "386" };
 
   const os = osMap[p];
-  const cpu = archMap[a];
+  let cpu = archMap[a];
+
+  // An x64 Node under Rosetta on Apple Silicon: the arm64 binary runs natively.
+  if (os === "darwin" && cpu === "amd64" && runningUnderRosetta()) {
+    cpu = "arm64";
+  }
 
   if (!os || !cpu) {
     console.error(`Unsupported platform: ${p}/${a}`);
+    process.exit(1);
+  }
+
+  if (!PUBLISHED.has(`${os}/${cpu}`)) {
+    console.error(`No pre-built switchAILocal binary is published for ${os}/${cpu}.`);
+    console.error(`Published: ${[...PUBLISHED].join(", ")}.`);
+    console.error(`Use Docker or build from source: https://github.com/${REPO}#installation`);
     process.exit(1);
   }
 
@@ -37,13 +55,23 @@ function getPlatform() {
   return { os, arch: cpu, ext, bin };
 }
 
+function runningUnderRosetta() {
+  try {
+    return execFileSync("sysctl", ["-in", "sysctl.proc_translated"], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
 // ── Version Resolution ──────────────────────────────────────────
 
 function parseVersion(args) {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--version" && args[i + 1]) {
+      const ver = args[i + 1];
       args.splice(i, 2);
-      return args[i + 1];
+      return ver;
     }
     if (args[i].startsWith("--version=")) {
       const ver = args[i].split("=")[1];
@@ -110,6 +138,29 @@ function getCacheDir(version) {
 
 // ── Download ────────────────────────────────────────────────────
 
+function fetchText(url) {
+  return followRedirects(url).then((res) => new Promise((resolve, reject) => {
+    let data = "";
+    res.setEncoding("utf8");
+    res.on("data", (c) => { data += c; if (data.length > 1 << 20) reject(new Error("response too large")); });
+    res.on("end", () => resolve(data));
+    res.on("error", reject);
+  }));
+}
+
+// Returns the path of the first regular file called `name` below `dir`.
+function findFile(dir, name) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isFile() && entry.name === name) return path;
+    if (entry.isDirectory()) {
+      const found = findFile(path, name);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function followRedirects(url) {
   return new Promise((resolve, reject) => {
     httpsGet(url, { headers: { "User-Agent": "switchailocal-npx" } }, (res) => {
@@ -159,15 +210,34 @@ async function downloadAndExtract(version, plat, destDir) {
       res.on("error", reject);
     });
 
-    // Extract — only the binary from the archive
-    if (plat.ext === ".tar.gz") {
-      execFileSync("tar", ["xzf", tmpFile, "-C", destDir, "--include", plat.bin], { stdio: "pipe" });
-    } else {
-      // Windows: use PowerShell to extract
-      execFileSync("powershell", [
-        "-Command",
-        `Expand-Archive -Path '${tmpFile}' -DestinationPath '${destDir}' -Force`,
-      ], { stdio: "pipe" });
+    // Verify the archive against the release's checksums.txt.
+    const sums = await fetchText(`https://github.com/${REPO}/releases/download/${version}/checksums.txt`);
+    const line = sums.split("\n").find((l) => l.trim().endsWith(`  ${archiveName}`) || l.trim().endsWith(` ${archiveName}`));
+    const expected = line && line.trim().split(/\s+/)[0];
+    const actual = createHash("sha256").update(readFileSync(tmpFile)).digest("hex");
+    if (!expected || expected.toLowerCase() !== actual) {
+      throw new Error(`checksum mismatch for ${archiveName}`);
+    }
+
+    // Extract into a scratch directory and take the binary from wherever the
+    // archive puts it (releases since 0.6 nest it in a versioned folder).
+    const scratch = mkdtempSync(join(destDir, "extract-"));
+    try {
+      if (plat.ext === ".tar.gz") {
+        execFileSync("tar", ["xzf", tmpFile, "-C", scratch], { stdio: "pipe" });
+      } else {
+        execFileSync("powershell", [
+          "-NoProfile", "-Command",
+          `Expand-Archive -LiteralPath '${tmpFile}' -DestinationPath '${scratch}' -Force`,
+        ], { stdio: "pipe" });
+      }
+      const found = findFile(scratch, plat.bin);
+      if (!found || !statSync(found).isFile()) {
+        throw new Error(`${plat.bin} not found in ${archiveName}`);
+      }
+      renameSync(found, join(destDir, plat.bin));
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
 
     chmodSync(join(destDir, plat.bin), 0o755);
@@ -189,6 +259,9 @@ function ensureConfig() {
 # See: https://github.com/traylinx/switchAILocal#configuration
 
 port: ${DEFAULT_PORT}
+
+# Where OAuth tokens and provider credentials are stored.
+auth-dir: "~/.switchailocal"
 
 # Uncomment and add your API keys:
 # gemini-api-key:
@@ -250,6 +323,13 @@ async function main() {
     execFileSync(binaryPath, ["--version"], { stdio: "pipe", timeout: 5000 });
   } catch {
     // Binary might not support --version flag, that's ok
+  }
+
+  // Use ~/.switchailocal/config.yaml (created on first run) unless the caller
+  // passes -config or the current directory has its own config.yaml.
+  const hasConfigFlag = args.some((a) => /^--?config(=|$)/.test(a));
+  if (!hasConfigFlag && !existsSync(join(process.cwd(), "config.yaml"))) {
+    args.unshift("-config", ensureConfig());
   }
 
   // Run
