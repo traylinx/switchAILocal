@@ -26,8 +26,8 @@ import (
 // It provides three routing tiers: Reflex (fast rules), Semantic (intent matching),
 // and Cognitive (LLM classification), with learned preferences from memory.
 type CortexRouter struct {
-	config        *config.IntelligenceConfig
-	memoryManager memory.MemoryManager
+	config         *config.IntelligenceConfig
+	memoryManager  memory.MemoryManager
 	learningEngine *learning.LearningEngine
 
 	// Services from intelligence service
@@ -271,10 +271,10 @@ func (cr *CortexRouter) tryMemoryRouting(ctx context.Context, request *RoutingRe
 			decision.UsedMemory = true
 			decision.MemorySource = "cache"
 			decision.Reason = "Found cached routing decision"
-			
+
 			// Apply learning-based confidence adjustment
 			decision.Confidence = cr.adjustConfidenceWithMemory(decision)
-			
+
 			return decision
 		}
 	}
@@ -292,10 +292,10 @@ func (cr *CortexRouter) tryMemoryRouting(ctx context.Context, request *RoutingRe
 				decision.UsedMemory = true
 				decision.MemorySource = "preferences"
 				decision.Reason = fmt.Sprintf("Using learned preference for intent '%s'", intent)
-				
+
 				// Apply learning-based confidence adjustment
 				decision.Confidence = cr.adjustConfidenceWithMemory(decision)
-				
+
 				return decision
 			}
 		}
@@ -316,12 +316,12 @@ func (cr *CortexRouter) tryReflexTier(ctx context.Context, request *RoutingReque
 		decision.SelectedModel = "ollama:qwen:0.5b" // Route to local model for privacy
 		decision.Confidence = 0.99
 		decision.Reason = "PII detected, routing to local model for privacy"
-		
+
 		// Apply learning-based confidence adjustment
 		if cr.memoryEnabled {
 			decision.Confidence = cr.adjustConfidenceWithMemory(decision)
 		}
-		
+
 		return decision
 	}
 
@@ -334,12 +334,12 @@ func (cr *CortexRouter) tryReflexTier(ctx context.Context, request *RoutingReque
 		decision.SelectedModel = "ollama:qwen:0.5b" // Fast local model for simple queries
 		decision.Confidence = 0.95
 		decision.Reason = "Simple greeting detected"
-		
+
 		// Apply learning-based confidence adjustment
 		if cr.memoryEnabled {
 			decision.Confidence = cr.adjustConfidenceWithMemory(decision)
 		}
-		
+
 		return decision
 	}
 
@@ -352,12 +352,12 @@ func (cr *CortexRouter) tryReflexTier(ctx context.Context, request *RoutingReque
 		decision.SelectedModel = "claudecli:claude-sonnet-4" // Best for coding
 		decision.Confidence = 0.90
 		decision.Reason = "Code patterns detected"
-		
+
 		// Apply learning-based confidence adjustment
 		if cr.memoryEnabled {
 			decision.Confidence = cr.adjustConfidenceWithMemory(decision)
 		}
-		
+
 		return decision
 	}
 
@@ -370,12 +370,12 @@ func (cr *CortexRouter) tryReflexTier(ctx context.Context, request *RoutingReque
 		decision.SelectedModel = "geminicli:gemini-2.5-pro" // Good for reasoning
 		decision.Confidence = 0.85
 		decision.Reason = "Mathematical reasoning patterns detected"
-		
+
 		// Apply learning-based confidence adjustment
 		if cr.memoryEnabled {
 			decision.Confidence = cr.adjustConfidenceWithMemory(decision)
 		}
-		
+
 		return decision
 	}
 
@@ -680,9 +680,9 @@ func (cr *CortexRouter) isTimePatternMatch(decision *RoutingDecision, prefs *mem
 	// This is a simplified implementation - in a full implementation,
 	// we would check the time patterns from the learning system
 	// For now, we'll use a basic heuristic based on time of day
-	
+
 	hour := decision.Timestamp.Hour()
-	
+
 	// Simple time-based patterns (could be enhanced with actual learned patterns)
 	switch decision.Intent {
 	case "coding":

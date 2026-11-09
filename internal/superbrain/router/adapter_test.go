@@ -402,7 +402,6 @@ func TestIsCLIProvider(t *testing.T) {
 	}
 }
 
-
 func TestFallbackRouter_GetFallbackWithAdaptation(t *testing.T) {
 	cfg := &config.FallbackConfig{
 		Enabled:        true,

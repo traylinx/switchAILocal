@@ -45,7 +45,7 @@ type claudeToResponsesState struct {
 var dataTag = []byte("data:")
 
 func emitEvent(event string, payload string) string {
-	return fmt.Sprintf("event: %s\ndata: %s", event, payload)
+	return "event: " + event + "\ndata: " + payload
 }
 
 // ConvertClaudeResponseToOpenAIResponses converts Claude SSE to OpenAI Responses SSE events.

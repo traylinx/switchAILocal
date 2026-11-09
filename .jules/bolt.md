@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## 2026-11-09 - Reuse Buffers in amp.ResponseRewriter
+**Learning:** We dynamically allocated a `bytes.Buffer` for every model name replacement rewritten request response. Blindly allocating can cause performance bottlenecks.
+**Action:** Use a `sync.Pool` to recycle memory usage in high volume hot-path API responses that use memory buffers.

@@ -58,37 +58,37 @@ func (a *Analyzer) Analyze(model *DiscoveredModel) *ModelCapability {
 	}
 
 	capability := &ModelCapability{}
-	
+
 	// Normalize model name for pattern matching
 	modelName := strings.ToLower(model.ID)
 	displayName := strings.ToLower(model.DisplayName)
-	
+
 	// Detect coding capability
 	capability.SupportsCoding = a.detectCoding(modelName, displayName)
-	
+
 	// Detect reasoning capability
 	capability.SupportsReasoning = a.detectReasoning(modelName, displayName)
-	
+
 	// Detect vision capability
 	capability.SupportsVision = a.detectVision(modelName, displayName)
-	
+
 	// Detect if model is local
 	capability.IsLocal = a.detectLocal(model.Provider)
-	
+
 	// Infer latency tier based on model characteristics
 	capability.EstimatedLatency = a.inferLatency(modelName, displayName)
-	
+
 	// Infer cost tier
 	capability.CostTier = a.inferCostTier(modelName, displayName, capability.IsLocal)
-	
+
 	// Context window inference would require metadata from providers
 	// For now, we set reasonable defaults based on model patterns
 	capability.ContextWindow = a.inferContextWindow(modelName, displayName)
-	
+
 	log.Debugf("Analyzed model %s: coding=%v, reasoning=%v, vision=%v, local=%v",
 		model.ID, capability.SupportsCoding, capability.SupportsReasoning,
 		capability.SupportsVision, capability.IsLocal)
-	
+
 	return capability
 }
 
@@ -120,13 +120,13 @@ func (a *Analyzer) detectCoding(modelName, displayName string) bool {
 		"starcoder",
 		"codellama",
 	}
-	
+
 	for _, pattern := range codingPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -143,13 +143,13 @@ func (a *Analyzer) detectReasoning(modelName, displayName string) bool {
 		"reasoning",
 		"think",
 	}
-	
+
 	for _, pattern := range reasoningPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -167,13 +167,13 @@ func (a *Analyzer) detectVision(modelName, displayName string) bool {
 		"llava",
 		"multimodal",
 	}
-	
+
 	for _, pattern := range visionPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -185,14 +185,14 @@ func (a *Analyzer) detectLocal(provider string) bool {
 		"localai",
 		"llamacpp",
 	}
-	
+
 	providerLower := strings.ToLower(provider)
 	for _, local := range localProviders {
 		if strings.Contains(providerLower, local) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -209,13 +209,13 @@ func (a *Analyzer) inferLatency(modelName, displayName string) string {
 		"1b",
 		"3b",
 	}
-	
+
 	for _, pattern := range fastPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return "fast"
 		}
 	}
-	
+
 	// Slow models (reasoning, large)
 	slowPatterns := []string{
 		"reasoner",
@@ -226,13 +226,13 @@ func (a *Analyzer) inferLatency(modelName, displayName string) string {
 		"70b",
 		"405b",
 	}
-	
+
 	for _, pattern := range slowPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return "slow"
 		}
 	}
-	
+
 	// Default to standard
 	return "standard"
 }
@@ -243,7 +243,7 @@ func (a *Analyzer) inferCostTier(modelName, displayName string, isLocal bool) st
 	if isLocal {
 		return "free"
 	}
-	
+
 	// Cheap models (check before expensive patterns)
 	cheapPatterns := []string{
 		"mini",
@@ -251,13 +251,13 @@ func (a *Analyzer) inferCostTier(modelName, displayName string, isLocal bool) st
 		"flash",
 		"3.5",
 	}
-	
+
 	for _, pattern := range cheapPatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return "low"
 		}
 	}
-	
+
 	// Expensive models
 	expensivePatterns := []string{
 		"opus",
@@ -265,13 +265,13 @@ func (a *Analyzer) inferCostTier(modelName, displayName string, isLocal bool) st
 		"o3",
 		"claude-4",
 	}
-	
+
 	for _, pattern := range expensivePatterns {
 		if strings.Contains(modelName, pattern) || strings.Contains(displayName, pattern) {
 			return "high"
 		}
 	}
-	
+
 	// Default to medium
 	return "medium"
 }
@@ -286,23 +286,23 @@ func (a *Analyzer) inferContextWindow(modelName, displayName string) int {
 	if strings.Contains(modelName, "200k") || strings.Contains(displayName, "200k") {
 		return 200000
 	}
-	
+
 	// Gemini models (check early since "gemini" contains "mini")
 	if strings.Contains(modelName, "gemini") {
 		return 128000
 	}
-	
+
 	// Check for small model indicators (more specific patterns)
 	// These need to be checked before broader patterns like "gpt-4" or "claude"
 	if strings.Contains(modelName, "-mini") || strings.Contains(modelName, "-haiku") {
 		return 8000
 	}
-	
+
 	// GPT-4 and Claude models typically have large contexts
 	if strings.Contains(modelName, "gpt-4") || strings.Contains(modelName, "claude") {
 		return 128000
 	}
-	
+
 	// Default context window
 	return 32000
 }

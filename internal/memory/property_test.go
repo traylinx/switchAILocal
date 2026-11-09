@@ -415,12 +415,12 @@ func genOutcomeInfo() gopter.Gen {
 	).Map(func(values []interface{}) OutcomeInfo {
 		success := values[0].(bool)
 		errorMsg := values[2].(string)
-		
+
 		// If success is true, clear error message
 		if success {
 			errorMsg = ""
 		}
-		
+
 		return OutcomeInfo{
 			Success:        success,
 			ResponseTimeMs: values[1].(int64),

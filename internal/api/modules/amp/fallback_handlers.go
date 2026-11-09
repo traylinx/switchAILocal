@@ -251,6 +251,7 @@ func (fh *FallbackHandler) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc 
 			log.Debugf("amp model mapping: request %s -> %s", normalizedModel, resolvedModel)
 			logAmpRouting(RouteTypeModelMapping, modelName, resolvedModel, providerName, requestPath)
 			rewriter := NewResponseRewriter(c.Writer, modelName)
+			defer rewriter.Release()
 			c.Writer = rewriter
 			// Filter Anthropic-Beta header only for local handling paths
 			filterAntropicBetaHeader(c)
