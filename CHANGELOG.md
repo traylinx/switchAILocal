@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.3] - 2026-11-09
+
+- Fix the npx launcher for 0.6 release archives: find the nested binary, verify it against `checksums.txt`, explain unpublished platforms (Intel Macs build from source), write a default config and honour `--version`.
+- Stop logging request bodies and multimodal payloads at Info level; Debug logs only the URL and size.
+- Build with Go 1.26.10 and patched brotli 1.2.7 and klauspost/compress 1.20.2 (GO-2026-6809, GO-2026-6888, GO-2026-6865). govulncheck reports no reachable vulnerabilities.
+- Detect the Moonshot Kimi Code CLI as `kimicli`; `kimicli:<model>` is forwarded as `--model`.
+- Rewrite the user manual against the current code.
+
 ## [0.6.2] - 2026-10-17
 
 - Fix Gemini OpenAI-compatible streaming tool finish reasons for strict agent SDKs. Preserve truncation, safety, other providers and tool signatures.
