@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-11-09 - Fix SSRF and Insecure pprof exposure
+**Vulnerability:** Found a Server-Side Request Forgery (SSRF) vulnerability in `cli_executor.go` and an insecurely exposed pprof endpoint in `profiler.go`.
+**Learning:** Raw string concatenation for URL reconstruction can be bypassed with opaque URLs in Go. Registering pprof handlers on `http.DefaultServeMux` blindly exposes them on any default HTTP server started without a specific multiplexer.
+**Prevention:** Explicitly use `url.URL` struct literals for reconstructing URLs after validation to prevent SSRF bypasses. Use a dedicated `http.ServeMux` for exposing administrative endpoints like pprof to avoid global scope pollution.
