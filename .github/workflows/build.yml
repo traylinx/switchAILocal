@@ -70,7 +70,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build candidate (never promotes a channel)
         id: image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
@@ -106,7 +106,7 @@ jobs:
           record = dict(digest=os.environ['DIGEST'], source=os.environ['SHA'], version=os.environ['VERSION'], arch=os.environ['ARCH'])
           Path('native-metadata/' + record['arch'] + '.json').write_text(json.dumps(record))
           PYCODE
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'workflow_dispatch' || inputs.push
         with:
           name: native-${{ matrix.arch }}
@@ -130,7 +130,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: native-*
           path: native-metadata
