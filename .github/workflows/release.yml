@@ -33,7 +33,7 @@ jobs:
             runner: ubuntu-24.04-arm
           - goos: darwin
             goarch: arm64
-            runner: macos-14
+            runner: macos-15
           # darwin/amd64 intentionally omitted.
           # GitHub's macos-13 Intel runners are heavily queue-limited — v0.1.0
           # and v0.2.0 both had the darwin/amd64 matrix entry stuck "queued" for

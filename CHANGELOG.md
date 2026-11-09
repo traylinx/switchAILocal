@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.6.3] - 2026-11-09
+## [0.6.4] - 2026-11-09
+
+Same code as 0.6.3. The 0.6.3 tag has no release: its darwin/arm64 build was refused because GitHub retired the macOS 14 runner image. Releases now build on macOS 15.
+
+## [0.6.3] - 2026-11-09 (tag only, no release)
 
 - Fix the npx launcher for 0.6 release archives: find the nested binary, verify it against `checksums.txt`, explain unpublished platforms (Intel Macs build from source), write a default config and honour `--version`.
 - Stop logging request bodies and multimodal payloads at Info level; Debug logs only the URL and size.
