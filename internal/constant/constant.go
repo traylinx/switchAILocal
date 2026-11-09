@@ -38,6 +38,9 @@ const (
 	// OpenCode represents the OpenCode provider identifier.
 	OpenCode = "opencode"
 
+	// KimiCLI represents the Moonshot Kimi Code CLI provider identifier.
+	KimiCLI = "kimicli"
+
 	// MaxStreamingScannerBuffer is the maximum buffer size for the streaming scanner (1MB).
 	MaxStreamingScannerBuffer = 1 * 1024 * 1024
 )

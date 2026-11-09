@@ -100,6 +100,17 @@ var KnownTools = []ToolDefinition{
 		AutoApproveFlag:     "--full-auto",
 		YoloFlag:            "--full-auto",
 	},
+	{
+		// Moonshot Kimi Code CLI: `kimi -p <prompt>` runs one prompt and prints
+		// the answer. --auto (kimi's never-ask mode) is added only when the
+		// client sets auto_approve or yolo in extra_body.cli.
+		Name:            "Moonshot Kimi CLI",
+		BinaryName:      "kimi",
+		ProviderKey:     constant.KimiCLI,
+		DefaultArgs:     []string{"-p"},
+		AutoApproveFlag: "--auto",
+		YoloFlag:        "--auto",
+	},
 }
 
 // DiscoverInstalledTools scans the system PATH for known CLI tools.
