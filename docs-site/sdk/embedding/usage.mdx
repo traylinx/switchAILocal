@@ -1,390 +1,215 @@
 ---
-title: Using the Embedding SDK
-description: Generate embeddings and compute semantic similarity in Go
+title: Using Embeddings
+description: Generate embeddings through /v1/embeddings, and the internal engine API for contributors
 icon: code
 ---
 
-## Installation
+## Overview
 
-The embedding SDK is part of the main switchAILocal package:
+There are two different things called "embeddings" in switchAILocal:
+
+| | `POST /v1/embeddings` | Local embedding engine |
+|---|---|---|
+| Who uses it | Your application | switchAILocal itself (semantic tier, semantic cache, skill matching) |
+| Backend | A provider: Ollama, an `openai-compatibility` API, a virtual model | ONNX MiniLM on your machine |
+| Dimensions | Whatever the provider's model returns | 384 |
+| How to call | OpenAI-compatible HTTP API | Go API inside the switchAILocal module only |
+
+For application code (RAG, search, clustering) use `/v1/embeddings`.
+
+## `/v1/embeddings`
+
+The endpoint follows the OpenAI embeddings API and is routed like a chat request: the `model` field picks the provider.
+
+### Minimal setup with Ollama
+
+```yaml config.yaml
+api-keys:
+  - "sk-test-123"
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+```
 
 ```bash
-go get github.com/traylinx/switchAILocal/internal/intelligence/embedding
+ollama pull nomic-embed-text
 ```
 
-## Basic Usage
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/embeddings \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama:nomic-embed-text", "input": "The quick brown fox"}'
+```
 
-### Initialize the Engine
+```python Python
+from openai import OpenAI
 
-```go
-package main
-
-import (
-    "log"
-    
-    "github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
+resp = client.embeddings.create(
+    model="ollama:nomic-embed-text",
+    input=["The quick brown fox", "A fast auburn fox"],
 )
-
-func main() {
-    // Create engine configuration
-    cfg := embedding.Config{
-        ModelPath:         "~/.switchailocal/models/model.onnx",
-        VocabPath:         "~/.switchailocal/models/vocab.txt",
-        SharedLibraryPath: "",  // Auto-detected
-    }
-
-    // Create the engine
-    engine, err := embedding.NewEngine(cfg)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Initialize (loads the model)
-    if err := engine.Initialize(""); err != nil {
-        log.Fatal(err)
-    }
-    defer engine.Shutdown()
-
-    log.Println("Embedding engine ready")
-}
+print(len(resp.data), len(resp.data[0].embedding))
 ```
 
-### Generate Single Embedding
+```javascript Node.js
+import OpenAI from 'openai';
 
-```go
-text := "What is machine learning?"
+const client = new OpenAI({ baseURL: 'http://localhost:18080/v1', apiKey: 'sk-test-123' });
+const resp = await client.embeddings.create({ model: 'ollama:nomic-embed-text', input: 'The quick brown fox' });
+console.log(resp.data[0].embedding.length);
+```
+</CodeGroup>
 
-vector, err := engine.Embed(text)
-if err != nil {
-    log.Fatal(err)
-}
+For Ollama, switchAILocal forwards the body to Ollama's own OpenAI-compatible `/v1/embeddings` endpoint.
 
-log.Printf("Generated %d-dimensional embedding", len(vector))
-// Output: Generated 384-dimensional embedding
+### Cloud embedding models
+
+Any `openai-compatibility` provider that has an `/embeddings` endpoint works. Give the model an alias:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "mistral"
+    base-url: "https://api.mistral.ai/v1"
+    api-key-entries:
+      - api-key: "YOUR_MISTRAL_KEY"
+    models:
+      - name: "mistral-embed"
+        alias: "embed-default"
 ```
 
-### Generate Batch Embeddings
-
-```go
-texts := []string{
-    "What is machine learning?",
-    "Explain neural networks",
-    "How does deep learning work?",
-}
-
-vectors, err := engine.BatchEmbed(texts)
-if err != nil {
-    log.Fatal(err)
-}
-
-log.Printf("Generated %d embeddings", len(vectors))
-// Output: Generated 3 embeddings
+```bash
+curl http://localhost:18080/v1/embeddings \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "embed-default", "input": "hello"}'
 ```
 
-### Compute Similarity
+### Default embedding model
 
-```go
-// Generate embeddings for two texts
-vec1, _ := engine.Embed("What is machine learning?")
-vec2, _ := engine.Embed("Explain artificial intelligence")
-vec3, _ := engine.Embed("How to bake a cake?")
+If a request has no `model`, switchAILocal uses `intelligence.matrix.embedding`. Without it, the request fails with `400 model not specified and no 'embedding' configured in intelligence.matrix`.
 
-// Compute cosine similarity
-sim1 := engine.CosineSimilarity(vec1, vec2)
-sim2 := engine.CosineSimilarity(vec1, vec3)
-
-log.Printf("Similarity (ML vs AI): %.3f", sim1)
-log.Printf("Similarity (ML vs Baking): %.3f", sim2)
-
-// Output:
-// Similarity (ML vs AI): 0.876
-// Similarity (ML vs Baking): 0.123
+```yaml config.yaml
+intelligence:
+  matrix:
+    embedding: "embed-default"
 ```
 
-## Complete Example: Semantic Search
+### Virtual models for embeddings
 
-```go
-package main
+A [virtual model](/advanced/virtual-models) can serve embeddings if its members declare the operation. Members without `embeddings` (or `embedding`) in `capabilities.operations` are skipped for this endpoint.
 
-import (
-    "fmt"
-    "log"
-    "sort"
-
-    "github.com/traylinx/switchAILocal/internal/intelligence/embedding"
-)
-
-type Document struct {
-    ID        string
-    Text      string
-    Embedding []float32
-}
-
-type SearchResult struct {
-    Document   *Document
-    Similarity float64
-}
-
-func main() {
-    // Initialize embedding engine
-    cfg := embedding.Config{
-        ModelPath: "~/.switchailocal/models/model.onnx",
-        VocabPath: "~/.switchailocal/models/vocab.txt",
-    }
-    engine, err := embedding.NewEngine(cfg)
-    if err != nil {
-        log.Fatal(err)
-    }
-    if err := engine.Initialize(""); err != nil {
-        log.Fatal(err)
-    }
-    defer engine.Shutdown()
-
-    // Create document corpus
-    documents := []*Document{
-        {ID: "doc1", Text: "Python is a programming language"},
-        {ID: "doc2", Text: "Machine learning uses neural networks"},
-        {ID: "doc3", Text: "The weather is sunny today"},
-        {ID: "doc4", Text: "Deep learning is a subset of AI"},
-    }
-
-    // Generate embeddings for all documents
-    for _, doc := range documents {
-        vec, err := engine.Embed(doc.Text)
-        if err != nil {
-            log.Fatal(err)
-        }
-        doc.Embedding = vec
-    }
-
-    // Perform semantic search
-    query := "artificial intelligence and neural networks"
-    queryVec, err := engine.Embed(query)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Compute similarities
-    results := make([]SearchResult, 0, len(documents))
-    for _, doc := range documents {
-        sim := engine.CosineSimilarity(queryVec, doc.Embedding)
-        results = append(results, SearchResult{
-            Document:   doc,
-            Similarity: sim,
-        })
-    }
-
-    // Sort by similarity (descending)
-    sort.Slice(results, func(i, j int) bool {
-        return results[i].Similarity > results[j].Similarity
-    })
-
-    // Display top results
-    fmt.Printf("Search results for: %s\n\n", query)
-    for i, result := range results {
-        fmt.Printf("%d. [%.3f] %s\n",
-            i+1,
-            result.Similarity,
-            result.Document.Text,
-        )
-    }
-}
+```yaml config.yaml
+virtual-models:
+  ail-embed:
+    expose: true
+    members:
+      - id: embed-local
+        provider: ollama
+        model: nomic-embed-text
+        weight: 1
+        capabilities:
+          operations: [embeddings]
+          input: [text]
+          output: [text]
 ```
-
-**Output:**
-```
-Search results for: artificial intelligence and neural networks
-
-1. [0.876] Machine learning uses neural networks
-2. [0.823] Deep learning is a subset of AI
-3. [0.234] Python is a programming language
-4. [0.098] The weather is sunny today
-```
-
-## API Reference
-
-### Engine Methods
-
-#### `NewEngine(cfg Config) (*Engine, error)`
-
-Creates a new embedding engine instance.
-
-**Parameters:**
-- `cfg`: Configuration with model and vocabulary paths
-
-**Returns:**
-- `*Engine`: The engine instance
-- `error`: Any error during creation
-
----
-
-#### `Initialize(sharedLibPath string) error`
-
-Loads the ONNX model and prepares for inference.
-
-**Parameters:**
-- `sharedLibPath`: Path to ONNX Runtime library (empty for auto-detect)
-
-**Returns:**
-- `error`: Any error during initialization
-
----
-
-#### `Embed(text string) ([]float32, error)`
-
-Generates embedding for a single text.
-
-**Parameters:**
-- `text`: Input text to embed
-
-**Returns:**
-- `[]float32`: 384-dimensional embedding vector
-- `error`: Any error during embedding
-
----
-
-#### `BatchEmbed(texts []string) ([][]float32, error)`
-
-Generates embeddings for multiple texts efficiently.
-
-**Parameters:**
-- `texts`: Slice of input texts
-
-**Returns:**
-- `[][]float32`: Slice of embedding vectors
-- `error`: Any error during embedding
-
----
-
-#### `CosineSimilarity(a, b []float32) float64`
-
-Computes cosine similarity between two vectors.
-
-**Parameters:**
-- `a`: First embedding vector
-- `b`: Second embedding vector
-
-**Returns:**
-- `float64`: Similarity score (0.0 to 1.0)
-
----
-
-#### `IsEnabled() bool`
-
-Checks if the engine is initialized and ready.
-
-**Returns:**
-- `bool`: true if ready for inference
-
----
-
-#### `GetDimension() int`
-
-Returns the embedding output dimension.
-
-**Returns:**
-- `int`: Dimension (384 for MiniLM)
-
----
-
-#### `Shutdown() error`
-
-Gracefully shuts down the engine and releases resources.
-
-**Returns:**
-- `error`: Any error during shutdown
-
-## Configuration
-
-### Config Struct
-
-```go
-type Config struct {
-    // ModelPath is the path to the ONNX model file
-    ModelPath string
-
-    // VocabPath is the path to the vocabulary file
-    VocabPath string
-
-    // SharedLibraryPath is the path to ONNX Runtime (optional)
-    SharedLibraryPath string
-}
-```
-
-### Default Paths
-
-```go
-cfg := embedding.Config{
-    ModelPath: "~/.switchailocal/models/model.onnx",
-    VocabPath: "~/.switchailocal/models/vocab.txt",
-}
-```
-
-## Constants
-
-```go
-const (
-    // DefaultModelName is the default embedding model
-    DefaultModelName = "all-MiniLM-L6-v2"
-
-    // EmbeddingDimension is the output dimension
-    EmbeddingDimension = 384
-
-    // MaxSequenceLength is the max input tokens
-    MaxSequenceLength = 256
-)
-```
-
-## Error Handling
-
-```go
-vector, err := engine.Embed(text)
-if err != nil {
-    switch {
-    case strings.Contains(err.Error(), "not initialized"):
-        log.Println("Engine not initialized")
-    case strings.Contains(err.Error(), "tokenization failed"):
-        log.Println("Invalid input text")
-    case strings.Contains(err.Error(), "inference failed"):
-        log.Println("Model inference error")
-    default:
-        log.Printf("Unexpected error: %v", err)
-    }
-    return
-}
-```
-
-## Performance Tips
-
-<Tip>
-**Use BatchEmbed for multiple texts** - It's more efficient than calling Embed() multiple times.
-</Tip>
-
-<Tip>
-**Pre-compute embeddings** - Generate and cache embeddings for static content at startup.
-</Tip>
-
-<Tip>
-**Normalize vectors** - The engine automatically L2-normalizes outputs for optimal similarity computation.
-</Tip>
 
 <Warning>
-**Thread Safety** - The engine is thread-safe and can handle concurrent requests, but avoid creating multiple engine instances.
+Different embedding models produce vectors of different sizes and in different spaces. Do not mix members with different models in one pool if you store the vectors; a weighted round-robin pool will alternate between them.
 </Warning>
+
+### Limits and troubleshooting
+
+- Batch size and input length limits are those of the upstream model.
+- `400 unknown provider for model ...`: the model ID is not registered. Check `GET /v1/models` (aliases with `expose: false` are routable but hidden).
+- `422 no_eligible_backend`: a virtual model has no member with the `embeddings` operation.
+- Ollama returns an error for chat-only models: pull an embedding model such as `nomic-embed-text`.
+
+## Engine API (contributors only)
+
+<Note>
+The local engine lives in `github.com/traylinx/switchAILocal/internal/intelligence/embedding`. Go does not allow importing `internal/` packages from another module, so this API is only usable for code inside the switchAILocal repository (for example when contributing a feature). It is documented here for that audience.
+</Note>
+
+### Creating an engine
+
+`NewEngine` does not expand `~`; resolve paths with `ModelLocator`:
+
+```go
+package example
+
+import (
+	"log"
+
+	"github.com/traylinx/switchAILocal/internal/intelligence/embedding"
+)
+
+func newEngine() *embedding.Engine {
+	loc := embedding.NewModelLocator() // BaseDir: ~/.switchailocal/models
+	name := embedding.DefaultModelName // "all-MiniLM-L6-v2"
+	if !loc.ModelExists(name) {
+		log.Fatalf("run scripts/download-embedding-model.sh first")
+	}
+
+	eng, err := embedding.NewEngine(embedding.Config{
+		ModelPath: loc.GetModelPath(name), // <BaseDir>/<name>/model.onnx
+		VocabPath: loc.GetVocabPath(name), // <BaseDir>/<name>/vocab.txt
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := eng.Initialize(loc.GetSharedLibraryPath()); err != nil { // "" = ONNX Runtime default lookup
+		log.Fatal(err)
+	}
+	return eng
+}
+```
+
+Inside a running server, reuse the existing engine instead of loading a second copy: `intelligenceService.GetEmbeddingEngine()` returns it, or `nil` when disabled.
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `NewEngine(cfg Config) (*Engine, error)` | Validates `ModelPath` is set. Does not load anything |
+| `Initialize(sharedLibPath string) error` | Loads ONNX Runtime and the model, builds the tokenizer |
+| `Embed(text string) ([]float32, error)` | One 384-dim, L2-normalised vector |
+| `BatchEmbed(texts []string) ([][]float32, error)` | Runs `Embed` sequentially for each text |
+| `CosineSimilarity(a, b []float32) float64` | Range -1 to 1; returns 0 for empty or mismatched lengths |
+| `IsEnabled() bool` | `true` after a successful `Initialize` |
+| `GetDimension() int` | Always 384 |
+| `Shutdown() error` | Releases the ONNX session |
+
+`Config` has `ModelPath`, `VocabPath` and `SharedLibraryPath`. If `VocabPath` is empty or unreadable, a tiny built-in vocabulary is used, which produces poor embeddings; always ship `vocab.txt`.
+
+Constants: `DefaultModelName = "all-MiniLM-L6-v2"`, `EmbeddingDimension = 384`, `MaxSequenceLength = 256`.
+
+### Errors
+
+| Error text | Cause |
+|------------|-------|
+| `model path is required` | `NewEngine` called with empty `ModelPath` |
+| `model file not found: ...` | `Initialize` could not stat the model file |
+| `failed to initialize ONNX runtime` | Shared library missing or wrong architecture |
+| `embedding engine not initialized` | `Embed` before `Initialize`, or after `Shutdown` |
+| `tokenization failed` / `inference failed` | Input could not be tokenised, or the ONNX graph has unexpected inputs/outputs |
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Custom Providers" icon="plug" href="/sdk/embedding/custom-providers">
-    Integrate custom embedding models
+  <Card title="Local engine overview" icon="brain" href="/sdk/embedding/overview">
+    Setup and configuration
   </Card>
-  <Card title="Semantic Tier" icon="brain" href="/features/intelligent-routing">
-    Use embeddings for intelligent routing
+  <Card title="Custom embedding models" icon="plug" href="/sdk/embedding/custom-providers">
+    Replace the local model
   </Card>
-  <Card title="Overview" icon="book" href="/sdk/embedding/overview">
-    Learn about embedding fundamentals
+  <Card title="Virtual models" icon="layer-group" href="/advanced/virtual-models">
+    Pools and capabilities
   </Card>
-  <Card title="Go SDK" icon="golang" href="/sdk/go">
-    Embed switchAILocal in Go apps
+  <Card title="Python" icon="python" href="/sdk/python">
+    Client usage
   </Card>
 </CardGroup>

@@ -1,137 +1,116 @@
 ---
 title: Cortex Router
-description: Intelligent request routing with multi-tier classification and semantic matching
+description: Content-based routing for model "auto" and "cortex" through the cortex-router Lua plugin and the intelligence block
 icon: brain
 ---
 
-Cortex Router transforms switchAILocal from a static router into an intelligent orchestrator that automatically selects the optimal model for each request using multi-tier classification and semantic matching.
+Cortex Router picks a model for each request by looking at the request content. It is implemented as a bundled Lua plugin (`plugins/cortex-router`) plus optional Go services configured under `intelligence:` (embeddings, semantic intent matching, a semantic cache, skills, feedback).
 
-## Overview
+<Note>
+switchAILocal has two independent ways to resolve `model: "auto"`:
 
-Cortex Router uses a **four-tier routing architecture** to match requests with the best available model:
+- **Cortex Router** (this page): the `cortex-router` Lua plugin. It runs first, so when the plugin is loaded it handles `auto` and `cortex`.
+- **Auto-routing engine** (`auto-routing:`): a Go scorer that weighs availability, quota, latency and success rate. It handles `auto` and `auto:<intent>` when the Lua plugin is not loaded or doesn't claim the request. See [Auto-Routing Setup](/guides/auto-routing-setup) and [Routing](/concepts/routing).
+
+Use one or the other for `auto`. If you load the plugin, the auto-routing engine never sees `model: "auto"`.
+</Note>
+
+## When to use it
+
+- You want one model name (`auto` or `cortex`) and you want the gateway to send code to a coding model, images to a vision model, and PII to a local model.
+- You want SKILL.md files injected as system prompts when a request matches a domain.
+- You want the image, speech, transcription, embedding and music endpoints to use a default model when the client omits `model`. This uses `intelligence.matrix` only and doesn't need the plugin.
+
+## How a request is routed
+
+The plugin's `on_request` hook only acts on requests whose `model` is exactly `auto` or `cortex` and that have no explicit provider prefix. Everything else passes through untouched.
 
 <Steps>
-  <Step title="Reflex Tier">
-    Pattern matching for instant routing (< 1ms)
-    - PII detection → secure models
-    - Code blocks → coding models
-    - Image URLs → vision models
+  <Step title="matrix.auto shortcut">
+    If `intelligence.matrix.auto` is set, the request goes straight to that model. No tiers run.
   </Step>
-  <Step title="Semantic Tier">
-    Embedding-based intent matching (< 20ms)
-    - Uses local embedding models
-    - Bypasses LLM for high-confidence matches
-    - Matches against 21 pre-built skills
+  <Step title="Image-generation payload">
+    A body that has `"prompt"` but no `"messages"` array goes to the `image_gen` slot.
   </Step>
-  <Step title="Cognitive Tier">
-    LLM-powered classification (200-500ms)
-    - Uses lightweight router model
-    - Returns confidence scores
-    - Falls back to semantic verification
+  <Step title="Semantic cache (optional)">
+    If the semantic cache is available, a similar earlier query reuses the cached decision.
   </Step>
-  <Step title="Cascade Tier">
-    Quality-based model escalation
-    - Detects incomplete responses
-    - Automatically retries with stronger models
-    - Preserves context across attempts
+  <Step title="Reflex rules">
+    Pattern checks, in this order:
+    - `image_url` or `"type": "image"` content goes to `vision`
+    - an email address in the prompt goes to `secure`
+    - a code fence, `def name`, `function name(` or `class Name` goes to `coding`
+    - a prompt longer than 4000 characters goes to `long_ctx`
+  </Step>
+  <Step title="Semantic tier (optional)">
+    With the embedding engine and semantic tier enabled, the prompt is matched against built-in intents (coding, reasoning, creative, fast, secure, vision, long_context, image_generation, transcription, speech, research, chat). A match at 0.85 or higher is routed directly. If a skill also matches at 0.80 or higher, its SKILL.md content is prepended as a system message.
+  </Step>
+  <Step title="Cognitive tier">
+    The prompt is sent to `intelligence.router-model` with a fixed classification prompt. The model must return JSON with `intent`, `complexity`, `privacy` and `confidence`. The reply is parsed by the confidence scorer, so this tier needs `intelligence.enabled: true` **and** `intelligence.confidence.enabled: true`. Without them, every request that reaches this tier goes to `fast`. Confidence below 0.60 escalates to `reasoning`. If the semantic tier produced a different intent with confidence above 0.60, the request also escalates to `reasoning`.
+  </Step>
+  <Step title="Intent to slot">
+    `coding` → `coding`, `image_generation` → `image_gen`, `audio_transcription` → `transcription`, `audio_speech` → `speech`, `reasoning` with `complex` → `reasoning`, `creative` → `creative`, `research` → `research`. Anything else goes to `fast`.
   </Step>
 </Steps>
 
-## Quick Start
+A slot resolves to a model in this order:
 
-### Basic Configuration
+1. The dynamic matrix (`intelligence.auto-assign.enabled` plus discovery): the slot's primary model, then its fallbacks, if they are available.
+2. `intelligence.matrix.<slot>`.
+3. Built-in placeholders (`switchai-chat`, `switchai-reasoner`, `switchai-fast`). These only exist if you configure them, so always set the slots you use.
 
-Add the `intelligence` section to your `config.yaml`:
+If the chosen value has the form `provider:model`, the plugin splits it and pins that provider. Values without a colon, such as a [virtual model](/concepts/routing) like `ail-compound` or a configured alias, go through normal model resolution.
 
-```yaml config.yaml
-intelligence:
-  enabled: true
-  
-  # Core routing models
-  router-model: "ollama:qwen:0.5b"
-  router-fallback: "openai:gpt-4o-mini"
-  
-  # Intent-to-model mapping
-  matrix:
-    coding: "switchai-chat"
-    reasoning: "switchai-reasoner"
-    creative: "switchai-chat"
-    fast: "switchai-fast"
-    secure: "ollama:llama3.2"  # Local for privacy
-    vision: "switchai-chat"
-```
+## Minimal working config
 
-### Enable Phase 2 Features
+<Steps>
+  <Step title="Load the plugin">
+    ```yaml config.yaml
+    plugin:
+      enabled: true
+      plugin-dir: "./plugins"      # required; relative to the server's working directory
+      enabled-plugins:
+        - "cortex-router"
+    ```
+    `plugin-dir` has no default. If it is empty, no plugin is loaded, even when `enabled-plugins` lists one.
+  </Step>
+  <Step title="Define the matrix">
+    ```yaml config.yaml
+    intelligence:
+      enabled: true
+      router-model: "ollama:qwen:0.5b"     # classifier for the cognitive tier
+      router-fallback: "openai:gpt-4o-mini"
+      confidence:
+        enabled: true                      # required to parse the classifier's reply
+      matrix:
+        coding: "ollama:qwen2.5-coder:7b"
+        reasoning: "ail-compound"
+        creative: "ail-compound"
+        fast: "ollama:llama3.2"
+        secure: "ollama:llama3.2"          # keep PII local
+        vision: "ollama:llava"
+        long_ctx: "ail-compound"
+        research: "ail-compound"
+        chat: "ollama:llama3.2"
+        # Required by the plugin, even if you never generate media:
+        image_gen: "ail-image"
+        transcription: "ail-transcribe"
+        speech: "ail-speech"
+    ```
+    <Warning>
+    `handler.lua` raises an error each time the hook runs if `image_gen`, `transcription` or `speech` is missing, even when `matrix.auto` is set. The error is only logged at debug level and the plugin then does nothing, so `auto` falls through to the auto-routing engine or fails.
+    </Warning>
+  </Step>
+  <Step title="Restart the server">
+    Look for `loading plugin: Cortex Intelligent Router (cortex-router)` in the startup log.
+  </Step>
+</Steps>
 
-<Accordion title="Advanced Phase 2 Configuration">
-```yaml config.yaml
-intelligence:
-  enabled: true
-  
-  # Automatic model discovery
-  discovery:
-    enabled: true
-    refresh-interval: 3600  # seconds
-    cache-dir: "~/.switchailocal/cache/discovery"
-  
-  # Local embedding for semantic matching
-  embedding:
-    enabled: true
-    model: "all-MiniLM-L6-v2"
-  
-  # Semantic tier routing
-  semantic-tier:
-    enabled: true
-    confidence-threshold: 0.85
-  
-  # Skill-based prompt augmentation
-  skills:
-    enabled: true
-    directory: "plugins/cortex-router/skills"
-  
-  skill-matching:
-    enabled: true
-    confidence-threshold: 0.80
-  
-  # Semantic caching
-  semantic-cache:
-    enabled: true
-    similarity-threshold: 0.95
-    max-size: 10000
-  
-  # Confidence scoring
-  confidence:
-    enabled: true
-  
-  # Cross-verification
-  verification:
-    enabled: true
-    confidence-threshold-low: 0.60
-    confidence-threshold-high: 0.90
-  
-  # Automatic quality-based cascading
-  cascade:
-    enabled: true
-    quality-threshold: 0.70
-  
-  # Feedback collection
-  feedback:
-    enabled: true
-    retention-days: 90
-```
-</Accordion>
+<Tip>
+To route every `auto` request to one model without classification, set `intelligence.matrix.auto: "ail-compound"`. This is the cheapest setup: no classifier call and no embeddings. The three required slots (`image_gen`, `transcription`, `speech`) must still be set.
+</Tip>
 
-### Download Embedding Model
-
-Before using semantic features, download the embedding model:
-
-```bash
-./scripts/download-embedding-model.sh
-```
-
-## Usage
-
-Use `model: "auto"` or `model: "cortex"` to enable intelligent routing:
+## Example request
 
 <Tabs>
   <Tab title="cURL">
@@ -141,287 +120,200 @@ Use `model: "auto"` or `model: "cortex"` to enable intelligent routing:
       -H "Authorization: Bearer sk-test-123" \
       -d '{
         "model": "auto",
-        "messages": [{
-          "role": "user",
-          "content": "Write a Python function to parse JSON"
-        }]
+        "messages": [{"role": "user", "content": "Write a Python function that parses JSON"}]
       }'
     ```
   </Tab>
   <Tab title="Python">
     ```python
     from openai import OpenAI
-    
-    client = OpenAI(
-        api_key="sk-test-123",
-        base_url="http://localhost:18080/v1"
+
+    client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
+    resp = client.chat.completions.create(
+        model="cortex",
+        messages=[{"role": "user", "content": "Write a Python function that parses JSON"}],
     )
-    
-    response = client.chat.completions.create(
-        model="auto",  # Intelligent routing
-        messages=[{
-            "role": "user",
-            "content": "Write a Python function to parse JSON"
-        }]
-    )
-    
-    print(response.choices[0].message.content)
-    ```
-  </Tab>
-  <Tab title="Node.js">
-    ```javascript
-    import OpenAI from 'openai';
-    
-    const client = new OpenAI({
-      apiKey: 'sk-test-123',
-      baseURL: 'http://localhost:18080/v1'
-    });
-    
-    const response = await client.chat.completions.create({
-      model: 'auto',  // Intelligent routing
-      messages: [{
-        role: 'user',
-        content: 'Write a Python function to parse JSON'
-      }]
-    });
-    
-    console.log(response.choices[0].message.content);
+    print(resp.choices[0].message.content)
     ```
   </Tab>
 </Tabs>
 
-## Intent Classification
+The routing decision is written to the server log with the `[LUA]` prefix, for example `[LUA] Reflex: Code detected -> Coding Model` followed by `[LUA] Final Routing -> Provider: ollama, Model: qwen2.5-coder:7b`.
 
-Cortex Router automatically detects request intent and routes to specialized models:
+## Matrix slots used outside the plugin
 
-| Intent | Description | Example Queries |
-|--------|-------------|----------------|
-| **coding** | Code generation, debugging | "Write a Go function", "Fix this TypeScript error" |
-| **reasoning** | Complex analysis, math | "Analyze these trends", "Solve this logic puzzle" |
-| **creative** | Writing, brainstorming | "Write a blog post", "Generate product names" |
-| **fast** | Quick factual questions | "What is the capital of France?", "Convert 100 USD to EUR" |
-| **secure** | Sensitive data handling | "Analyze this medical record", "Review financial data" |
-| **vision** | Image analysis | "Describe this image", "Extract text from screenshot" |
+The OpenAI-compatible handlers read `intelligence.matrix` directly when a request omits `model`, whether or not the plugin is loaded:
 
-## Dynamic Matrix
+| Endpoint | Slot used when `model` is empty |
+|---|---|
+| `POST /v1/embeddings` | `embedding` |
+| `POST /v1/images/generations`, `/v1/images/edits` | `image_gen` |
+| `POST /v1/audio/speech` | `speech` |
+| `POST /v1/audio/transcriptions`, `/v1/audio/translations` | `transcription` |
+| `POST /v1/music/generations` | `music_generation` |
+| `POST /v1/music/lyrics` | `lyrics_generation`, then `music_generation` |
 
-Phase 2 introduces **automatic model discovery** that builds optimal routing tables based on available models:
+`GET /v1/models` also uses the matrix to label models with a modality (`image_gen` → image, `vision` → vision, `transcription`/`speech`/`audio` → audio, `embedding` → embedding, all others → text). Virtual models take their modalities from their pool members instead.
 
-```yaml config.yaml
-auto-assign:
-  enabled: true
-  prefer-local: true       # Prefer local models for 'secure' slot
-  cost-optimization: true  # Favor cheaper models when quality is similar
-  overrides:
-    secure: "ollama:llama3.2"  # Manual override
-```
+## Optional services
 
-### Capability Scoring
+All of these sit under `intelligence:` and only start when `intelligence.enabled: true`. With the master switch off, the plugin still applies `matrix.auto`, the image-payload check and the reflex rules. Requests that reach the cognitive tier always go to `fast`.
 
-Models are scored and assigned to capability slots:
+### Embedding engine
 
-<Accordion title="Capability Slot Scoring Criteria">
-| Slot | Priority Factors |
-|------|------------------|
-| `coding` | Coding capability, context window size, code quality |
-| `reasoning` | Reasoning capability, accuracy, mathematical ability |
-| `creative` | General capability, context window, creativity score |
-| `fast` | Low latency, low cost, acceptable quality |
-| `secure` | Local models preferred, privacy features |
-| `vision` | Vision capability required, image understanding |
-</Accordion>
-
-## Pre-Built Skills
-
-Cortex Router includes 21 domain-specific skills that augment prompts with expert instructions:
-
-<Tabs>
-  <Tab title="Coding Skills">
-    - **api-designer**: REST API design, OpenAPI specifications
-    - **devops-expert**: CI/CD, infrastructure as code, monitoring
-    - **docker-expert**: Containerization, Dockerfile optimization
-    - **frontend-expert**: React, TailwindCSS, modern frontend
-    - **go-expert**: Go/Golang development for switchAILocal
-    - **k8s-expert**: Kubernetes, Helm, cloud native
-    - **mcp-builder**: Model Context Protocol server development
-    - **python-expert**: Python with async, type hints, pytest
-    - **typescript-expert**: TypeScript type system, advanced patterns
-    - **testing-expert**: Testing methodologies, TDD, Vitest
-  </Tab>
-  <Tab title="Creative Skills">
-    - **blog-optimizer**: Blog writing and SEO optimization
-    - **frontend-design**: Distinctive UI design, avoiding AI aesthetics
-    - **web-artifacts-builder**: React artifacts with shadcn/ui
-  </Tab>
-  <Tab title="Analysis Skills">
-    - **debugging-expert**: Systematic debugging and root cause analysis
-    - **security-expert**: Security auditing, vulnerability analysis
-    - **sql-expert**: SQL queries, optimization, database design
-    - **switchai-architect**: switchAILocal architecture expertise
-  </Tab>
-  <Tab title="Other Skills">
-    - **git-expert**: Git workflows, conventional commits
-    - **vision-expert**: Image analysis, UI-to-code conversion
-    - **webapp-testing**: Playwright web application testing
-    - **skill-creator**: Creating new custom skills
-  </Tab>
-</Tabs>
-
-## Semantic Cache
-
-The semantic cache stores routing decisions based on **embedding similarity**, enabling sub-millisecond routing for repeated queries:
+Needed by the semantic tier, the semantic cache and skill matching.
 
 ```yaml config.yaml
-semantic-cache:
-  enabled: true
-  similarity-threshold: 0.95  # Cache hit if similarity >= this
-  max-size: 10000             # Maximum cache entries
+intelligence:
+  embedding:
+    enabled: true
+    model: "all-MiniLM-L6-v2"   # default
 ```
 
-**Performance:** Cache hits return in < 1ms vs 200-500ms for LLM classification.
+Requirements:
 
-## Quality-Based Cascading
+- Model files at `~/.switchailocal/models/<model>/model.onnx` and `vocab.txt`. Run `./scripts/download-embedding-model.sh` to fetch `all-MiniLM-L6-v2`.
+- The ONNX Runtime shared library. It is looked up through `ONNXRUNTIME_LIB_PATH`, then `/usr/local/lib`, `/opt/homebrew/lib` (macOS) or `/usr/lib`, `/usr/lib/x86_64-linux-gnu` (Linux), then `~/.switchailocal/lib`.
 
-Cortex automatically escalates to stronger models when response quality is insufficient:
+If either is missing, the server logs a warning and runs without embeddings.
+
+### Semantic tier
 
 ```yaml config.yaml
-cascade:
-  enabled: true
-  quality-threshold: 0.70  # Cascade if quality score < this
+intelligence:
+  semantic-tier:
+    enabled: true
+    confidence-threshold: 0.85   # default
 ```
 
-### Cascade Flow
-
-```
-fast → standard → reasoning
-  ↓        ↓          ↓
-✗ Low   ✗ Low    ✓ Success
-```
-
-**Quality signals detected:**
-- Abrupt endings
-- Missing sections
-- Incomplete code blocks
-- Error patterns
-- Very short responses
+The plugin applies its own fixed 0.85 cutoff on top of this value, so lowering `confidence-threshold` below 0.85 only affects the verification step, not direct semantic routing.
 
 <Warning>
-Cascading increases cost and latency. Set `quality-threshold` carefully based on your requirements.
+**Known issue in 0.6.2.** The intents file is resolved as `<parent of intelligence.skills.directory>/internal/intelligence/semantic/intents.yaml`. With the default skills directory that is `plugins/cortex-router/internal/intelligence/semantic/intents.yaml`, which doesn't exist, so the semantic tier logs `Failed to initialize semantic tier` and stays off. To work around it, copy the file into place from the repository root:
+
+```bash
+mkdir -p plugins/cortex-router/internal/intelligence/semantic
+cp internal/intelligence/semantic/intents.yaml plugins/cortex-router/internal/intelligence/semantic/
+```
 </Warning>
 
-## Performance Tuning
+### Skills
 
-<Tabs>
-  <Tab title="Optimize for Speed">
-    ```yaml config.yaml
-    intelligence:
-      semantic-tier:
-        confidence-threshold: 0.80  # Lower = more semantic routing
-      semantic-cache:
-        enabled: true
-        max-size: 50000  # Larger cache
-      cascade:
-        enabled: false   # Disable for speed
-    ```
-  </Tab>
-  <Tab title="Optimize for Quality">
-    ```yaml config.yaml
-    intelligence:
-      semantic-tier:
-        confidence-threshold: 0.90  # Higher = more LLM verification
-      verification:
-        enabled: true
-      cascade:
-        enabled: true
-        quality-threshold: 0.80  # Higher = more cascades
-    ```
-  </Tab>
-  <Tab title="Optimize for Cost">
-    ```yaml config.yaml
-    intelligence:
-      auto-assign:
-        cost-optimization: true
-      cascade:
-        enabled: true  # Start cheap, escalate if needed
-      router-model: "ollama:qwen:0.5b"  # Free local model
-    ```
-  </Tab>
-</Tabs>
+```yaml config.yaml
+intelligence:
+  skills:
+    enabled: true
+    directory: "plugins/cortex-router/skills"   # default
+  skill-matching:
+    enabled: true
+    confidence-threshold: 0.80                  # default
+```
+
+Each skill is a directory containing a `SKILL.md` with YAML front matter (`name`, `description`, `required-capability`) followed by the prompt body. The whole file becomes the injected system prompt. The repository ships 21 skills, including `go-expert`, `python-expert`, `typescript-expert`, `sql-expert`, `security-expert`, `docker-expert`, `k8s-expert`, `debugging-expert`, `testing-expert`, `git-expert` and `vision-expert`.
+
+Skill matching needs the embedding engine and only runs after a semantic-tier match. The plugin applies a fixed 0.80 cutoff on top of `skill-matching.confidence-threshold`.
+
+### Semantic cache
+
+```yaml config.yaml
+intelligence:
+  semantic-cache:
+    enabled: true
+    similarity-threshold: 0.95   # default
+    max-size: 10000              # default; LRU eviction
+```
+
+The cache stores routing decisions, not responses. Entries are written from the `on_response` hook after reflex, semantic and cognitive decisions. That hook only runs for non-streaming requests, so streaming traffic never fills the cache. Entries live in memory only, so a restart clears them.
+
+### Dynamic matrix (auto-assign)
+
+```yaml config.yaml
+intelligence:
+  discovery:
+    enabled: true
+  auto-assign:
+    enabled: true
+    prefer-local: true
+    cost-optimization: false
+    overrides:
+      secure: "ollama:llama3.2"
+```
+
+Discovery runs once at startup with a 5-second budget and writes `~/.switchailocal/discovery/available_models.json`. Auto-assign builds slot assignments from the discovered models. Slots it fills take precedence over `intelligence.matrix`.
+
+### Confidence, verification, cascade, feedback
+
+| Key | Default | Effect |
+|---|---|---|
+| `confidence.enabled` | `false` | Starts the scorer behind `switchai.parse_confidence`. The cognitive tier needs it. |
+| `verification.enabled` | `false` | Starts the verifier behind `switchai.verify_intent`. When it is off, intents are compared as plain strings. |
+| `cascade.enabled`, `cascade.quality-threshold` | `false`, `0.70` | `on_response` scores responses from the cognitive tier and sets `cascade_needed` in the response metadata. **This is advisory: no second request is sent.** |
+| `feedback.enabled`, `feedback.retention-days` | `false`, `90` | Stores one record per non-streaming response in `~/.switchailocal/intelligence/feedback.db`. |
+
+## Defaults and limits
+
+| Setting | Default |
+|---|---|
+| `intelligence.enabled` | `false` |
+| `intelligence.router-model` | `ollama:qwen:0.5b` |
+| `intelligence.router-fallback` | `openai:gpt-4o-mini` |
+| `intelligence.skills.directory` | `plugins/cortex-router/skills` |
+| `intelligence.embedding.model` | `all-MiniLM-L6-v2` (384-dimension vectors) |
+
+- `router-fallback` is only used when `router-model` can't be resolved to a provider. If the router model resolves but the call fails, the request goes to the `fast` slot.
+- The classifier call can't loop back into the plugin. Its model is never `auto`, and Lua hooks are skipped for unprefixed router models.
+- State lives under `SWITCHAI_STATE_DIR` (default `~/.switchailocal`). Set `SWITCHAI_READONLY=1` to stop the intelligence services from creating directories there. See [State Box](/advanced/state-box).
+- Options in older examples that the code doesn't read: `intelligence.discovery.refresh-interval`, `intelligence.discovery.cache-dir` and `intelligence.capability-analysis`. The `intelligence.steering`, `intelligence.hooks` and `intelligence.learning` sub-blocks start components that nothing on the request path calls. Use the top-level [`hooks:`](/intelligent-systems/hooks) block instead.
 
 ## Management API
 
-Phase 2 adds management endpoints for monitoring and control:
+All routes need the management key (`Authorization: Bearer <key>` or `X-Management-Key`).
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v0/management/skills` | GET | List all loaded skills |
-| `/v0/management/feedback` | GET | Get routing feedback statistics |
-| `/v0/management/feedback` | POST | Submit explicit feedback |
-| `/v0/management/steering/reload` | POST | Reload configuration without restart |
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/v0/management/skills` | GET | Loaded skills and whether embeddings are available |
+| `/v0/management/feedback` | POST | Submit a feedback record (`query`, `intent`, `selected_model`, `routing_tier`, `latency_ms` required) |
+| `/v0/management/feedback/stats` | GET | Totals, success rate, tier distribution, cascade rate |
+| `/v0/management/feedback/recent?limit=100` | GET | Most recent feedback records |
+| `/v0/management/cache/metrics` | GET | Semantic cache hits, misses, size |
+| `/v0/management/cache/clear` | POST | Empty the semantic cache |
+
+```bash
+curl http://localhost:18080/v0/management/skills \
+  -H "X-Management-Key: $MANAGEMENT_KEY"
+```
 
 ## Troubleshooting
 
-<Accordion title="Semantic tier not working">
-1. Check embedding model is downloaded:
-   ```bash
-   ls ~/.switchailocal/models/all-MiniLM-L6-v2/
-   ```
+<AccordionGroup>
+  <Accordion title="model: auto is not routed by the plugin">
+    1. Check that `plugin.enabled: true`, `plugin.plugin-dir` is set, and the directory contains `cortex-router/schema.lua` and `handler.lua`.
+    2. Check that `matrix.image_gen`, `matrix.transcription` and `matrix.speech` are set. Run with `debug: true` and look for `hook on_request in cortex-router returned error`.
+    3. Make sure the request doesn't use a provider prefix. `ollama:auto` bypasses the plugin.
+  </Accordion>
+  <Accordion title="Every request lands on the fast model">
+    The cognitive tier failed. Common causes:
+    - `intelligence.enabled` or `intelligence.confidence.enabled` is false. The log shows `Parse Error: intelligence services not enabled -> Fallback Fast` or `confidence scorer not available`.
+    - `router-model` isn't installed (for example `ollama pull qwen:0.5b`). The log shows `Classification Error: ... -> Fallback Fast`.
+    - The classifier returned something other than JSON. Small classifiers often do this, so try a slightly larger model.
+  </Accordion>
+  <Accordion title="Semantic tier or skills never match">
+    - Check for `Embedding model not found` or `Failed to initialize embedding engine` in the log. Run `./scripts/download-embedding-model.sh` and install ONNX Runtime.
+    - Apply the `intents.yaml` workaround described above.
+    - Skill matching only runs after a semantic-tier match.
+  </Accordion>
+  <Accordion title="Semantic cache endpoints return 'intelligence services not enabled'">
+    The cache needs `intelligence.enabled: true`, a working embedding engine and `semantic-cache.enabled: true`.
+  </Accordion>
+</AccordionGroup>
 
-2. Verify embedding is enabled:
-   ```yaml
-   embedding:
-     enabled: true
-   ```
-
-3. Check logs for initialization errors
-</Accordion>
-
-<Accordion title="Skills not matching">
-1. Verify skills directory exists:
-   ```bash
-   ls plugins/cortex-router/skills/
-   ```
-
-2. Lower the confidence threshold:
-   ```yaml
-   skill-matching:
-     confidence-threshold: 0.70  # Lower from 0.80
-   ```
-
-3. Check skill descriptions are descriptive enough
-</Accordion>
-
-<Accordion title="Cache not helping">
-1. Lower similarity threshold for more hits:
-   ```yaml
-   semantic-cache:
-     similarity-threshold: 0.90  # Lower from 0.95
-   ```
-
-2. Increase cache size:
-   ```yaml
-   semantic-cache:
-     max-size: 50000  # Increase from 10000
-   ```
-</Accordion>
-
-<Accordion title="Discovery not finding models">
-1. Check provider credentials are configured
-2. Verify network connectivity to providers
-3. Check discovery cache directory is writable:
-   ```bash
-   mkdir -p ~/.switchailocal/cache/discovery
-   chmod 0700 ~/.switchailocal/cache/discovery
-   ```
-</Accordion>
-
-## Next Steps
+## Related
 
 <CardGroup cols={2}>
-  <Card title="Superbrain" icon="brain-circuit" href="/intelligent-systems/superbrain">
-    Add autonomous self-healing to your gateway
+  <Card title="Lua Plugins" icon="code" href="/advanced/lua-plugins">
+    Write your own `on_request` and `on_response` hooks
   </Card>
-  <Card title="Memory System" icon="database" href="/intelligent-systems/memory">
-    Enable learning from routing history
+  <Card title="Auto-Routing Setup" icon="route" href="/guides/auto-routing-setup">
+    The score-based `auto` resolver
   </Card>
 </CardGroup>

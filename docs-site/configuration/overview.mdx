@@ -1,145 +1,147 @@
 ---
 title: 'Configuration Overview'
-description: 'Complete guide to configuring switchAILocal'
+description: 'Where switchAILocal reads its config, how it is validated, and what reloads live'
 icon: 'sliders'
 ---
 
-## Introduction
+switchAILocal is configured with one YAML file. Client keys, providers,
+routing, logging and the management API all live there.
 
-switchAILocal uses a YAML configuration file (`config.yaml`) to control all aspects of server behavior, provider integration, routing, and security. The configuration system is designed to be flexible, supporting everything from simple local setups to complex enterprise deployments.
+## Where the file is
 
-## Configuration File Location
+| How you start the server | File used |
+| ------------------------ | --------- |
+| `switchAILocal` | `./config.yaml` in the current directory |
+| `switchAILocal -config <path>` | `<path>` (no `..` or `~`; absolute paths only under home, `/etc/`, `/usr/`, `/var/`) |
+| Docker image | `/app/config.yaml` (mount it) |
+| `PGSTORE_DSN`, `OBJECTSTORE_ENDPOINT` or `GITSTORE_GIT_URL` set | A copy managed by that store ([details](/cli/server#config-sources)) |
 
-By default, switchAILocal looks for `config.yaml` in the current working directory. You can specify a custom location:
+The file is required. If it is missing, the server logs
+`failed to read config file` and exits.
+
+Keep it private; the server warns at startup when the file is readable by
+group or others:
 
 ```bash
-switchailocal --config /path/to/config.yaml
+chmod 600 config.yaml
 ```
 
-## Getting Started
+## Start small
 
-switchAILocal includes a comprehensive example configuration file that documents all available options:
+A working minimal config:
 
-```bash
-cp config.example.yaml config.yaml
-```
-
-Edit `config.yaml` to customize settings for your environment.
-
-<Note>
-  The example configuration includes inline comments explaining each setting. Use it as a reference when building your own configuration.
-</Note>
-
-## Configuration Structure
-
-The configuration file is organized into logical sections:
-
-### Core Sections
-
-<CardGroup cols={2}>
-  <Card title="Server Settings" icon="server" href="/configuration/server">
-    Host, port, TLS, authentication, and core server behavior
-  </Card>
-  <Card title="Provider Configuration" icon="plug" href="/configuration/providers">
-    API keys and settings for cloud and local AI providers
-  </Card>
-  <Card title="Security & Access" icon="shield" href="/configuration/security">
-    API keys, management access, authentication, and TLS
-  </Card>
-  <Card title="Intelligent Routing" icon="brain" href="/features/intelligent-routing">
-    Cortex router with semantic matching and auto-discovery
-  </Card>
-</CardGroup>
-
-## YAML Basics
-
-switchAILocal configuration uses standard YAML syntax:
-
-```yaml
-# Comments start with hash
-host: ""           # Empty string binds all interfaces
-port: 18080         # Integer value
-debug: false        # Boolean value
-
-# Nested objects
-tls:
-  enable: false
-  cert: "/path/to/cert.pem"
-  key: "/path/to/key.pem"
-
-# Lists/Arrays
+```yaml config.yaml
+host: "127.0.0.1"
+port: 18080
+auth-dir: "~/.switchailocal"
 api-keys:
-  - "sk-test-123"
-  - "sk-prod-456"
-
-# Provider with models
-gemini-api-key:
-  - api-key: "AIzaSy..."
-    prefix: "google"
-    models:
-      - name: "gemini-2.0-flash-exp"
-        alias: "flash"
+  - "sk-your-key"
 ```
 
-## Environment-Specific Overrides
+`config.example.yaml` in the repository and release archives documents every
+section. It is a reference, not a safe default: it enables example providers,
+virtual models, auto-routing, intelligence features, Prometheus metrics and a
+test client key. Copy only the sections you need.
 
-While switchAILocal doesn't directly support environment variable overrides, you can:
+## Sections
 
-1. **Use multiple config files** for different environments:
-   ```bash
-   switchailocal --config config.production.yaml
-   ```
+| Section | Keys | Page |
+| ------- | ---- | ---- |
+| Server and logging | `host`, `port`, `tls`, `auth-dir`, `debug`, `logging-to-file`, `request-log`, `observability`, `performance`, `streaming` | [Server](/configuration/server) |
+| Retries and routing | `request-retry`, `max-retry-interval`, `disable-cooling`, `quota-exceeded`, `routing`, `force-model-prefix` | [Server](/configuration/server) |
+| Client and management access | `api-keys`, `ws-auth`, `remote-management` | [Security](/configuration/security) |
+| Providers | `gemini-api-key`, `claude-api-key`, `codex-api-key`, `switchai-api-key`, `openai-compatibility`, `vertex-api-key`, `ollama`, `lmstudio`, `opencode`, `oauth-excluded-models`, `virtual-models` | [Providers](/configuration/providers) |
+| Everything else | `auto-routing`, `intelligence`, `plugin`, `payload`, `superbrain`, `heartbeat`, `memory`, `steering`, `hooks`, `billboard`, `ampcode`, `notifications` | [Reference](/configuration/reference) |
 
-2. **Template with environment variables** (using external tools):
-   ```bash
-   envsubst < config.template.yaml > config.yaml
-   switchailocal
-   ```
+## Syntax rules
 
-## Hot Reload
-
-switchAILocal automatically detects configuration changes and reloads most settings without requiring a restart:
-
-<Accordion title="Hot-reloadable settings">
-  - Provider API keys and credentials
-  - Model aliases and mappings
-  - Routing strategy changes
-  - Intelligence matrix updates
-  - Proxy settings
-  - OAuth excluded models
-</Accordion>
-
-<Warning>
-  Settings that require a restart:
-  - Server host and port
-  - TLS certificate paths (when TLS is enabled)
-  - Authentication directory
-  - Management secret key
-</Warning>
+- Keys are kebab-case (`auth-dir`, `request-retry`). A few nested blocks use
+  snake_case because they mirror API fields: `virtual-models` member options
+  (`response_model`, `tool_history_replay`), model options (`context_length`,
+  `native_tools`) and the whole `superbrain` block.
+- **Unknown keys are ignored silently.** A typo such as `api_keys` simply has no
+  effect. Compare against the [reference](/configuration/reference) when a
+  setting seems to do nothing.
+- **No environment variable expansion.** `api-key: "${OPENAI_KEY}"` is sent
+  literally. Render the file with a tool such as `envsubst` if you need
+  templating. A few settings have environment equivalents, for example
+  `MANAGEMENT_PASSWORD` ([Server command](/cli/server#environment-variables)).
+- Durations accept Go syntax (`15s`, `5m`, `24h`) where the reference says
+  "duration".
 
 ## Validation
 
-switchAILocal validates configuration on startup and during hot reload:
+The server refuses to start when:
 
-- **Missing required fields**: Logged as warnings, defaults applied
-- **Invalid values**: Configuration loading fails with detailed error
-- **Deprecated settings**: Automatically migrated to new format
+- the YAML does not parse;
+- `remote-management.allow-remote` is `true` with no `secret-key` and no
+  `MANAGEMENT_PASSWORD`;
+- a `virtual-models` entry is invalid (unknown strategy, member without
+  `id`, `provider` or `model`, duplicate member id, negative weight, or an
+  exposed pool with no enabled member).
 
-## Configuration Persistence
+Some entries are dropped silently during loading:
 
-When certain settings are updated (like management secret key hashing), switchAILocal automatically persists the changes back to `config.yaml` while preserving:
+- `codex-api-key`, `openai-compatibility` and `vertex-api-key` entries without
+  `base-url`;
+- `gemini-api-key` entries without `api-key`, and duplicate Gemini keys;
+- a `prefix` containing `/` (treated as no prefix).
 
-- Comments and formatting
-- Key ordering
-- YAML structure
+## Live reload
 
-## Next Steps
+The server watches the config file and reloads it about 150 ms after a change.
+Applied without a restart:
+
+- `api-keys` and other client access settings;
+- provider credentials, models and aliases, `oauth-excluded-models`,
+  `virtual-models`, `payload`;
+- `routing.strategy`, `force-model-prefix`, `request-retry`,
+  `max-retry-interval`, `disable-cooling`, `quota-exceeded`;
+- `debug`, `logging-to-file`, `logs-max-total-size-mb`,
+  `observability.log-format`, `request-log`, `usage-statistics-enabled`,
+  `ws-auth`, `proxy-url`;
+- `remote-management` settings used by the management API;
+- `superbrain` settings.
+
+Restart after changing `host`, `port`, `tls`, `performance`,
+`observability.metrics` or `observability.request-events`, and the subsystems
+initialized at startup: `memory`, `heartbeat`, `steering`, `hooks`,
+`intelligence`, `auto-routing` and `plugin`.
+
+If the edited file does not load (for example invalid YAML), the reload is
+rejected with `failed to reload config` in the log and the previous settings
+stay active.
+
+Credential files added to or removed from `auth-dir` are also picked up live.
+
+## When the server writes your file
+
+switchAILocal edits `config.yaml` itself in these cases:
+
+| Trigger | Change |
+| ------- | ------ |
+| Plaintext `remote-management.secret-key` | Replaced with its bcrypt hash at startup |
+| Legacy keys (`generative-language-api-key`, `amp-upstream-url`, `amp-*`, `routing.auto-model-priority`, old `openai-compatibility` `api-keys` lists) | Migrated to the current layout and saved |
+| Management panel or field endpoints of the management API | The edited fields, comments preserved |
+| `PUT /v0/management/config.yaml` | Whole file replaced with the request body |
+| Setup screen of the management panel | `remote-management.secret-key` and `allow-remote` |
+
+Writes keep the file in place (bind mounts keep working) and set its mode to
+`0600`. The file must be writable by the server user for these to succeed.
+
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Server Configuration" icon="server" href="/configuration/server">
-    Configure host, port, TLS, logging, and core server settings
+  <Card title="Server" icon="server" href="/configuration/server">
+    Host, port, TLS, logging, retries, performance
   </Card>
-  <Card title="Provider Setup" icon="plug" href="/configuration/providers">
-    Add API keys and configure cloud and local AI providers
+  <Card title="Providers" icon="plug" href="/configuration/providers">
+    API keys, local servers, aliases, virtual models
+  </Card>
+  <Card title="Security" icon="shield" href="/configuration/security">
+    Client keys and management access
+  </Card>
+  <Card title="Reference" icon="list" href="/configuration/reference">
+    Every top-level key with its default
   </Card>
 </CardGroup>

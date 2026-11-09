@@ -827,6 +827,6 @@ notifications:
     # bots:
     #   - name: "default"
     #     token: "${TELEGRAM_BOT_TOKEN}"
-    #     allowed-chat-ids: [746496145]   # optional allowlist
+    #     allowed-chat-ids: [123456789]   # optional allowlist (your Telegram chat ID)
     #   - name: "alerts"
     #     token: "${TELEGRAM_ALERTS_TOKEN}"

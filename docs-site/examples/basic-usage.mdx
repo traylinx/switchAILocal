@@ -1,25 +1,38 @@
 ---
 title: Basic Usage Examples
-description: Common patterns for using switchAILocal with various providers
+description: First requests against switchAILocal - chat, model selection, listing models, errors
 icon: rocket
 ---
 
 ## Overview
 
-This guide demonstrates the most common usage patterns for switchAILocal, from simple chat completions to multi-provider routing.
+These examples assume:
 
-## Simple Chat Completion
+- switchAILocal is running on `http://localhost:18080`
+- `config.yaml` contains `api-keys: ["sk-test-123"]` (use your own key)
+- at least one provider is set up, e.g. Ollama with `llama3.2` pulled
 
-The most basic usage - send a message and get a response:
+```yaml config.yaml
+port: 18080
+api-keys:
+  - "sk-test-123"
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+```
+
+Any OpenAI-compatible client works; Python and Node.js use the official `openai` packages ([Python](/sdk/python), [Node.js](/sdk/nodejs)).
+
+## Simple chat completion
 
 <CodeGroup>
-
 ```bash cURL
 curl http://localhost:18080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "gemini-2.5-pro",
+    "model": "ollama:llama3.2",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -27,316 +40,212 @@ curl http://localhost:18080/v1/chat/completions \
 ```python Python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
 
 completion = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
+    model="ollama:llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}],
 )
-
 print(completion.choices[0].message.content)
 ```
 
-```javascript JavaScript
+```javascript Node.js
 import OpenAI from 'openai';
 
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123',
-});
+const client = new OpenAI({ baseURL: 'http://localhost:18080/v1', apiKey: 'sk-test-123' });
 
 const completion = await client.chat.completions.create({
-  model: 'gemini-2.5-pro',
+  model: 'ollama:llama3.2',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
-
 console.log(completion.choices[0].message.content);
 ```
-
 </CodeGroup>
 
-## Auto-Routing (No Provider Prefix)
+## Selecting a model
 
-Let switchAILocal automatically select the best available provider:
+The `model` string is the only routing input. switchAILocal resolves it in this order (`sdk/api/handlers/handlers.go`):
 
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-# No prefix = auto-routing to any logged-in provider
-completion = client.chat.completions.create(
-    model="gemini-2.5-pro",  # switchAILocal picks: geminicli, gemini API, or switchAI
-    messages=[{"role": "user", "content": "What is the meaning of life?"}]
-)
-```
-
-<Tip>
-Auto-routing prioritizes:
-1. CLI providers (if authenticated)
-2. API providers (if keys configured)
-3. Local providers (Ollama, LM Studio)
-</Tip>
-
-## Explicit Provider Selection
-
-Force routing to a specific provider using prefixes:
+1. **Provider prefix** `provider:model` for a known provider name: goes only to that provider.
+2. **Lua plugins** (if enabled) may rewrite the model, e.g. the Cortex Router for `auto`/`cortex`.
+3. **Virtual model** from `virtual-models`: a member is picked by capability and weight.
+4. **Auto-routing** for `auto` or `auto:<intent>` when `auto-routing.enabled: true`.
+5. **Registered model ID or alias**: every provider that registered the ID is a candidate; credentials rotate per `routing.strategy`.
 
 <Tabs>
-  <Tab title="Gemini CLI">
+  <Tab title="Provider prefix">
     ```python
-    completion = client.chat.completions.create(
-        model="geminicli:gemini-2.5-pro",  # Force Gemini CLI
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
+    # Local Ollama
+    client.chat.completions.create(model="ollama:llama3.2", messages=msgs)
+    # Gemini CLI installed and logged in on this machine
+    client.chat.completions.create(model="geminicli:gemini-2.5-pro", messages=msgs)
+    # Claude Code CLI
+    client.chat.completions.create(model="claudecli:claude-sonnet-4-5", messages=msgs)
     ```
   </Tab>
-  <Tab title="Ollama (Local)">
+  <Tab title="Alias">
+    ```yaml config.yaml
+    claude-api-key:
+      - api-key: "YOUR_ANTHROPIC_KEY"
+        models:
+          - name: "claude-sonnet-4-5"
+            alias: "sonnet"
+    ```
     ```python
-    completion = client.chat.completions.create(
-        model="ollama:llama3.2",  # Force Ollama local model
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
+    client.chat.completions.create(model="sonnet", messages=msgs)
     ```
   </Tab>
-  <Tab title="switchAI Cloud">
+  <Tab title="Virtual model">
     ```python
-    completion = client.chat.completions.create(
-        model="switchai:switchai-fast",  # Force switchAI cloud
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
+    # ail-compound is a pool defined under virtual-models in config.yaml
+    client.chat.completions.create(model="ail-compound", messages=msgs)
     ```
+    See [Virtual models](/advanced/virtual-models).
   </Tab>
-  <Tab title="Claude CLI">
+  <Tab title="Auto">
     ```python
-    completion = client.chat.completions.create(
-        model="claudecli:claude-sonnet-4",  # Force Claude CLI
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
+    client.chat.completions.create(model="auto", messages=msgs)
+    client.chat.completions.create(model="auto:coding", messages=msgs)
     ```
+    See [Intelligent routing](/examples/intelligent-routing).
   </Tab>
 </Tabs>
 
-## List Available Models
+### Valid provider prefixes
 
-Discover all models from all configured providers:
+| Prefix | Backend | Needs |
+|--------|---------|-------|
+| `ollama:` | Ollama | `ollama.enabled: true` |
+| `geminicli:` | Google Gemini CLI | `gemini` on `PATH`, logged in |
+| `claudecli:` | Claude Code CLI | `claude` on `PATH`, logged in |
+| `vibecli:` | Mistral Vibe CLI | `vibe` on `PATH` |
+| `codex:` | OpenAI Codex (Codex CLI on `PATH`, `--codex-login` OAuth, or `codex-api-key`) | see [Provider setup](/guides/setup-providers) |
+| `opencode:` | OpenCode server | `opencode.enabled: true` |
+| `gemini:` | Gemini API | `gemini-api-key` or OAuth |
+| `claude:` | Anthropic API | `claude-api-key` or `--claude-login` |
+| `switchai:` | switchAI cloud | `switchai-api-key` |
+| `openai:`, `openai-compat:` | An `openai-compatibility` entry with exactly that `name` | config entry |
+
+Other `name:model` strings are not prefixes. They work only if a provider registered that exact string, for example an `openai-compatibility` alias such as `groq:gpt-oss-20b`. LM Studio models are addressed by their plain ID (no `lmstudio:` prefix). With `prefix: team-a` on a credential, its models are also reachable as `team-a/<model>`.
+
+## List available models
 
 <CodeGroup>
-
 ```bash cURL
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
+curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"
 ```
 
 ```python Python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-models = client.models.list()
-for model in models.data:
-    print(f"{model.id} ({model.owned_by})")
+for m in client.models.list().data:
+    print(m.id, m.owned_by)
 ```
 
-```javascript JavaScript
+```javascript Node.js
 const models = await client.models.list();
+for (const m of models.data) console.log(m.id, m.owned_by);
+```
+</CodeGroup>
 
-for (const model of models.data) {
-  console.log(`${model.id} (${model.owned_by})`);
+Example response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "llama3.2:latest", "object": "model", "created": 1730000000, "owned_by": "ollama", "capabilities": ["text"]},
+    {"id": "sonnet", "object": "model", "created": 1730000000, "owned_by": "claude", "capabilities": ["text"]}
+  ]
 }
 ```
 
-</CodeGroup>
+Notes on what the list contains:
 
-**Example Output:**
+- Aliases with `expose: false` or `visibility: private`, and `prefix/model` IDs (unless `force-model-prefix: true`), are routable but hidden.
+- If any listed model ID starts with `ail-`, the list switches to **ail-only mode** and shows only `ail-*` IDs.
+- `?modality=text|image|audio|embedding|vision` filters by declared capability.
+
+Provider-level view, with model counts and status:
+
+```bash
+curl "http://localhost:18080/v1/providers?filter=active" -H "Authorization: Bearer sk-test-123"
 ```
-geminicli:gemini-2.5-pro (google)
-ollama:llama3.2 (ollama)
-switchai:switchai-fast (traylinx)
-switchai:switchai-reasoner (traylinx)
-claudecli:claude-sonnet-4 (anthropic)
-```
 
-## Multi-turn Conversations
-
-Maintain conversation context across multiple turns:
+## Multi-turn, system prompts and parameters
 
 ```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
 messages = [
-    {"role": "system", "content": "You are a helpful coding assistant."},
-    {"role": "user", "content": "Write a Python function to calculate factorial"}
+    {"role": "system", "content": "You are a concise assistant. Answer in one sentence."},
+    {"role": "user", "content": "What is a goroutine?"},
 ]
+first = client.chat.completions.create(model="ollama:llama3.2", messages=messages, temperature=0.2)
+messages.append({"role": "assistant", "content": first.choices[0].message.content})
+messages.append({"role": "user", "content": "And a channel?"})
 
-# First turn
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=messages
+second = client.chat.completions.create(
+    model="ollama:llama3.2",
+    messages=messages,
+    temperature=0.2,
+    max_tokens=200,
 )
-
-# Add assistant response to history
-messages.append({
-    "role": "assistant",
-    "content": response.choices[0].message.content
-})
-
-# Second turn
-messages.append({
-    "role": "user",
-    "content": "Now add error handling"
-})
-
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=messages
-)
-
-print(response.choices[0].message.content)
 ```
 
-## Temperature Control
+switchAILocal is stateless for chat: send the whole history every time. Parameters are translated to each backend's format; CLI providers receive the flattened conversation as a prompt and ignore sampling parameters.
 
-Adjust creativity and randomness:
+## Other API formats
+
+The same server also speaks:
+
+| Endpoint | Format |
+|----------|--------|
+| `POST /v1/responses` | OpenAI Responses API |
+| `POST /v1/messages` | Anthropic Messages API (`x-api-key` header accepted) |
+| `POST /v1beta/models/{model}:generateContent` | Gemini API (`x-goog-api-key` or `?key=` accepted) |
+| `POST /openai/v1/...` | Strict OpenAI shapes for `models`, `chat/completions`, `completions`, `embeddings`, `images/*` |
+
+```bash
+curl http://localhost:18080/v1/messages \
+  -H "x-api-key: sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama:llama3.2", "max_tokens": 256, "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+## Error handling
 
 ```python
-# Low temperature (0.0-0.3) = Focused, deterministic
-code_response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Write a sorting algorithm"}],
-    temperature=0.2,  # Precise, consistent code
-)
-
-# High temperature (0.7-1.0) = Creative, varied
-story_response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Write a short story"}],
-    temperature=0.9,  # Creative, diverse outputs
-)
-```
-
-## Max Tokens Limit
-
-Control response length:
-
-```python
-completion = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Explain quantum computing"}],
-    max_tokens=200,  # Limit to ~200 tokens (approx 150 words)
-)
-```
-
-## System Messages
-
-Set the assistant's behavior and personality:
-
-```python
-completion = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[
-        {
-            "role": "system",
-            "content": "You are a senior Go developer. Always provide idiomatic Go code with error handling."
-        },
-        {
-            "role": "user",
-            "content": "Show me how to read a JSON file"
-        }
-    ]
-)
-```
-
-## Error Handling
-
-<CodeGroup>
-
-```python Python
-from openai import OpenAI, APIError, APIConnectionError
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
+from openai import APIConnectionError, APIStatusError
 
 try:
-    completion = client.chat.completions.create(
-        model="gemini-2.5-pro",
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
-    print(completion.choices[0].message.content)
-except APIConnectionError as e:
-    print(f"Connection error: {e}")
-except APIError as e:
-    print(f"API error: {e.status_code} - {e.message}")
+    client.chat.completions.create(model="ollama:llama3.2", messages=[{"role": "user", "content": "Hi"}])
+except APIConnectionError:
+    print("Server not reachable")
+except APIStatusError as e:
+    print(e.status_code, e.response.text)
 ```
 
-```javascript JavaScript
-import { APIConnectionError, APIError } from 'openai';
+Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`.
 
-try {
-  const completion = await client.chat.completions.create({
-    model: 'gemini-2.5-pro',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  });
-  console.log(completion.choices[0].message.content);
-} catch (error) {
-  if (error instanceof APIConnectionError) {
-    console.error(`Connection error: ${error.message}`);
-  } else if (error instanceof APIError) {
-    console.error(`API error: ${error.status} - ${error.message}`);
-  }
-}
-```
-
-</CodeGroup>
-
-## Provider Prefix Reference
-
-| Prefix | Provider | Type | Example |
-|--------|----------|------|----------|
-| `geminicli:` | Google Gemini CLI | CLI Tool | `geminicli:gemini-2.5-pro` |
-| `claudecli:` | Anthropic Claude CLI | CLI Tool | `claudecli:claude-sonnet-4` |
-| `codex:` | OpenAI Codex CLI | CLI Tool | `codex:gpt-4` |
-| `vibe:` | Mistral Vibe CLI | CLI Tool | `vibe:mistral-large` |
-| `ollama:` | Ollama | Local | `ollama:llama3.2` |
-| `lmstudio:` | LM Studio | Local | `lmstudio:mistral-7b` |
-| `switchai:` | Traylinx switchAI | Cloud API | `switchai:switchai-fast` |
-| `gemini:` | Google AI Studio | Cloud API | `gemini:gemini-2.5-pro` |
-| `claude:` | Anthropic API | Cloud API | `claude:claude-3-5-sonnet` |
-| `openai:` | OpenAI API | Cloud API | `openai:gpt-4` |
-
-<Note>
-**No Prefix = Auto-routing** - switchAILocal will intelligently select the best available provider.
-</Note>
+| Status | Meaning | Fix |
+|--------|---------|-----|
+| 401 | Missing or invalid client key | Use a key from `api-keys` |
+| 400 `unknown provider for model X` | Nothing registered `X` | Check `/v1/models`, prefix spelling |
+| 503 `Provider 'x' is not active` | Known prefix, no credentials | Configure or log in to that provider |
+| 429 `model_cooldown` | All credentials cooling down after errors | Wait `Retry-After` seconds, add credentials |
+| 422 `no_eligible_backend` | Virtual model has no member for this request type | Add a member with the needed capability |
+| 5xx | Upstream failure after retries | Check server logs |
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Streaming" icon="stream" href="/examples/streaming">
-    Real-time streaming responses
+  <Card title="Streaming" icon="wave-square" href="/examples/streaming">
+    SSE streaming, keep-alives and timeouts
   </Card>
   <Card title="Multi-Provider" icon="diagram-project" href="/examples/multi-provider">
-    Advanced multi-provider patterns
+    Pools, rotation and failover
   </Card>
   <Card title="Intelligent Routing" icon="brain" href="/examples/intelligent-routing">
-    Auto-routing with Cortex Router
+    auto, auto:intent and Cortex
   </Card>
-  <Card title="Python SDK" icon="python" href="/sdk/python">
-    Complete Python SDK reference
+  <Card title="Provider setup" icon="plug" href="/guides/setup-providers">
+    Configure providers
   </Card>
 </CardGroup>

@@ -1,160 +1,163 @@
 ---
 title: 'API Overview'
-description: 'OpenAI-compatible API gateway for unified AI provider access'
+description: 'Every HTTP route switchAILocal serves, grouped by family, with shared conventions for auth, errors, and streaming'
 ---
 
-## Introduction
-
-switchAILocal provides an OpenAI-compatible HTTP API that works with any OpenAI SDK or tool. Point your client to `http://localhost:18080/v1` and use your existing code without modifications.
+switchAILocal is a local gateway. It exposes OpenAI-, Anthropic-, and Gemini-compatible HTTP surfaces on one port and routes each request to a configured provider (CLI tools, local servers such as Ollama, or cloud APIs).
 
 ## Base URL
 
+The server listens on `host:port` from `config.yaml` (the example config uses port `18080`). All examples in this reference assume:
+
+```text
+http://localhost:18080
 ```
-http://localhost:18080/v1
-```
 
-All API endpoints use this base URL. The server runs locally on your machine by default.
+<Warning>
+The default `host` is `""`, which binds **all interfaces**. Set `host: "127.0.0.1"` if the gateway should only be reachable from your machine. See [Authentication](/api/authentication).
+</Warning>
 
-## Key Features
+HTTPS is available by setting `tls.enable: true` with `tls.cert` and `tls.key`.
 
-<CardGroup cols={2}>
-  <Card title="OpenAI Compatible" icon="code">
-    Works with OpenAI SDKs in Python, Node.js, and more without code changes
-  </Card>
-  <Card title="Multi-Provider" icon="layer-group">
-    Access Gemini, Claude, Ollama, and other providers through a single endpoint
-  </Card>
-  <Card title="Auto-Routing" icon="route">
-    Omit provider prefixes to let switchAILocal choose the best available provider
-  </Card>
-  <Card title="Local-First" icon="shield">
-    Everything runs on your machine - your data never leaves
-  </Card>
-</CardGroup>
+## Route families
 
-## Quick Example
+| Family | Routes | Auth | Page |
+|---|---|---|---|
+| Models & providers | `GET /v1/models`, `POST /v1/models/refresh`, `GET /v1/providers` | API key | [Models](/api/models) |
+| Chat | `POST /v1/chat/completions`, `POST /v1/completions` | API key | [Chat Completions](/api/chat-completions) |
+| OpenAI Responses | `POST /v1/responses` | API key | [Responses](/api/responses) |
+| Anthropic Messages | `POST /v1/messages`, `POST /v1/messages/count_tokens` | API key | [Messages](/api/messages) |
+| Embeddings | `POST /v1/embeddings` | API key | [Embeddings](/api/embeddings) |
+| Images | `POST /v1/images/generations`, `POST /v1/images/edits` | API key | [Images](/api/images) |
+| Audio | `POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | API key | [Audio](/api/audio) |
+| Music | `POST /v1/music/generations`, `POST /v1/music/lyrics` | API key | [Music & Lyrics](/api/music) |
+| Notifications | `POST /v1/notifications/telegram/sendMessage` | API key | [Notifications](/api/notifications) |
+| Gemini native | `GET /v1beta/models`, `GET /v1beta/models/{model}`, `POST /v1beta/models/{model}:{method}`, `POST /v1internal:{method}` | API key (v1internal: localhost only) | [Gemini API](/api/gemini) |
+| Strict OpenAI namespace | `/openai/v1/*` (see below) | API key | this page, [Images](/api/images) |
+| WebSocket relay | `GET /v1/ws` (upgrade) | API key when `ws-auth: true` | [WebSocket](/api/websocket) |
+| Health & system | `GET /`, `GET /health`, `GET /metrics`, `GET /management`, `GET /management.html`, `GET /keep-alive` | none | [Health & System](/api/system) |
+| Amp CLI integration | `/api/provider/{provider}/...`, `/api/*`, `/auth/*`, `/threads/*`, `/docs/*`, `/settings/*` | API key | [Amp CLI Routes](/api/amp) |
+| Management | `/v0/management/*` | management key | [Management API](/api/management/overview) |
+| OAuth callbacks | `GET /anthropic/callback`, `/codex/callback`, `/google/callback`, `/iflow/callback`, `/antigravity/callback` | none (browser redirect) | [Providers & Credentials](/api/management/providers#oauth-login-flows) |
 
-<CodeGroup>
-```bash cURL
+The standalone server registers no other routes; any path not listed returns `404`. Applications embedding the Go SDK can add routes with `WithRouterConfigurator`.
+
+### Strict OpenAI namespace (`/openai/v1`)
+
+`/openai/v1` is an additive alias group for third-party OpenAI clients. It uses the same handlers and auth as `/v1`:
+
+| Route | Same as |
+|---|---|
+| `GET /openai/v1/models` | `GET /v1/models` |
+| `POST /openai/v1/chat/completions` | `POST /v1/chat/completions` |
+| `POST /openai/v1/completions` | `POST /v1/completions` |
+| `POST /openai/v1/embeddings` | `POST /v1/embeddings` |
+| `POST /openai/v1/images/generations` | `POST /v1/images/generations`, but the response is normalized to `data[]` |
+| `POST /openai/v1/images/edits` | `POST /v1/images/edits`, but the response is normalized to `data[]` |
+
+Only the two image routes behave differently; see [Images](/api/images#strict-openai-response-shape). Audio, music, responses, and messages routes have no `/openai/v1` alias.
+
+## Quick example
+
+```bash
 curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
   -d '{
-    "model": "gemini-2.5-pro",
+    "model": "ollama:llama3.2",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
-```python Python
-from openai import OpenAI
+Any OpenAI SDK works by pointing `base_url` at `http://localhost:18080/v1`.
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
+## Choosing a model
 
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-print(response.choices[0].message.content)
-```
+The `model` field decides where a request goes. You can send a plain model ID, an explicit `provider:model` prefix, a configured alias, a virtual model (for example `ail-compound`), or `auto` / `auto:<intent>`. See [Provider Prefixes](/api/provider-prefixes) and [Auto-Routing](/api/auto-routing).
 
-```javascript Node.js
-import OpenAI from 'openai';
+## Common request headers
 
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123'
-});
+| Header | Used by | Meaning |
+|---|---|---|
+| `Authorization: Bearer <key>` | all API-key routes | Client API key (alternatives: `X-Api-Key`, `X-Goog-Api-Key`, `?key=`, `?auth_token=`) |
+| `Idempotency-Key` | inference routes | Forwarded to the executor as request metadata; a UUID is generated when absent |
+| `X-Ail-Autoinject: off` | `/v1/chat/completions` | Disables server-side `web_search` tool injection for this request |
+| `X-Telegram-Bot-Token` | notifications | Per-request Telegram bot token |
 
-const response = await client.chat.completions.create({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', content: 'Hello!' }]
-});
+## Common response headers
 
-console.log(response.choices[0].message.content);
-```
-</CodeGroup>
+| Header | When |
+|---|---|
+| `X-Ail-Build` | Every `/v1/chat/completions` response: `<commit>-<hostname>` |
+| `X-Auto-Routed: true`, `X-Selected-Model`, `X-Selected-Provider` | The request was resolved by the auto-routing engine |
+| `X-Matched-Skill` | Chat completions, when intelligence skill matching selected a skill |
+| `Retry-After` | `429` from the rate limiter or `503` from load shedding |
+| `Access-Control-Allow-Origin: *` | All routes except the Amp management proxy; `OPTIONS` preflight returns `204` |
 
-## Available Endpoints
+## Errors
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/chat/completions` | POST | Send chat messages and receive completions |
-| `/v1/completions` | POST | Legacy completions endpoint |
-| `/v1/models` | GET | List all available models |
-| `/v1/providers` | GET | List provider status and capabilities |
-| `/v1/embeddings` | POST | Generate text embeddings |
-| `/v1/images/generations` | POST | Generate images from prompts |
-| `/v1/images/edits` | POST | Edit images with prompts (multipart or JSON) |
-| `/v1/audio/speech` | POST | Text-to-speech (TTS). MiniMax routed to native `/t2a_v2`. Accepts OpenAI-shape and MiniMax-native controls. Binary audio response. |
-| `/v1/audio/transcriptions` | POST | Speech-to-text (ASR), multipart upload |
-| `/v1/audio/translations` | POST | Audio translated to English text |
-| `/v1/music/generations` | POST | Text-to-music + style cover (MiniMax). Supports `stream: true` for progressive `audio/mpeg` (~20s TTFB) |
-| `/v1/music/lyrics` | POST | Structured song-lyrics generator |
-| `/v1/ws` | WebSocket | Real-time bidirectional streaming |
-| `/v1/messages` | POST | Claude-compatible messages endpoint |
+### Authentication errors
 
-## Provider Support
+The auth middleware answers before any handler runs, with a plain string body:
 
-switchAILocal supports multiple AI providers through a unified interface:
+| Status | Body |
+|---|---|
+| `401` | `{"error":"Missing API key"}` |
+| `401` | `{"error":"Invalid API key"}` |
+| `500` | `{"error":"Authentication service error"}` |
 
-### CLI Providers (Use Your Subscriptions)
-- **Gemini CLI** (`geminicli:`) - Google Gemini via local CLI
-- **Claude CLI** (`claudecli:`) - Anthropic Claude via local CLI  
-- **Codex** (`codex:`) - OpenAI Codex
-- **Vibe** (`vibe:`) - Mistral Vibe CLI
-- **OpenCode** (`opencode:`) - OpenCode CLI
+### Handler errors
 
-### Local Models
-- **Ollama** (`ollama:`) - Local open-source models
-- **LM Studio** (`lmstudio:`) - Local model hosting
-
-### Cloud APIs
-- **switchAI** (`switchai:`) - Traylinx unified gateway
-- **Gemini API** (`gemini:`) - Google AI Studio
-- **Claude API** (`claude:`) - Anthropic API
-- **OpenAI API** (`openai:`) - OpenAI platform
-- **OpenAI Compatible** (`openai-compat:`) - OpenRouter, etc.
-
-## Error Handling
-
-All errors follow the OpenAI error format:
+Inference handlers return an OpenAI-style envelope:
 
 ```json
-{
-  "error": {
-    "message": "Invalid API key provided",
-    "type": "authentication_error",
-    "code": "invalid_api_key"
-  }
-}
+{"error": {"message": "unknown provider for model foo", "type": "invalid_request_error"}}
 ```
 
-### Common Error Types
+`type` and `code` are derived from the status:
 
-| Type | HTTP Code | Description |
-|------|-----------|-------------|
-| `authentication_error` | 401 | Invalid or missing API key |
-| `invalid_request_error` | 400 | Malformed request body |
-| `permission_error` | 403 | Insufficient quota or permissions |
-| `rate_limit_error` | 429 | Too many requests |
-| `server_error` | 500 | Internal server error |
+| Status | `type` | `code` |
+|---|---|---|
+| `400` and other 4xx | `invalid_request_error` | (none) |
+| `401` | `authentication_error` | `invalid_api_key` |
+| `403` | `permission_error` | `insufficient_quota` |
+| `404` | `invalid_request_error` | `model_not_found` |
+| `422` | `invalid_request_error` | `no_eligible_backend` (when no virtual-model member can serve the request) |
+| `429` | `rate_limit_error` | `rate_limit_exceeded` |
+| `5xx` | `server_error` | `internal_server_error` |
 
-## Next Steps
+If the upstream provider's error text is itself valid JSON, it is returned verbatim instead of being wrapped.
+
+Statuses you will commonly see:
+
+| Status | Cause |
+|---|---|
+| `400` | `unknown provider for model <id>` (no provider serves that ID), unknown `provider:` prefix, or a missing required field |
+| `501` | The chosen provider does not implement the operation (for example music on a non-MiniMax provider) |
+| `503` | Explicit prefix for an API provider with no active credentials, or every candidate provider is open in the circuit breaker |
+| `429` / `503` | `performance.rate-limiter` / `performance.load-shedding` rejected the request (with `Retry-After`) |
+
+The [Anthropic Messages](/api/messages), [Gemini](/api/gemini), and [Notifications](/api/notifications) pages describe their own error shapes.
+
+## Streaming
+
+Streaming routes use Server-Sent Events (`text/event-stream`). The gateway waits for the first upstream chunk before committing to a `200`: an upstream failure before that point returns a normal JSON error with the real status code. A failure after streaming has started is written into the stream (see each endpoint), then the stream closes.
+
+SSE keep-alive comments (`: keep-alive`) are sent every `streaming.keepalive-seconds` seconds; the built-in default is `0` (off). `streaming.bootstrap-retries` controls how many times a stream may be retried on another credential before the first byte (default `0`).
+
+## Next steps
 
 <CardGroup cols={2}>
   <Card title="Authentication" icon="key" href="/api/authentication">
-    Learn how to authenticate API requests
+    Configure client API keys and see which routes are open
   </Card>
   <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
-    Send messages and receive AI responses
+    The main OpenAI-compatible endpoint
   </Card>
   <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
-    Route requests to specific providers
+    How the model field selects a provider
   </Card>
   <Card title="Management API" icon="gear" href="/api/management/overview">
-    Configure and monitor your server
+    Configure and monitor a running server
   </Card>
 </CardGroup>

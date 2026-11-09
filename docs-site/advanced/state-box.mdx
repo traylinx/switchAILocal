@@ -1,513 +1,135 @@
 ---
 title: State Box
-description: Secure, centralized state management with automatic permission hardening
+description: The state directory for intelligence and routing data, read-only mode, atomic writes and permission hardening
 icon: box
 ---
 
-The **State Box** is switchAILocal's centralized, secure storage system for all mutable application data. It ensures that your AI provider configurations, feedback data, and credentials are stored safely outside the repository, with automatic security hardening and atomic write protection.
+The **State Box** is the directory where switchAILocal keeps mutable data produced by its intelligence and routing subsystems: the discovery registry, the feedback database and the virtual-model scheduler state. It is resolved from environment variables, not from `config.yaml`.
 
-## Overview
+## When it matters
 
-### What is the State Box?
+- You run with `intelligence.enabled: true` (discovery, feedback, skills), or you use [virtual models](/advanced/virtual-models).
+- You want that data somewhere other than `~/.switchailocal`, for example a mounted volume.
+- You run on an immutable filesystem and need to stop all writes (`SWITCHAI_READONLY=1`).
 
-The State Box is a mandatory architectural boundary that separates code from data:
-
-- **Location:** `~/.switchailocal/` (customizable via `SWITCHAI_STATE_DIR`)
-- **Purpose:** Centralized storage for all persistent state
-- **Security:** Automatic permission hardening (`0700` directories, `0600` files)
-- **Durability:** Atomic write operations with automatic backups
-- **Immutable-Friendly:** Full support for read-only environments (NixOS, containers)
-
-<Tip>
-The State Box is automatically initialized on first startup. No manual configuration required.
-</Tip>
-
-### Directory Structure
-
-```bash
-~/.switchailocal/
-├── discovery/
-│   ├── registry.json          # Discovered AI models
-│   └── registry.json.bak      # Automatic backup
-├── intelligence/
-│   ├── feedback.db            # Routing feedback database
-│   └── feedback.db.bak        # Automatic backup
-└── credentials/
-    ├── gemini.json            # Provider credentials
-    ├── claude.json
-    └── openai.json
-```
-
-**Permissions:**
-- Directories: `0700` (owner read/write/execute only)
-- Files: `0600` (owner read/write only)
-
-Discovery cache entries follow the same rule. A cache entry can persist a
-dynamically configured source URL, so it is treated as sensitive even when the
-current source has no credentials. Model registries contain only provider and
-capability inventory, but remain `0600` for one auditable State Box invariant.
-Discovery cache and registry writes prefer atomic replacement, which also
-migrates files created by older versions with broader permissions; filesystems
-that reject replacement fall back to chmod-before-truncate. Existing credential
-and config targets use chmod-before-truncate directly so bind mounts, symlinks,
-hard links, and read-only parent directories preserve inode semantics. The file
-owner must still be allowed to apply `0600`; cross-UID mounts that reject chmod
-fail closed rather than keeping a broad mode. Only the switchAILocal-owned
-discovery/auth leaf is tightened, on a best-effort basis; a custom parent keeps
-its operator-selected mode. These numeric mode guarantees apply to supported
-POSIX release targets (Linux and macOS).
+<Note>
+Provider credentials (OAuth token files) are **not** stored by the State Box. They live in `auth-dir` (default `~/.switchailocal`), configured in `config.yaml`. See [Authentication](/concepts/authentication).
+</Note>
 
 ## Configuration
 
-### Environment Variables
-
-#### `SWITCHAI_STATE_DIR`
-
-Override the default State Box location:
-
-```bash
-# Use custom location
-export SWITCHAI_STATE_DIR=/data/switchai-state
-
-# Use relative path (expanded from home)
-export SWITCHAI_STATE_DIR=~/my-switchai-data
-
-# Start switchAILocal
-./switchAILocal
-```
-
-**Default:** `~/.switchailocal`
-
-#### `SWITCHAI_READONLY`
-
-Enable read-only mode for immutable environments:
+| Variable | Effect | Default |
+|---|---|---|
+| `SWITCHAI_STATE_DIR` | Root of the State Box. `~` is expanded. | `~/.switchailocal` |
+| `SWITCHAI_READONLY` | Set to exactly `1` to block all State Box writes. | unset |
 
 ```bash
-# Enable read-only mode
-export SWITCHAI_READONLY=1
-
-# Start switchAILocal
-./switchAILocal
+export SWITCHAI_STATE_DIR="$HOME/.local/share/switchailocal"
+./switchAILocal --config config.yaml
 ```
 
-**When enabled:**
-- All write operations are blocked with clear error messages
-- Management Dashboard displays a "Read-Only Mode" indicator
-- Save and edit buttons are disabled
-- Discovery processes skip writing model registries
-- Feedback collection is disabled
+## Layout
 
-**Default:** Disabled (0)
-
-<Accordion title="Perfect for Immutable Deployments">
-Read-only mode is ideal for:
-- **NixOS**: Declarative, immutable system configuration
-- **Docker**: Read-only root filesystems
-- **Kubernetes**: ConfigMap-based configuration
-- **CI/CD**: Ephemeral test environments
-
-State is preserved in persistent volumes, while the application layer remains immutable.
-</Accordion>
-
-## Features
-
-### 1. Atomic File Operations
-
-The State Box uses the **rename-swap pattern** to ensure data durability:
-
-1. **Buffered Write:** Data is written to a temporary file (`.tmp.{uuid}`)
-2. **Sync:** `fsync()` is called to flush OS buffers to disk
-3. **Atomic Rename:** The temporary file is atomically renamed to the target
-4. **Backup:** The previous version is saved as `.bak` before overwriting
-
-<CodeGroup>
-```text Write Operation
-1. Write → /tmp/registry.json.tmp.a1b2c3d4
-2. fsync() → Flush to disk
-3. Rename → /tmp/registry.json.tmp.a1b2c3d4 → registry.json
-4. Backup → registry.json → registry.json.bak
+```text
+$SWITCHAI_STATE_DIR/
+├── discovery/
+│   ├── available_models.json      # discovery registry
+│   ├── available_models.json.bak  # previous version (restore source)
+│   └── registry.json              # checked for restore on startup
+├── intelligence/
+│   └── feedback.db                # feedback collector database
+├── credentials/                   # created on init; not used for auth tokens in this release
+└── virtual_models_state.json      # weighted round-robin scheduler state
 ```
 
-```text On Power Failure
-Scenario: Power failure during step 1 or 2
+The `discovery/`, `intelligence/` and `credentials/` directories are created when the intelligence service initialises (`intelligence.enabled: true`) and the State Box is writable. `virtual_models_state.json` is written whenever the virtual-model router advances its scheduler, independent of `intelligence.enabled`.
 
-Result:
-- Original registry.json intact
-- Temporary file incomplete (ignored)
-- No corruption or data loss
-- Automatic recovery on next startup
+## Behaviour
+
+### Atomic writes
+
+State Box files are written with a rename-swap:
+
+1. write to `<file>.tmp.<uuid>` with mode `0600`
+2. `fsync` the temp file
+3. optionally copy the current file to `<file>.bak`
+4. rename the temp file over the target and `fsync` the directory
+
+A crash leaves either the old or the new file, never a partial one. Orphan `.tmp.*` files are logged at startup and left in place.
+
+### Restore from backup
+
+At startup (writable mode only) switchAILocal checks `discovery/available_models.json` and `discovery/registry.json`. If a file is missing, empty or does not look like a JSON object/array (first and last character check), and a non-empty `.bak` exists, the backup is restored.
+
+### Permission hardening
+
+At startup the intelligence service walks the State Box and corrects modes:
+
+- directories → `0700`
+- files ending in `.json`, `.db`, `.json.bak`, `.db.bak` → `0600`
+- other files are left alone
+
+Each correction is logged:
+
+```text
+security audit: corrected permissions for /home/me/.switchailocal/discovery/available_models.json from 0644 to 0600
+permission hardening: corrected 1 file/directory permissions
 ```
-</CodeGroup>
 
-**Benefits:**
-- Power failures during writes don't corrupt files
-- Previous versions always available for recovery
-- No partial writes or corrupted state
+### Read-only mode
 
-### 2. Automatic Security Hardening
+With `SWITCHAI_READONLY=1`:
 
-On startup, switchAILocal automatically audits and corrects file permissions:
+- every State Box write returns `Read-only environment: write operations disabled`
+- directories are not created, backups are not restored, permissions are still audited
+- discovery skips writing its registry; the feedback collector stops recording
+- routing and request handling keep working; virtual-model scheduler state is kept in memory only
 
 ```bash
-# Example log output
-security audit: corrected permissions for ~/.switchailocal from 0755 to 0700
-security audit: corrected permissions for ~/.switchailocal/discovery/registry.json from 0644 to 0600
-permission hardening: corrected 2 file/directory permissions
+SWITCHAI_READONLY=1 ./switchAILocal --config config.yaml
 ```
 
-**Corrected Permissions:**
-- **Directories:** `0700` (owner only)
-- **Sensitive Files:** `0600` (owner only)
-- **Logging:** All corrections logged as security audit events
+## Docker
 
-<Warning>
-This happens automatically on every startup. Manually changing permissions will be reverted.
-</Warning>
-
-### 3. Read-Only Mode Support
-
-Perfect for immutable environments like NixOS or containerized deployments:
+Mount the State Box and point the variable at it:
 
 ```bash
-# Start in read-only mode
-SWITCHAI_READONLY=1 ./switchAILocal
-```
-
-**Behavior:**
-- All write operations return clear error messages
-- UI displays read-only indicator
-- System continues to function for queries and routing
-- No data loss or corruption
-
-### 4. Backward Compatibility
-
-If you have an existing `auth-dir` configuration, switchAILocal will:
-
-1. Check the legacy `auth-dir` location first
-2. Fall back to State Box credentials if not found
-3. Automatically migrate credentials on first write
-
-```yaml
-# config.yaml - legacy configuration still works
-auth-dir: ~/.switchai/auth
-```
-
-<Tip>
-No migration required! Existing configurations continue to work.
-</Tip>
-
-## API Endpoint
-
-### GET /api/state-box/status
-
-Query the current State Box status:
-
-```bash
-curl http://localhost:18080/api/state-box/status \
-  -H "Authorization: Bearer sk-test-123"
-```
-
-**Response:**
-
-```json
-{
-  "root_path": "/Users/user/.switchailocal",
-  "read_only": false,
-  "initialized": true,
-  "discovery_registry": {
-    "path": "/Users/user/.switchailocal/discovery/registry.json",
-    "exists": true,
-    "size": 4096,
-    "mode": "-rw-------",
-    "mod_time": "2026-03-09T10:30:00Z"
-  },
-  "feedback_database": {
-    "path": "/Users/user/.switchailocal/intelligence/feedback.db",
-    "exists": true,
-    "size": 102400,
-    "mode": "-rw-------",
-    "mod_time": "2026-03-09T10:25:00Z"
-  },
-  "permission_status": "ok",
-  "warnings": [],
-  "errors": []
-}
-```
-
-## Management Dashboard
-
-The Management Dashboard displays State Box status in the settings panel:
-
-- **Read-Only Indicator:** Shows when the system is in read-only mode
-- **State Box Path:** Displays the current State Box location
-- **File Status:** Shows discovery registry and feedback database status
-- **Permission Status:** Indicates if permissions are correctly hardened
-
-### Read-Only Mode Indicator
-
-When `SWITCHAI_READONLY=1` is set:
-
-- A "Read-Only Mode" badge appears in the top-right corner
-- All "Save" and "Edit" buttons are disabled
-- Hovering over the badge shows an explanation tooltip
-
-## Docker & Container Deployment
-
-### Using State Box with Docker
-
-Mount the State Box directory as a volume:
-
-```bash
-docker run -v ~/.switchailocal:/root/.switchailocal \
-  -p 18080:18080 \
+docker run -p 18080:18080 \
+  -e SWITCHAI_STATE_DIR=/data/state \
+  -v switchai-state:/data/state \
+  -v "$PWD/config.yaml:/app/config.yaml" \
   switchailocal:latest
 ```
 
-Or use a named volume:
+For an immutable container add `-e SWITCHAI_READONLY=1` and mount the volume `:ro`.
+
+## Status endpoint
+
+The server contains a `GET /v0/management/state-box/status` handler that reports the root path, read-only flag, the presence and mode of `discovery/registry.json` and `intelligence/feedback.db`, and permission warnings. The stock binary does not wire a State Box into the HTTP server in this release, so the route is not registered and returns `404`. Inspect the directory directly instead:
 
 ```bash
-docker volume create switchai-state
-docker run -v switchai-state:/root/.switchailocal \
-  -p 18080:18080 \
-  switchailocal:latest
-```
-
-### Custom State Box Location in Docker
-
-```bash
-docker run -e SWITCHAI_STATE_DIR=/data/switchai \
-  -v /host/data:/data \
-  -p 18080:18080 \
-  switchailocal:latest
-```
-
-### Read-Only Mode in Docker
-
-```bash
-docker run -e SWITCHAI_READONLY=1 \
-  -v ~/.switchailocal:/root/.switchailocal:ro \
-  -p 18080:18080 \
-  switchailocal:latest
-```
-
-<Tip>
-The `:ro` flag mounts the volume as read-only at the Docker level, preventing any writes.
-</Tip>
-
-## NixOS Integration
-
-### Declarative Configuration
-
-```nix
-{
-  environment.variables = {
-    SWITCHAI_STATE_DIR = "/var/lib/switchailocal";
-    SWITCHAI_READONLY = "1";  # Optional: enable read-only mode
-  };
-
-  systemd.tmpfiles.rules = [
-    "d /var/lib/switchailocal 0700 switchai switchai -"
-  ];
-}
-```
-
-### Stateful Directory
-
-```nix
-{
-  systemd.services.switchailocal = {
-    serviceConfig = {
-      StateDirectory = "switchailocal";
-      StateDirectoryMode = "0700";
-    };
-  };
-}
+ls -la "${SWITCHAI_STATE_DIR:-$HOME/.switchailocal}"/{discovery,intelligence}
 ```
 
 ## Troubleshooting
 
-### State Box Directory Not Found
+<AccordionGroup>
+  <Accordion title="Nothing is created under the State Box">
+    The intelligence directories are only created when `intelligence.enabled: true` and `SWITCHAI_READONLY` is not `1`. Check the startup log for `StateBox initialized at ... (read-only: false)`.
+  </Accordion>
+  <Accordion title="Read-only environment: write operations disabled">
+    Expected when `SWITCHAI_READONLY=1`. Unset it (any value other than `1` means writable) and restart.
+  </Accordion>
+  <Accordion title="permission hardening: failed to chmod">
+    The process user does not own the file, or the filesystem rejects `chmod` (some network or cross-UID mounts). Run switchAILocal as the owner of the directory, or use a local volume.
+  </Accordion>
+  <Accordion title="Virtual-model weights restart from zero after every restart">
+    The scheduler state file could not be written (read-only mode or permissions). Routing still works; only the round-robin position is not persisted.
+  </Accordion>
+</AccordionGroup>
 
-**Error:** `State Box root directory does not exist`
+## See also
 
-**Solution:** The directory will be created automatically on first write. If you need to pre-create it:
-
-```bash
-mkdir -p ~/.switchailocal
-chmod 0700 ~/.switchailocal
-```
-
-### Permission Denied Errors
-
-**Error:** `permission denied` when accessing State Box files
-
-**Solution:** Run the permission hardening manually:
-
-```bash
-# Restart switchAILocal to trigger automatic hardening
-./switchAILocal
-```
-
-Or manually fix permissions:
-
-```bash
-chmod 0700 ~/.switchailocal
-chmod 0700 ~/.switchailocal/discovery
-chmod 0700 ~/.switchailocal/intelligence
-chmod 0700 ~/.switchailocal/credentials
-chmod 0600 ~/.switchailocal/discovery/registry.json
-chmod 0600 ~/.switchailocal/intelligence/feedback.db
-```
-
-### Read-Only Mode Errors
-
-**Error:** `Read-only environment: write operations disabled`
-
-**Solution:** This is expected when `SWITCHAI_READONLY=1` is set. To enable writes:
-
-```bash
-unset SWITCHAI_READONLY
-./switchAILocal
-```
-
-### Corrupted Files
-
-**Error:** `failed to parse registry.json`
-
-**Solution:** The system will automatically restore from the `.bak` file:
-
-```bash
-# Manual recovery if needed
-cp ~/.switchailocal/discovery/registry.json.bak ~/.switchailocal/discovery/registry.json
-chmod 0600 ~/.switchailocal/discovery/registry.json
-```
-
-## Security Best Practices
-
-### 1. Protect Credentials
-
-Never commit credentials to version control:
-
-```bash
-# Add to .gitignore
-echo "~/.switchailocal/" >> .gitignore
-```
-
-### 2. Use Environment Variables
-
-For sensitive data, use environment variables instead of config files:
-
-```bash
-export GEMINI_API_KEY="your-key-here"
-export CLAUDE_API_KEY="your-key-here"
-```
-
-### 3. Regular Backups
-
-Back up your State Box regularly:
-
-```bash
-# Daily backup
-tar -czf ~/backups/switchai-$(date +%Y%m%d).tar.gz ~/.switchailocal/
-```
-
-### 4. Monitor Permissions
-
-Verify permissions are correct:
-
-```bash
-ls -la ~/.switchailocal/
-ls -la ~/.switchailocal/discovery/
-ls -la ~/.switchailocal/intelligence/
-ls -la ~/.switchailocal/credentials/
-```
-
-Expected output:
-```
-drwx------  user  group  ~/.switchailocal/
--rw-------  user  group  ~/.switchailocal/discovery/registry.json
--rw-------  user  group  ~/.switchailocal/intelligence/feedback.db
-```
-
-### 5. Read-Only Deployments
-
-For production deployments, use read-only mode:
-
-```bash
-SWITCHAI_READONLY=1 ./switchAILocal
-```
-
-## Advanced Topics
-
-### Custom State Box Location
-
-For multi-user systems or special deployments:
-
-```bash
-# User-specific State Box
-export SWITCHAI_STATE_DIR=~/.config/switchailocal
-
-# System-wide State Box
-export SWITCHAI_STATE_DIR=/opt/switchailocal/state
-```
-
-### Migrating Existing Data
-
-If you have existing data in a different location:
-
-```bash
-# Copy existing data to State Box
-mkdir -p ~/.switchailocal
-cp -r /old/location/* ~/.switchailocal/
-
-# Fix permissions
-chmod 0700 ~/.switchailocal
-chmod 0700 ~/.switchailocal/discovery
-chmod 0700 ~/.switchailocal/intelligence
-chmod 0700 ~/.switchailocal/credentials
-chmod 0600 ~/.switchailocal/discovery/registry.json
-chmod 0600 ~/.switchailocal/intelligence/feedback.db
-```
-
-### Monitoring State Box Operations
-
-Enable debug logging to see State Box operations:
-
-```bash
-# Set log level to debug
-export LOG_LEVEL=debug
-./switchAILocal
-```
-
-Look for log messages like:
-```
-StateBox initialized at /Users/user/.switchailocal (read-only: false)
-security audit: corrected permissions for ...
-permission hardening: corrected X file/directory permissions
-```
-
-## FAQ
-
-**Q: Can I use a network drive for State Box?**  
-A: Not recommended. Network drives may not support atomic operations reliably. Use local storage for best results.
-
-**Q: What happens if State Box is on a read-only filesystem?**  
-A: Set `SWITCHAI_READONLY=1` to enable read-only mode. The system will continue to function for queries.
-
-**Q: Can I share State Box between multiple machines?**  
-A: Not recommended. Each machine should have its own State Box to avoid conflicts.
-
-**Q: How do I recover from a corrupted State Box?**  
-A: The system automatically restores from `.bak` files. If needed, delete the corrupted file and restart.
-
-**Q: Is State Box compatible with cloud storage (Dropbox, iCloud)?**  
-A: Not recommended. Cloud sync may interfere with atomic writes. Use local storage.
-
-**Q: Can I disable State Box?**  
-A: No, State Box is mandatory. However, you can use read-only mode to prevent writes.
-
-## See Also
-
-- [Configuration Guide](/configuration/overview) - Complete config.yaml options
-- [Management Dashboard](/guides/guides/management-dashboard) - Web UI for state management
-- [API Reference](/api/overview) - HTTP API documentation
+- [Authentication](/concepts/authentication): where OAuth tokens and `auth-dir` live
+- [Cortex Router](/intelligent-systems/cortex-router): intelligence features that write to the State Box
+- [Virtual Models](/advanced/virtual-models)

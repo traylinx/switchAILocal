@@ -1,198 +1,190 @@
 ---
 title: 'Server Configuration'
-description: 'Configure host, port, TLS, logging, and core server behavior'
+description: 'Listener, TLS, logging, retries, streaming, routing, performance and observability'
 icon: 'server'
 ---
 
-## Basic Server Settings
+All keys on this page are top-level keys in `config.yaml`. "Default" means the
+value used when the key is absent, which can differ from what
+`config.example.yaml` sets.
 
-### Host and Port
-
-Control which network interface and port the server binds to:
+## Listener
 
 ```yaml config.yaml
-host: ""        # Bind all interfaces (default)
-port: 18080      # Server port (default: 18080)
-```
-
-<ParamField path="host" type="string" default="">
-  Network interface to bind. Empty string binds all interfaces (IPv4 + IPv6). Use `"127.0.0.1"` or `"localhost"` to restrict to local-only access.
-</ParamField>
-
-<ParamField path="port" type="integer" default="18080">
-  TCP port for the HTTP/HTTPS server.
-</ParamField>
-
-**Examples:**
-
-```yaml
-# Local development (localhost only)
 host: "127.0.0.1"
 port: 18080
 ```
 
-```yaml
-# Production (all interfaces)
-host: ""
-port: 443  # Requires TLS
-```
+<ParamField path="host" type="string" default='""'>
+  Interface to bind. Empty binds all interfaces (IPv4 and IPv6). Use
+  `"127.0.0.1"` to accept local connections only. Inside a container keep it
+  empty, or the published port is unreachable. Restart required.
+</ParamField>
 
-## TLS Configuration
+<ParamField path="port" type="integer" default="none">
+  TCP port for HTTP or HTTPS. There is no built-in default: always set it.
+  `18080` is the conventional value used throughout these docs and the Docker
+  image. If omitted, the server binds a random free port. Restart required.
+</ParamField>
 
-Enable HTTPS with TLS certificates:
+## TLS
 
 ```yaml config.yaml
 tls:
-  enable: false
-  cert: ""
-  key: ""
+  enable: true
+  cert: "/etc/letsencrypt/live/ai.example.com/fullchain.pem"
+  key: "/etc/letsencrypt/live/ai.example.com/privkey.pem"
 ```
 
 <ParamField path="tls.enable" type="boolean" default="false">
-  Enable HTTPS mode. When `true`, server listens with TLS.
+  Serve HTTPS on `port` instead of HTTP. There is no separate HTTP listener.
 </ParamField>
 
 <ParamField path="tls.cert" type="string">
-  Path to TLS certificate file (PEM format). Required when TLS is enabled.
+  PEM certificate (full chain). Required when `enable` is `true`.
 </ParamField>
 
 <ParamField path="tls.key" type="string">
-  Path to TLS private key file (PEM format). Required when TLS is enabled.
+  PEM private key. Required when `enable` is `true`.
 </ParamField>
 
-**Example with Let's Encrypt:**
+With an empty `cert` or `key` the listener fails with
+`tls.cert or tls.key is empty`. Restart after any TLS change.
 
-```yaml
-tls:
-  enable: true
-  cert: "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
-  key: "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
-```
+## Credential folder
 
-<Warning>
-  Changing TLS settings requires a server restart. Hot reload does not apply to certificate paths.
-</Warning>
-
-## Authentication Directory
-
-Specify where authentication tokens and session data are stored:
-
-```yaml config.yaml
-auth-dir: "~/.switchailocal"
-```
-
-<ParamField path="auth-dir" type="string" default="~/.switchailocal">
-  Directory for authentication token files and session data. Supports `~` for home directory expansion.
+<ParamField path="auth-dir" type="string" default="none">
+  Folder for credential files written by [logins](/cli/login) and the
+  management panel (`claude-<email>.json`, `vertex-<project>.json`, ...). A
+  leading `~` is expanded. After expansion, an absolute path must be inside your
+  home directory, `/etc/`, `/usr/` or `/var/`, and `..` is not allowed. Created
+  on first start if missing. The example config uses `"~/.switchailocal"`.
 </ParamField>
 
-This directory stores:
-- OAuth tokens for providers (Google Gemini, etc.)
-- Session state
-- Authentication cache
-
-## Logging Configuration
-
-### Debug Mode
+## Logging
 
 ```yaml config.yaml
 debug: false
-```
-
-<ParamField path="debug" type="boolean" default="false">
-  Enable debug-level logging and detailed error messages. Useful for troubleshooting but verbose in production.
-</ParamField>
-
-### File Logging
-
-```yaml config.yaml
 logging-to-file: false
 logs-max-total-size-mb: 0
-```
-
-<ParamField path="logging-to-file" type="boolean" default="false">
-  When `true`, write logs to rotating files in `./logs/` instead of stdout.
-</ParamField>
-
-<ParamField path="logs-max-total-size-mb" type="integer" default="0">
-  Maximum total size (MB) of log files. Oldest logs are deleted when limit is exceeded. Set to `0` to disable limit.
-</ParamField>
-
-**Example production logging:**
-
-```yaml
-debug: false
-logging-to-file: true
-logs-max-total-size-mb: 1000  # 1GB total log retention
-```
-
-## WebSocket Configuration
-
-```yaml config.yaml
-ws-auth: true
-```
-
-<ParamField path="ws-auth" type="boolean" default="true">
-  Enable authentication for WebSocket API (`/v1/ws`). Recommended to keep enabled for security.
-</ParamField>
-
-## Usage Statistics
-
-```yaml config.yaml
+request-log: false
 usage-statistics-enabled: false
 ```
 
-<ParamField path="usage-statistics-enabled" type="boolean" default="false">
-  Enable in-memory usage statistics aggregation. When `false`, usage data is discarded.
+<ParamField path="debug" type="boolean" default="false">
+  Debug-level logs and more detailed errors.
 </ParamField>
 
-When enabled, usage stats are available via the Management API dashboard.
+<ParamField path="logging-to-file" type="boolean" default="false">
+  Write logs to `logs/main.log` (relative to the start folder, or
+  `$WRITABLE_PATH/logs`) instead of stdout. The file rotates at 10 MB.
+</ParamField>
 
-## Proxy Settings
+<ParamField path="logs-max-total-size-mb" type="integer" default="0">
+  Upper bound for the `logs/` folder. When exceeded, the oldest files are deleted
+  (the active `main.log` is kept). `0` disables the limit.
+</ParamField>
 
-Configure a global proxy for outbound requests:
+<ParamField path="request-log" type="boolean" default="false">
+  Record full request and response details for each API call in the `logs/`
+  folder. Toggle it at runtime with `PUT /v0/management/request-log`; read
+  entries with `GET /v0/management/request-log-by-id/:id` and
+  `/v0/management/request-error-logs`. Bodies can contain prompts and secrets.
+</ParamField>
+
+<ParamField path="usage-statistics-enabled" type="boolean" default="false">
+  Aggregate request and token counts in memory, served at
+  `GET /v0/management/usage`. Lost on restart.
+</ParamField>
+
+## Observability
 
 ```yaml config.yaml
-proxy-url: ""
+observability:
+  log-format: "text"
+  metrics:
+    enabled: false
+    path: "/metrics"
+  request-events:
+    enabled: false
+    output: "stdout"
+    file-path: "logs/events.ndjson"
 ```
 
-<ParamField path="proxy-url" type="string">
-  Global proxy URL. Supports `socks5://`, `http://`, and `https://` protocols.
+<ParamField path="observability.log-format" type="string" default="text">
+  `text` for human-readable logs, `json` for structured logs (Loki, ELK,
+  Datadog).
 </ParamField>
 
-**Examples:**
+<ParamField path="observability.metrics.enabled" type="boolean" default="false">
+  Serve Prometheus metrics on the main port. The endpoint is **not
+  authenticated**; do not expose it publicly. Restart required.
+</ParamField>
 
-```yaml
-# SOCKS5 proxy with authentication
-proxy-url: "socks5://user:pass@192.168.1.1:1080/"
-```
+<ParamField path="observability.metrics.path" type="string" default="/metrics">
+  HTTP path for metrics.
+</ParamField>
 
-```yaml
-# HTTP proxy
-proxy-url: "http://proxy.company.com:8080"
-```
+<ParamField path="observability.request-events.enabled" type="boolean" default="false">
+  Emit one JSON line per proxied request (model, provider, latency, tokens,
+  routing metadata). Restart required.
+</ParamField>
+
+<ParamField path="observability.request-events.output" type="string" default="stdout">
+  `stdout` or `file`.
+</ParamField>
+
+<ParamField path="observability.request-events.file-path" type="string" default="logs/events.ndjson">
+  Target file when `output` is `file`. Parent folders are created.
+</ParamField>
 
 <Note>
-  Individual providers can override the global proxy using their own `proxy-url` setting.
+  `observability.request-events.include-body` is accepted but has no effect in
+  0.6.2.
 </Note>
 
-## Request Retry Configuration
+## Outbound proxy
+
+<ParamField path="proxy-url" type="string" default='""'>
+  Proxy for outbound provider requests: `socks5://`, `http://` or `https://`,
+  credentials allowed (`socks5://user:pass@host:1080`). Provider entries can
+  override it with their own `proxy-url`.
+</ParamField>
+
+## Retries and cooldowns
+
+Within one attempt, a request already fails over across all matching
+credentials and providers. These keys control what happens after every
+candidate failed.
 
 ```yaml config.yaml
 request-retry: 3
-max-retry-interval: 0
+max-retry-interval: 30
+disable-cooling: false
 ```
 
-<ParamField path="request-retry" type="integer" default="3">
-  Number of retry attempts for requests that fail with specific HTTP errors (403, 408, 500, 502, 503, 504).
+<ParamField path="request-retry" type="integer" default="0">
+  Extra attempts after all candidates failed. A retry only happens when a
+  failed credential will leave its cooldown within `max-retry-interval`; the
+  server waits for that and tries again.
 </ParamField>
 
 <ParamField path="max-retry-interval" type="integer" default="0">
-  Maximum wait time in seconds before retrying a cooled-down credential. `0` means no limit.
+  Longest wait in seconds for a cooled-down credential before retrying. `0`
+  disables these waits, so `request-retry` has no effect unless you set this.
 </ParamField>
 
-## Streaming Configuration
+<ParamField path="disable-cooling" type="boolean" default="false">
+  Do not put credentials into cooldown after quota or rate-limit errors.
+</ParamField>
 
-Control SSE heartbeats and bootstrap retry behavior:
+<ParamField path="quota-exceeded" type="object">
+  `switch-project` and `switch-preview-model` (both default `false`) are
+  accepted and editable through the management API, but no request path uses
+  them in 0.6.2.
+</ParamField>
+
+## Streaming
 
 ```yaml config.yaml
 streaming:
@@ -200,118 +192,140 @@ streaming:
   bootstrap-retries: 2
 ```
 
-<ParamField path="streaming.keepalive-seconds" type="integer" default="15">
-  Heartbeat interval in seconds for SSE streams. Set to `0` to disable keepalive messages.
+<ParamField path="streaming.keepalive-seconds" type="integer" default="disabled">
+  Interval for SSE keep-alive comments (`: keep-alive`). Absent, `0` or negative
+  disables them. Set this if a proxy between client and server closes idle
+  streams.
 </ParamField>
 
-<ParamField path="streaming.bootstrap-retries" type="integer" default="2">
-  Number of retries before the first byte is sent to handle auth rotation. `0` disables bootstrap retries.
+<ParamField path="streaming.bootstrap-retries" type="integer" default="0">
+  How often a streaming request may be retried on another credential before the
+  first byte reaches the client.
 </ParamField>
 
-Bootstrap retries allow switchAILocal to transparently recover from transient auth failures before streaming begins.
+Stream stall detection lives under [`performance.streaming`](#performance).
 
-## Quota Exceeded Behavior
-
-Configure automatic failover when API quotas are hit:
-
-```yaml config.yaml
-quota-exceeded:
-  switch-project: true
-  switch-preview-model: true
-```
-
-<ParamField path="quota-exceeded.switch-project" type="boolean" default="true">
-  Automatically switch to the next available project/credential when quota is exceeded.
-</ParamField>
-
-<ParamField path="quota-exceeded.switch-preview-model" type="boolean" default="true">
-  Fallback to preview models (if available) when quota is exceeded on stable models.
-</ParamField>
-
-## Routing Strategy
-
-Configure how credentials are selected when multiple match:
+## Credential selection
 
 ```yaml config.yaml
 routing:
   strategy: "round-robin"
-  # auto-model-priority:
-  #   - "ollama:gpt-oss:120b-cloud"
-  #   - "switchai-chat"
-  #   - "gemini-2.5-flash"
-```
-
-<ParamField path="routing.strategy" type="string" default="round-robin">
-  Credential selection strategy. Options:
-  - `round-robin`: Distribute requests evenly across credentials
-  - `fill-first`: Use first credential until quota/error, then move to next
-</ParamField>
-
-<ParamField path="routing.auto-model-priority" type="array">
-  Priority list for "auto" model resolution. System checks models in order and picks the first active one. Supports `provider:model` syntax.
-</ParamField>
-
-## Model Prefix Enforcement
-
-```yaml config.yaml
 force-model-prefix: false
 ```
 
-<ParamField path="force-model-prefix" type="boolean" default="false">
-  When `true`, unprefixed model requests only use credentials without a prefix. When `false`, unprefixed requests can match any available credential.
+<ParamField path="routing.strategy" type="string" default="round-robin">
+  How to choose among several credentials that serve the same model:
+  - `round-robin`: rotate across them.
+  - `fill-first` (also `fillfirst`, `ff`): use the first until it fails or cools
+    down, then the next.
 </ParamField>
 
-**Example:**
+<ParamField path="force-model-prefix" type="boolean" default="false">
+  When `true`, a model name without a credential prefix only uses credentials
+  that have no `prefix`; `teamA/model` only uses credentials with
+  `prefix: "teamA"`. When `false`, unprefixed requests may use prefixed
+  credentials too.
+</ParamField>
 
-With `force-model-prefix: true`:
-- Request for `gemini-pro` → Only uses unprefixed Gemini credentials
-- Request for `team-a/gemini-pro` → Only uses credentials with `prefix: "team-a"`
+<Note>
+  `routing.auto-model-priority` is a legacy key. On load it is converted into
+  `auto-routing.preferences` and removed from the file. See
+  [Auto-routing](/api/auto-routing).
+</Note>
 
-## Complete Example
+## Performance
+
+All blocks are optional. Values shown are the defaults applied when a key is
+absent. Restart after changes.
 
 ```yaml config.yaml
-# Production server configuration
-host: ""
-port: 443
-
-tls:
-  enable: true
-  cert: "/etc/ssl/certs/switchai.pem"
-  key: "/etc/ssl/private/switchai.key"
-
-auth-dir: "~/.switchailocal"
-
-# Logging
-debug: false
-logging-to-file: true
-logs-max-total-size-mb: 2000
-
-# Security
-ws-auth: true
-
-# Performance
-usage-statistics-enabled: true
-request-retry: 3
-
-streaming:
-  keepalive-seconds: 30
-  bootstrap-retries: 3
-
-routing:
-  strategy: "round-robin"
-
-quota-exceeded:
-  switch-project: true
-  switch-preview-model: true
+performance:
+  rate-limiter:
+    enabled: false
+    global-requests-per-second: 1000
+    global-burst: 500
+    per-key-requests-per-second: 60
+    per-key-burst: 30
+  load-shedding:
+    enabled: false
+    max-in-flight: 500
+    retry-after-seconds: 5
+  circuit-breaker:
+    enabled: false
+    failure-threshold: 5
+    reset-timeout: 30s
+    half-open-max: 3
+  provider-timeouts:
+    default: 120s
+    per-provider:
+      ollama: 180s
+  streaming:
+    first-byte-timeout: 15s
+    stall-timeout: 60s
+    per-provider: {}
+  profiling-enabled: false
+  pprof-port: 6060
 ```
 
-## Next Steps
+| Key | Default | Meaning |
+| --- | ------- | ------- |
+| `rate-limiter.enabled` | `false` | Token-bucket limits; excess requests get `429` with `Retry-After` |
+| `rate-limiter.global-requests-per-second` / `global-burst` | `1000` / `500` | Limit across all clients |
+| `rate-limiter.per-key-requests-per-second` / `per-key-burst` | `60` / `30` | Limit per `Authorization` value |
+| `load-shedding.enabled` | `false` | Reject requests with `503` above the in-flight limit |
+| `load-shedding.max-in-flight` | `500` | Concurrent requests before shedding |
+| `load-shedding.retry-after-seconds` | `5` | `Retry-After` value on shed requests |
+| `circuit-breaker.enabled` | `false` | Per-provider breaker; open providers are skipped so failover moves on |
+| `circuit-breaker.failure-threshold` | `5` | Consecutive failures that open the circuit |
+| `circuit-breaker.reset-timeout` | `30s` | Time open before a half-open probe |
+| `circuit-breaker.half-open-max` | `3` | Probe requests allowed while half-open |
+| `provider-timeouts.default` | `120s` | Whole-request timeout for providers without an entry |
+| `provider-timeouts.per-provider` | `{}` | Map of provider name to timeout |
+| `streaming.first-byte-timeout` | `15s` | Wait for the first upstream byte; a stall here can still fail over |
+| `streaming.stall-timeout` | `60s` | Max gap between chunks; the stream then ends with an SSE error event |
+| `streaming.per-provider` | `{}` | Map of provider name to first-byte timeout |
+| `profiling-enabled` | `false` | Start a pprof server on `127.0.0.1:<pprof-port>` |
+| `pprof-port` | `6060` | pprof port |
+
+`config.example.yaml` enables the circuit breaker with
+`failure-threshold: 3` and `reset-timeout: 5m`.
+
+## Example
+
+```yaml config.yaml
+host: ""
+port: 18080
+
+auth-dir: "~/.switchailocal"
+api-keys:
+  - "sk-your-key"
+
+logging-to-file: true
+logs-max-total-size-mb: 500
+observability:
+  log-format: "json"
+
+request-retry: 2
+max-retry-interval: 30
+
+streaming:
+  keepalive-seconds: 15
+  bootstrap-retries: 2
+
+performance:
+  circuit-breaker:
+    enabled: true
+    failure-threshold: 3
+    reset-timeout: 5m
+```
+
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Provider Configuration" icon="plug" href="/configuration/providers">
-    Configure API keys for cloud and local AI providers
+  <Card title="Providers" icon="plug" href="/configuration/providers">
+    Credentials, local servers, aliases
   </Card>
-  <Card title="Security Settings" icon="shield" href="/configuration/security">
-    Set up API authentication and management access
+  <Card title="Security" icon="shield" href="/configuration/security">
+    Client keys and management access
   </Card>
 </CardGroup>

@@ -1,195 +1,202 @@
 ---
 title: 'Auto-Routing Setup'
-description: 'Step-by-step guide to enabling Intelligent Auto-Routing (Cortex)'
+description: 'Let model "auto" pick a model by health, latency, quota and intent'
 ---
 
-## Overview
+## What it is
 
-The Cortex Intelligent Auto-Routing engine automatically selects the optimal model for each request based on provider health, latency, quota, and success rate. This guide walks you through enabling and configuring it.
+The **auto-routing engine** (`internal/autoroute`, config block `auto-routing:`) handles requests whose `model` is `auto`, `auto:<intent>`, `cortex`, or empty. It:
 
-## Quick Start
+1. Probes your providers at startup to build a candidate list (provider + model).
+2. Estimates prompt complexity and classifies intent with fast keyword heuristics (no LLM call).
+3. Optionally narrows candidates with an `intent-matrix`, and removes `disabled-providers`.
+4. Scores every candidate and returns the winner plus the remaining available candidates as fallbacks.
+5. Learns from outcomes: latency, success rate and rate-limit headers feed back into the scores.
 
-Add this block to your `config.yaml`:
+It is separate from the Lua [Cortex Router](/intelligent-systems/cortex-router) plugin and the `intelligence:` block. If the Lua plugin is enabled it runs first and can rewrite `auto` before this engine sees it.
+
+## When to use it
+
+- You have several working providers and want cheap, healthy ones picked automatically for simple prompts.
+- You want requests to move away from a provider that starts failing or rate limiting.
+- You want simple intent hints (`auto:coding`) without maintaining a classifier model.
+
+If you want a fixed set of backends with exact ratios, use [Virtual Models](/advanced/virtual-models) instead.
+
+## Minimal working config
 
 ```yaml config.yaml
 auto-routing:
   enabled: true
-  max-resolution-ms: 5ms
+```
 
-  weights:
+Everything else has defaults. Restart the server; the log shows `Initializing Intelligent Auto-Routing System`, one `Discovered provider models` line per reachable provider, and `Intelligent Auto-Routing Ready` with the candidate count.
+
+## Example request
+
+```bash
+curl -i http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a binary search in Go"}]}'
+```
+
+The response carries:
+
+```text
+X-Auto-Routed: true
+X-Selected-Model: <winning candidate model ID>
+X-Selected-Provider: <text before the first ":" of that ID, or the whole ID>
+```
+
+## How candidates are found
+
+Candidates come from boot-time probes only (`internal/api/server.go`):
+
+| Source | Probe | Candidate provider ID |
+|--------|-------|-----------------------|
+| `gemini`, `claude`, `codex` binaries | `<binary> --version` (and `claude account` for a tier hint) | `geminicli`, `claudecli`, `codex` |
+| each `gemini-api-key` entry | `GET <base-url>/v1beta/models` (or `models-url`) | `gemini-api-<n>` |
+| each `claude-api-key` entry | `GET <base-url>/v1/models` (or `models-url`) | `claude-api-<n>` |
+| `ollama.enabled: true` | `GET <base-url>/api/tags` | `ollama` |
+
+Models are taken from the probe response. CLI probes return no model list, so CLIs only contribute candidates when `probe-on-startup: false`, in which case a fixed fallback set is used instead of probing: `geminicli`, `claudecli`, `codex`, `ollama`, each with model `auto`.
+
+<Warning>
+Known limitations in this release:
+- `openai-compatibility`, `switchai`, LM Studio, OpenCode and virtual models are **not** probed, so they never become auto-routing candidates.
+- API-key probes register under synthetic provider IDs (`gemini-api-0`, `claude-api-0`) that have no executor. If one of them wins, that attempt fails with `executor not registered` and the request moves to the next provider. Use `disabled-providers: [gemini-api-0, claude-api-0]` or rely on Ollama/CLI candidates.
+- The winner's provider is derived from its model ID (text before the first `:`). Probe-discovered IDs such as `llama3.2` carry no provider prefix, so the first attempt targets a non-existent provider and the request is actually served by the next candidate's provider. This works when that provider also has the model (for example two Ollama candidates); `X-Selected-Provider` shows the derived value, not the provider that answered.
+- The fallback chain is a list of providers, but every attempt sends the **winner's** model name. A fallback provider that does not serve that model fails with `no active credentials found`.
+- The Gemini API-key probe sends the key as a Bearer token and expects an OpenAI-style `data` list, so against the official Gemini API it reports no models.
+- `probe-interval` and `passive-monitoring` are accepted but not used; there is no periodic re-probing. Restart to rediscover.
+</Warning>
+
+## How a candidate is scored
+
+```text
+base   = w.availability × available(0|1)
+       + w.quota        × quota_health(0..1)
+       + w.latency      × latency_score   (0 ms → 1.0, ≥5000 ms → 0.0, unknown → 0.5)
+       + w.success-rate × success_rate    (unknown → 0.7)
+final  = (base + tier_boost + preference × 0.20) × conservation_multiplier
+```
+
+- **Tier boost:** `premium` +0.30, `standard` +0.15, `local` +0.05, `free` 0, `reserve` −0.10. Tiers come from `auto-routing.providers.<id>.tier` / `model-tiers`, otherwise from the provider name: IDs ending in `cli` → standard, `gemini`/`claude`/`codex` → standard, `lmstudio` → local, everything else (including `ollama`) → free.
+- **Preference:** an exact match on the candidate's model ID adds `preference × 0.20`.
+- **Conservation:** complexity is estimated from request size (`len/4` tokens bucketed to 0.1–0.9). If complexity is below `simple-threshold-tokens / 1000`, premium tiers get ×0.3 and free/local tiers ×1.5; above 0.7, premium gets ×1.2.
+- Ties go to lower latency, then alphabetical model ID.
+
+### Intent classification
+
+`auto:<hint>` sets the intent directly. Hints are normalized: `code`/`programming`/`dev` → `coding`, `think`/`math`/`logic` → `reasoning`, `write`/`story`/`poem` → `creative`, `quick`/`simple`/`chat` → `fast`, `image`/`screenshot` → `vision`, `private`/`local`/`sensitive` → `secure`; unknown hints pass through unchanged. Without a hint, keyword heuristics pick `vision`, `secure`, `coding`, `reasoning`, `creative`, `fast`, or `general`.
+
+The intent only matters if you define an `intent-matrix`. Candidates whose model ID appears in the matching list are kept; if none match, all candidates stay.
+
+## Learning from traffic
+
+After each auto-routed request the outcome updates per-provider health: latency (moving average), success rate, and quota health from rate-limit headers (`anthropic-ratelimit-*`, `x-ratelimit-*`). Three consecutive failures mark a provider degraded; ten (or a single 429) mark it unavailable and start a cooldown of 5 s doubling up to 5 min (±10% jitter). A background loop clears expired cooldowns every 60 s.
+
+With `lab.enabled: true`, a shadow experiment evaluates alternative weights, keeps or discards them per `adaptation-interval`, and journals decisions to `logs/autoroute/experiments.tsv` next to your config file.
+
+## Configuration reference
+
+```yaml config.yaml
+auto-routing:
+  enabled: true                 # default false
+  max-resolution-ms: 5ms        # scoring time budget; Go duration
+  weights:                      # must sum to 1.0, otherwise all four are reset to the defaults below
     availability: 0.35
     quota: 0.25
     latency: 0.20
     success-rate: 0.20
-
+  preferences:
+    - model: "llama3.2"         # matches the candidate model ID exactly
+      preference: 0.9           # 0.0 – 1.0
+      reason: "local first"
+  providers:
+    ollama:
+      tier: local               # premium | standard | free | local | reserve
+      model-tiers:
+        "qwen3:32b": standard
+  intent-matrix:
+    coding: ["qwen3-coder:30b", "gemini-2.5-pro"]
+  disabled-providers: ["gemini-api-0"]   # never selected; no auto-recovery
   discovery:
-    enabled: true
+    enabled: true               # must be true or no probes run
     probe-on-startup: true
-    probe-interval: 15m
     probe-timeout: 5s
-    passive-monitoring: true
     cache-ttl: 24h
-
   conservation:
     enabled: true
     simple-threshold-tokens: 500
-    premium-conservation-at: 0.20
-
   lab:
-    enabled: true
+    enabled: false
     adaptation-interval: 24h
     max-weight-drift: 0.10
+    min-observation-window: 10
 ```
 
-Restart the server:
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | Master switch. |
+| `max-resolution-ms` | `5ms` | If scoring exceeds it, the request falls back to legacy auto resolution. |
+| `discovery.enabled` | `false` if omitted | Required for probing. The example config sets it to `true`. |
+| `discovery.probe-timeout` | `5s` | Total probe budget (boot discovery is also capped at 10 s). |
+| `conservation.premium-conservation-at` | `0.20` | Accepted; not used by the scorer in this release. |
+| `providers.<id>.monthly-budget` | — | Accepted; not used. |
+
+### Legacy priority list
+
+```yaml
+routing:
+  auto-model-priority: ["llama3.2", "gemini-2.5-flash"]
+```
+
+On load this list is converted into `auto-routing.preferences` (0.9, 0.8, ... down to 0.1) and removed from the file. If auto-routing is disabled or fails, `auto` resolves to the first available model in this list, else to the newest registered model.
+
+## Observability
 
 ```bash
-ail restart
+# Lab status (requires lab.enabled; otherwise {"enabled": false})
+curl -H "X-Management-Key: $MGMT_KEY" http://localhost:18080/v0/management/autoroute/status
+
+# Last N decisions from the lab journal (1–100, default 50)
+curl -H "X-Management-Key: $MGMT_KEY" "http://localhost:18080/v0/management/autoroute/journal?limit=20"
 ```
 
-You should see `Intelligent Auto-Routing Ready` in the startup logs.
+Both return `503 auto-routing not initialized` when `auto-routing.enabled` is false. With `observability.metrics.enabled: true`, provider health is exported as the `switchailocal_provider_health_score` Prometheus gauge on `/metrics`.
 
-## Configuration Reference
+## Troubleshooting
 
-### Weights
+<AccordionGroup>
+  <Accordion title="No X-Auto-Routed header">
+    Auto-routing did not handle the request. Check that `auto-routing.enabled` and `auto-routing.discovery.enabled` are true, that the startup log reports a non-zero candidate count, and that no Lua plugin rewrote `auto` first.
+  </Accordion>
+  <Accordion title="Intelligent Auto-Routing Ready with candidates=0">
+    No probe returned models. Probes cover only Gemini/Claude API keys and Ollama; make sure Ollama is running, or set `probe-on-startup: false` to use the fixed CLI fallback set.
+  </Accordion>
+  <Accordion title="executor not registered for provider gemini-api-0">
+    A synthetic API-key probe ID won and no fallback succeeded. Add it to `disabled-providers`.
+  </Accordion>
+  <Accordion title="Weights seem ignored">
+    Weights that do not sum to 1.0 (±0.01) are silently replaced with the defaults.
+  </Accordion>
+</AccordionGroup>
 
-Control how models are scored. Must sum to 1.0.
-
-| Weight | Default | Description |
-|--------|---------|-------------|
-| `availability` | 0.35 | Is the provider online and responding? |
-| `quota` | 0.25 | How much daily quota remains? |
-| `latency` | 0.20 | How fast does the provider respond? |
-| `success-rate` | 0.20 | What percentage of requests succeed? |
-
-### Preferences
-
-Soft-steer the router toward specific models:
-
-```yaml config.yaml
-auto-routing:
-  preferences:
-    - model: "claude:claude-3-5-sonnet-20241022"
-      preference: 0.9
-      reason: "Best reasoning model"
-    - model: "geminicli:gemini-2.5-flash"
-      preference: 0.8
-      reason: "Fast and free"
-```
-
-### Intent Matrix
-
-The `intent-matrix` defines model pools for specific routing intents. When you request `model: "auto:coding"`, the Cortex Router will evaluate all models in the `coding` list and pick the best one in real-time.
-
-```yaml config.yaml
-auto-routing:
-  intent-matrix:
-    coding:          # Coding & technical tasks
-      - "claude:claude-3-5-sonnet-20241022"
-      - "geminicli:gemini-3.1-pro-preview"
-    fast:            # Rapid heuristic tasks
-      - "switchai:switchai-fast"
-    reasoning:       # Deep logic puzzles
-      - "claude:claude-3-5-sonnet-20241022"
-    creative:        # Storytelling & roleplay
-      - "geminicli:gemini-2.5-pro"
-    vision:          # Image / multimodal understanding
-      - "ail-compound"
-    audio:           # Audio input processing
-      - "ail-compound"
-    transcription:   # Speech-to-text (groq-hosted whisper)
-      - "whisper-large-v3"
-    speech:          # Text-to-speech (MiniMax T2A adapter)
-      - "ail-speech"
-    web_search:      # Live web lookups (MiniMax native tool)
-      - "ail-compound"
-    music_generation:   # Text-to-music (MiniMax music adapter, /v1/music/generations)
-      - "ail-music"
-    music_cover:        # Reference-audio style transfer (same endpoint, different model)
-      - "ail-music-cover"
-    lyrics_generation:  # Structured song lyrics (POST /v1/music/lyrics)
-      - "ail-music"
-```
-
-> **FAQ: Why do I also have a `pipeline.intelligence.matrix` in my config?**
-> The `pipeline.intelligence.matrix` evaluates to a **single, hardcoded string** and is used purely by the legacy Lua pipeline as strict fallbacks. 
-> The `auto-routing.intent-matrix` takes an **array of strings** and powers the modern Cortex Intelligent Lab, performing real-time health checks, latency scoring, and dynamic load balancing across multiple candidate models!
-
-### Conservation
-
-Token conservation prevents expensive models from being used for trivial tasks:
-
-```yaml config.yaml
-auto-routing:
-  conservation:
-    enabled: true
-    simple-threshold-tokens: 500    # Requests below this token count are "simple"
-    premium-conservation-at: 0.20   # Penalize premium models by 20% for simple tasks
-```
-
-### Autonomous Lab
-
-The Lab automatically optimizes scoring weights through shadow experiments:
-
-```yaml config.yaml
-auto-routing:
-  lab:
-    enabled: true
-    adaptation-interval: 24h       # Duration of each experiment window
-    max-weight-drift: 0.10         # Max allowed weight change per hypothesis
-```
-
-## Verifying It Works
-
-### 1. Check the Dashboard
-
-Navigate to `http://localhost:18080/management` and look for the **Auto-Routing Card**.
-
-### 2. Test with curl
-
-```bash
-# Simple auto-routing
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello!"}]}'
-
-# Intent-based routing
-curl http://localhost:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"model": "auto:coding", "messages": [{"role": "user", "content": "Write a sort algorithm"}]}'
-
-# Vector Embeddings
-curl http://localhost:18080/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"input": "Convert this string into a vector embedding"}'
-```
-
-### 3. Check Telemetry
-
-```bash
-# Lab status
-curl http://localhost:18080/v0/management/autoroute/status
-
-# Recent routing journal
-curl http://localhost:18080/v0/management/autoroute/journal
-```
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Auto-Routing API" icon="route" href="/api/auto-routing">
-    Full API reference for auto-routing
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Where auto-routing sits in model resolution
+  </Card>
+  <Card title="Virtual Models" icon="layer-group" href="/advanced/virtual-models">
+    Fixed pools with exact ratios and capability filtering
   </Card>
   <Card title="Cortex Router" icon="brain" href="/intelligent-systems/cortex-router">
-    Deep dive into the routing architecture
+    The Lua plugin and `intelligence:` matrix
   </Card>
-  <Card title="Management Dashboard" icon="chart-line" href="/guides/management-dashboard">
-    Visualize routing decisions
-  </Card>
-  <Card title="Configuration" icon="gear" href="/configuration/providers">
-    Configure providers
+  <Card title="Auto-Routing API" icon="code" href="/api/auto-routing">
+    API reference
   </Card>
 </CardGroup>

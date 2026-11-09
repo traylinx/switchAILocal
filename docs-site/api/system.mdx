@@ -1,0 +1,87 @@
+---
+title: 'Health & System'
+description: 'GET /, GET /health, GET /metrics, the control panel, and the keep-alive endpoint'
+---
+
+These routes are not behind the client API-key middleware.
+
+## GET /health
+
+```bash
+curl http://localhost:18080/health
+```
+
+```json
+{"status": "ok"}
+```
+
+Always `200` while the HTTP server is up. It does not check providers. For provider health, use [`GET /v1/providers`](/api/models#get-v1providers) or the management [heartbeat status](/api/management/config#intelligent-systems).
+
+## GET /
+
+```json
+{
+  "message": "switchAILocal Server",
+  "endpoints": ["POST /v1/chat/completions", "POST /v1/completions", "GET /v1/models"]
+}
+```
+
+A fixed banner. The list is not the full route table; see [API Overview](/api/overview).
+
+## GET /metrics
+
+Prometheus metrics. Registered only when enabled:
+
+```yaml config.yaml
+observability:
+  metrics:
+    enabled: true
+    path: "/metrics"   # default
+```
+
+Besides the standard Go and process collectors, it exposes:
+
+| Metric | Type |
+|---|---|
+| `switchailocal_requests_total` | counter |
+| `switchailocal_request_duration_milliseconds` | histogram |
+| `switchailocal_llm_tokens_total` | counter |
+| `switchailocal_routing_quality_score` | histogram |
+| `switchailocal_fallbacks_total` | counter |
+| `switchailocal_requests_in_flight` | gauge |
+| `switchailocal_provider_health_score` | gauge |
+| `switchailocal_rate_limited_total` | counter |
+| `switchailocal_load_shed_total` | counter |
+
+The endpoint has no authentication. Do not expose it beyond your monitoring network.
+
+Profiling (`performance.profiling-enabled: true`) starts a separate pprof server on `127.0.0.1:<performance.pprof-port>` (default `6060`), not on the main port.
+
+## GET /management and GET /management.html
+
+Serves the bundled web control panel, a single HTML file downloaded from `remote-management.panel-github-repository` into the static directory.
+
+- Returns `404` when `remote-management.disable-control-panel: true`.
+- Also returns `404` while the file has not been downloaded yet; the download is triggered in the background.
+- The page itself is public. Every API call it makes goes to `/v0/management/*` and needs the [management key](/api/management/overview#authentication).
+
+## GET /keep-alive
+
+Only registered when an embedding application enables it (`WithKeepAliveEndpoint` in the Go SDK). The standalone server does not register it.
+
+Each call resets an idle timer. If no call arrives within the configured timeout, the embedder's shutdown callback runs.
+
+When a local management password is set, the call must carry it as `Authorization: Bearer <password>` or `X-Local-Password`; otherwise it returns `401 {"error":"invalid password"}`. On success it returns `200 {"status":"ok"}`.
+
+## OAuth callbacks
+
+`GET /anthropic/callback`, `/codex/callback`, `/google/callback`, `/iflow/callback`, and `/antigravity/callback` receive browser redirects during provider logins started through the Management API. They store `code` / `state` / `error` for the waiting login and always return a small HTML "you can close this window" page. See [OAuth login flows](/api/management/providers#oauth-login-flows).
+
+## Global middleware
+
+Every route goes through the same middleware chain:
+
+- **CORS:** `Access-Control-Allow-Origin: *`, all methods and headers. `OPTIONS` returns `204`. The Amp management proxy routes clear these headers and reject `OPTIONS` with `403`.
+- **Load shedding** (`performance.load-shedding`): above `max-in-flight` concurrent requests, returns `503` with `Retry-After` and `{"error":{"message":"Service temporarily overloaded...","type":"server_error","code":"service_unavailable"}}`.
+- **Rate limiting** (`performance.rate-limiter`): global and per-key token buckets. Over the limit returns `429`, `Retry-After: 1`, and `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded",...}}`.
+- **Request logging** (`request-log: true`): writes per-request log files that can be retrieved with the management [log endpoints](/api/management/config#logs).

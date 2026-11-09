@@ -95,10 +95,11 @@ configured. For a new provider or model, test chat, streaming, tools/replay,
 vision and embedding dimensions before changing the live route. Pinning a router
 image does not pin or update upstream model availability.
 
-For Cortex, preserve local embeddings and search; verify actual deployed Pi
-client chat/tool replay/vision, not just the generic probe. Provider changes must pass that SDK gate; generic HTTP success is insufficient. For HoCa, preserve its template
-renderer and ordered `.env.production`; local faster-whisper is separate from
-AIL. Do not edit generated HoCa configs or copy credentials between applications.
+Verify the clients that actually use the router (chat, tool replay, vision),
+not just the generic probe: provider changes must pass that client gate, and
+generic HTTP success is insufficient. Preserve each application's own
+configuration renderer and environment files; do not edit generated configs or
+copy credentials between applications.
 
 ### 2. Obtain and inspect the package
 
@@ -173,14 +174,13 @@ confirm inode identity before enabling timers. Root owns the regular lock file,
 not group/other-writable; existing `0644` is allowed. Kernel lock contention
 refuses the update. No PID metadata can bypass it.
 
-For wannolot infrastructure, separately set `AIL_UPDATE_MODE=managed` in the
-private `.env.droplet` **after deploying the reviewed fence changes**. This holds
-its entire legacy runtime GitOps apply and refuses its old AIL update script;
-verify-only still works. The broad hold is intentional because the old renderers,
-key reconciliation and rollback couple AIL/app/embedding mutations. Approve a
-separate manual path for unrelated infra operations; do not assume they continue
-automatically. HoCa needs its own deployment-lock/quiesce adapter before enrollment.
-Do not enable both deployers and hope image overrides will win.
+If another deployer (for example a GitOps job) also manages the router, hold
+that deployer before enrolling: set `AIL_UPDATE_MODE=managed` in its environment
+**after deploying the reviewed fence changes**, so it stops applying and refuses
+its old update script (verify-only still works). Approve a separate manual path
+for unrelated operations it used to perform. A deployment without such a lock or
+quiesce hook needs one before enrollment. Do not enable both deployers and hope
+image overrides will win.
 
 After the operator approves recreation/downtime, set `allow_recreate: true`.
 Then run, as distinct actions:

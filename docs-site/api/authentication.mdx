@@ -1,244 +1,121 @@
 ---
 title: 'Authentication'
-description: 'Secure your API with Bearer tokens and access control'
+description: 'Client API keys, how to send them, which routes are open, and how management auth differs'
 ---
 
-## Overview
+switchAILocal has two independent credentials:
 
-switchAILocal uses Bearer token authentication compatible with the OpenAI API format. Configure access keys in your `config.yaml` or use the Management Dashboard.
+| Credential | Protects | Configured in |
+|---|---|---|
+| **Client API keys** | `/v1/*`, `/openai/v1/*`, `/v1beta/*`, `/v1/ws` (when `ws-auth: true`), Amp routes | `api-keys:` in `config.yaml` |
+| **Management key** | `/v0/management/*` | `remote-management.secret-key` or `MANAGEMENT_PASSWORD` |
 
-## Authentication Methods
+Provider credentials (Gemini, Claude, OpenAI-compatible keys, OAuth files) are a third, separate thing: they are what the gateway uses to call upstream providers and are never sent by clients.
 
-### Bearer Token (Recommended)
+## Configuring client API keys
 
-Include your API key in the `Authorization` header:
+Client keys are a top-level list of strings:
 
-```bash
-curl http://localhost:18080/v1/chat/completions \
-  -H "Authorization: Bearer sk-test-123" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gemini-2.5-pro", "messages": [...]}'
+```yaml config.yaml
+api-keys:
+  - "sk-local-REPLACE-ME"
+  - "sk-laptop-2-REPLACE-ME"
 ```
 
-### X-API-Key Header
+Keys can also be managed at runtime with the [Management API](/api/management/providers#client-api-keys) (`/v0/management/api-keys`). Changes are hot-reloaded.
 
-Alternative header format:
+There are no per-key names, scopes, permissions, or enable flags. A key either matches or it does not.
+
+<Warning>
+**If `api-keys` is empty, every request is accepted**, with or without a key. Combined with the default `host: ""` (all interfaces), that exposes your providers to the network. Always configure at least one key, or bind to `127.0.0.1`.
+</Warning>
+
+Generate a key with enough entropy, for example:
+
+```bash
+echo "sk-$(openssl rand -hex 24)"
+```
+
+## Sending the key
+
+The gateway checks these locations in order and accepts the first one that matches a configured key:
+
+| Location | Example |
+|---|---|
+| `Authorization` header | `Authorization: Bearer sk-local-REPLACE-ME` (a bare value without `Bearer ` also works) |
+| `X-Goog-Api-Key` header | Gemini SDKs |
+| `X-Api-Key` header | Anthropic SDKs |
+| `key` query parameter | `/v1beta/models?key=sk-local-REPLACE-ME` |
+| `auth_token` query parameter | `/v1/ws?auth_token=sk-local-REPLACE-ME` |
 
 ```bash
 curl http://localhost:18080/v1/models \
-  -H "X-API-Key: sk-test-123"
+  -H "Authorization: Bearer sk-local-REPLACE-ME"
 ```
 
-## Configuring Access Keys
-
-### Option 1: Configuration File
-
-Add access keys to `config.yaml`:
-
-```yaml config.yaml
-access:
-  keys:
-    - key: sk-test-123
-      name: "Development Key"
-      enabled: true
-    - key: sk-prod-456
-      name: "Production Key"
-      enabled: true
-```
-
-### Option 2: Management Dashboard
-
-1. Open `http://localhost:18080/management`
-2. Navigate to **API Keys** section
-3. Click **Add Key** to generate new access keys
-4. Copy and use the generated key
-
-### Option 3: Environment Variable
-
-Set a default key via environment variable:
-
-```bash
-export SWITCHAI_ACCESS_KEY=sk-test-123
-./switchAILocal
-```
-
-## SDK Configuration
-
-<CodeGroup>
-```python Python
+```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"  # Your configured access key
-)
-
-response = client.chat.completions.create(
-    model="gemini-2.5-pro",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-local-REPLACE-ME")
 ```
 
-```javascript Node.js
-import OpenAI from 'openai';
+```python
+import anthropic
 
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123'  // Your configured access key
-});
-
-const response = await client.chat.completions.create({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', content: 'Hello!' }]
-});
+client = anthropic.Anthropic(base_url="http://localhost:18080", api_key="sk-local-REPLACE-ME")
 ```
 
-```go Go
-import "github.com/sashabaranov/go-openai"
+Prefer headers over query parameters: query strings end up in logs and browser history.
 
-client := openai.NewClient("sk-test-123")
-client.BaseURL = "http://localhost:18080/v1"
+## Failure responses
 
-resp, err := client.CreateChatCompletion(
-    context.Background(),
-    openai.ChatCompletionRequest{
-        Model: "gemini-2.5-pro",
-        Messages: []openai.ChatCompletionMessage{
-            {Role: "user", Content: "Hello!"},
-        },
-    },
-)
-```
-</CodeGroup>
+| Status | Body | Cause |
+|---|---|---|
+| `401` | `{"error":"Missing API key"}` | Keys are configured and none of the locations above carried a value |
+| `401` | `{"error":"Invalid API key"}` | A value was sent but matches no configured key |
 
-## Access Control
+## Routes that never require a client key
 
-### Key Permissions
+| Route | Notes |
+|---|---|
+| `GET /`, `GET /health` | Liveness information only |
+| `GET /metrics` | Only exists when `observability.metrics.enabled: true`. Contains model and provider names; firewall it if exposed |
+| `GET /management`, `GET /management.html` | Static control-panel page; the API calls it makes still need the management key |
+| `GET /{anthropic,codex,google,iflow,antigravity}/callback` | OAuth browser redirects; they only accept a `state` that matches a pending login |
+| `POST /v1internal:{method}` | Rejected with `403` unless the TCP peer is `127.0.0.1` |
+| `GET /keep-alive` | Only registered by embedders that enable it; checks the local password instead |
 
-Each access key can be configured with specific permissions:
+See [Health & System](/api/system).
 
-```yaml config.yaml
-access:
-  keys:
-    - key: sk-readonly-789
-      name: "Read-Only Key"
-      permissions:
-        - read:models
-        - read:providers
-      enabled: true
-    - key: sk-admin-999
-      name: "Admin Key"
-      permissions:
-        - "*"  # All permissions
-      enabled: true
+## WebSocket
+
+`GET /v1/ws` uses the same API-key check when `ws-auth: true` (the default). Browsers cannot set headers on a WebSocket handshake, so pass the key as `?auth_token=` or `?key=`:
+
+```javascript
+const ws = new WebSocket("ws://localhost:18080/v1/ws?auth_token=sk-local-REPLACE-ME");
 ```
 
-### Remote Access
+Setting `ws-auth: false` lets anyone who can reach the port register as a relay provider. The server logs a security warning at startup when it is off. Turning it back on (in the file or via `PUT /v0/management/ws-auth`) disconnects existing sessions.
 
-By default, the API only accepts requests from `localhost`. To enable remote access:
+## Management authentication
 
-```yaml config.yaml
-remote_management:
-  allow_remote: true
-  secret_key: "your-hashed-secret"  # Use Management API to set
-```
-
-<Warning>
-Enabling remote access requires setting a strong secret key. Use the Management Dashboard to initialize security settings.
-</Warning>
-
-## Management API Authentication
-
-Management endpoints require a separate secret key:
+Management routes (`/v0/management/*`) do **not** accept client API keys. They take the management key in either header:
 
 ```bash
 curl http://localhost:18080/v0/management/config \
-  -H "X-Management-Key: your-secret-key"
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+# or
+curl http://localhost:18080/v0/management/config \
+  -H "X-Management-Key: YOUR_MANAGEMENT_KEY"
 ```
 
-### Initialize Management Secret
+The key, remote access rules, the localhost behaviour when no key is set, and the brute-force ban are described in [Management API](/api/management/overview#authentication).
 
-```bash
-curl -X POST http://localhost:18080/v0/management/initialize \
-  -H "Content-Type: application/json" \
-  -d '{
-    "password": "your-secure-password"
-  }'
-```
+## Hardening checklist
 
-See [Management API](/api/management/overview) for details.
-
-## WebSocket Authentication
-
-WebSocket connections support query parameter authentication:
-
-```javascript
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
-);
-```
-
-Alternatively, disable WebSocket auth in `config.yaml`:
-
-```yaml config.yaml
-websocket_auth: false  # Not recommended for production
-```
-
-## Security Best Practices
-
-<AccordionGroup>
-  <Accordion title="Use Strong API Keys">
-    Generate random keys with sufficient entropy:
-    ```bash
-    openssl rand -hex 32
-    ```
-    Prefix with `sk-` for consistency with OpenAI format.
-  </Accordion>
-
-  <Accordion title="Rotate Keys Regularly">
-    Create new keys and deprecate old ones periodically. Use the Management Dashboard to manage active keys.
-  </Accordion>
-
-  <Accordion title="Restrict Remote Access">
-    Only enable `allow_remote: true` when necessary. Use firewall rules to limit access to trusted IPs.
-  </Accordion>
-
-  <Accordion title="Monitor Usage">
-    Check access logs in the Management Dashboard to detect unauthorized usage:
-    ```bash
-    curl http://localhost:18080/v0/management/usage \
-      -H "X-Management-Key: your-secret-key"
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Troubleshooting
-
-### 401 Unauthorized
-
-**Cause**: Missing or invalid API key
-
-**Solution**:
-1. Verify key is configured in `config.yaml` under `access.keys`
-2. Check key is enabled: `enabled: true`
-3. Ensure `Authorization: Bearer <key>` header is present
-
-### 403 Forbidden
-
-**Cause**: Remote access disabled or insufficient permissions
-
-**Solution**:
-1. For remote access, set `allow_remote: true` in config
-2. Verify key has required permissions for the endpoint
-3. Check Management API secret is properly initialized
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
-    Start sending authenticated requests
-  </Card>
-  <Card title="Management API" icon="gear" href="/api/management/overview">
-    Configure advanced security settings
-  </Card>
-</CardGroup>
+- Configure `api-keys`; an empty list means open access.
+- Bind to `127.0.0.1` unless other machines must reach the gateway.
+- Keep `ws-auth: true`.
+- Keep `remote-management.allow-remote: false` unless you need it, and never expose `/v0/management` to the internet.
+- Put TLS in front (`tls.enable`, or a reverse proxy) if traffic leaves the machine.
+- Enable `performance.rate-limiter` if the gateway is shared.

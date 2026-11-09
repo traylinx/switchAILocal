@@ -1,0 +1,116 @@
+---
+title: Notification Relay
+description: Let sandboxed agents send Telegram messages through the gateway without direct internet access
+icon: bell
+---
+
+The notification relay exposes `POST /v1/notifications/telegram/sendMessage`. A client that can reach switchAILocal, but not the public internet, can send a Telegram message through it. The gateway forwards a curated subset of Telegram's Bot API `sendMessage` to `api.telegram.org`.
+
+## When to use it
+
+- Agents run in a network-isolated sandbox or container and need to notify a human.
+- You want one place that holds a shared bot token, with an allowlist of chats it may message, instead of handing the token to every agent.
+
+## Minimal config
+
+```yaml config.yaml
+notifications:
+  telegram:
+    enabled: true
+    bots:
+      - name: "default"
+        token: "123456789:YOUR_BOT_TOKEN"
+        allowed-chat-ids: [123456789]   # optional; empty = any chat
+```
+
+- `enabled` is the master switch. When `false` the endpoint returns `503 telegram_disabled`, even if bots are configured.
+- `bots` is optional. With `enabled: true` and no bots, callers must supply their own token per request (see below).
+- Config values are taken literally: `${VAR}` placeholders are **not** expanded. Put the real token in `config.yaml` (and keep that file private) or supply it per request.
+- The handler reads the config on every request, so hot reloads apply immediately.
+
+## Example request
+
+```bash
+curl http://localhost:18080/v1/notifications/telegram/sendMessage \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chat_id": 123456789,
+    "text": "Build finished: 42 tests passed",
+    "parse_mode": "Markdown",
+    "disable_notification": true
+  }'
+```
+
+On success, Telegram's response body is returned unchanged with Telegram's status code:
+
+```json
+{"ok": true, "result": {"message_id": 101, "chat": {"id": 123456789, "type": "private"}, "date": 1762600000, "text": "Build finished: 42 tests passed"}}
+```
+
+## Request fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `chat_id` | integer | yes | must be a JSON number, non-zero (groups and channels are negative) |
+| `text` | string | yes | non-empty, at most 4096 bytes |
+| `parse_mode` | string | no | `Markdown`, `MarkdownV2`, `HTML` |
+| `disable_web_page_preview` | bool | no | |
+| `disable_notification` | bool | no | silent delivery |
+| `reply_to_message_id` | integer | no | |
+| `bot` | string | no | name of a configured bot; empty means `default` |
+| `bot_token` | string | no | per-request token (prefer the header) |
+
+Any other field is dropped before forwarding.
+
+## Token resolution
+
+The token is chosen in this order:
+
+1. `X-Telegram-Bot-Token` request header
+2. `bot_token` in the body
+3. the configured bot named by `bot`, or the bot named `default` when `bot` is empty
+
+```bash
+curl http://localhost:18080/v1/notifications/telegram/sendMessage \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "X-Telegram-Bot-Token: 123456789:YOUR_OWN_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"chat_id": 123456789, "text": "hello from my own bot"}'
+```
+
+`allowed-chat-ids` is enforced **only** for tokens coming from the server-side `bots` list. A caller-supplied token (header or body) bypasses the allowlist, because the caller already owns that bot.
+
+## Security notes
+
+- The endpoint is under `/v1`, so it requires a normal client API key (`api-keys`).
+- Configured tokens are never returned or logged. Each call logs principal, bot name, token source (`header`, `body`, `config`), `chat_id`, text length and upstream status.
+- If you need to restrict which chats can be reached, do not let clients pass their own tokens: there is no switch to disable per-request tokens, so restrict access with API keys and network policy.
+- Outbound calls use the global `proxy-url` when set, with a 15 second timeout.
+
+## Errors
+
+| Status | `error.code` | Cause |
+|---|---|---|
+| 503 | `telegram_disabled` | `notifications.telegram.enabled` is false |
+| 400 | `empty_body`, `invalid_json` | body missing or not JSON (also when `chat_id` is a string) |
+| 400 | `missing_chat_id`, `missing_text`, `text_too_long` | validation |
+| 400 | `no_bot_token` | no header, no body token, and no `default` bot configured |
+| 404 | `unknown_bot` | `bot` names a bot that is not configured and no per-request token was sent |
+| 403 | `chat_not_allowed` | configured bot with `allowed-chat-ids` that does not contain `chat_id` |
+| 502 | `telegram_unreachable`, `telegram_response_read_failed` | network error to Telegram |
+| 4xx from Telegram | — | passed through, e.g. `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}` |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="503 telegram_disabled">
+    Set `notifications.telegram.enabled: true` and reload. The flag is not derived from the bot list.
+  </Accordion>
+  <Accordion title="Telegram answers 400 chat not found">
+    The bot must have received at least one message from that user, or be a member of the group/channel, before it can write there. Send `/start` to the bot first.
+  </Accordion>
+  <Accordion title="Telegram answers 401 Unauthorized">
+    The token is wrong. If you used `token: "${TELEGRAM_BOT_TOKEN}"` in YAML, the literal string is sent; replace it with the actual token.
+  </Accordion>
+</AccordionGroup>

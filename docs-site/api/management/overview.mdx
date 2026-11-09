@@ -1,413 +1,140 @@
 ---
 title: 'Management API Overview'
-description: 'Programmatic access to server configuration and intelligent systems'
+description: 'Authentication, exposure rules, first-run setup, and the full /v0/management route index'
 ---
 
-## Introduction
+The Management API reads and changes a running server: configuration, client keys, provider credentials, logs, usage, and OAuth logins. The bundled control panel (`/management`) is a client of this API.
 
-The Management API provides programmatic control over switchAILocal's configuration, monitoring, and intelligent systems. Use it to automate operations, build management dashboards, or integrate with DevOps tools.
-
-## Base URL
-
-```
+```text
 http://localhost:18080/v0/management
 ```
 
-All management endpoints use the `/v0/management` prefix.
+<Warning>
+**Do not expose `/v0/management` to the internet.** It can read every provider key in clear text (`GET /config`, `GET /config.yaml`, the key-list endpoints), rewrite the config file, and upload credentials. Keep `remote-management.allow-remote: false` (the default), bind the server to `127.0.0.1`, or block `/v0/management` at your reverse proxy. Remote access is meant for trusted LAN or VPN admin use only.
+</Warning>
 
 ## Authentication
 
-Management endpoints require a secret key for authentication:
+Management routes use their own key. Client API keys from `api-keys` are **not** accepted.
 
-```bash
-curl http://localhost:18080/v0/management/config \
-  -H "X-Management-Key: your-secret-key"
+### Configuring the key
+
+```yaml config.yaml
+remote-management:
+  allow-remote: false     # allow non-loopback clients
+  secret-key: ""          # plaintext here is bcrypt-hashed and written back on startup
+  disable-control-panel: false
 ```
 
-### Initialize Secret
+You can also set the `MANAGEMENT_PASSWORD` environment variable. It is compared in plaintext, and it **also turns on remote access** regardless of `allow-remote`.
 
-On first run, initialize your management secret:
+The standalone server's `--password` flag sets a runtime-only local password, accepted only from localhost.
+
+### Sending the key
+
+```bash
+curl http://localhost:18080/v0/management/config -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
+curl http://localhost:18080/v0/management/config -H "X-Management-Key: YOUR_MANAGEMENT_KEY"
+```
+
+### How a request is decided
+
+"Localhost" means the TCP peer is a loopback address **and** the request has no `X-Forwarded-For`, `X-Real-IP`, or `Forwarded` header. Requests through a local reverse proxy therefore count as remote. Rows are checked top to bottom; the first match decides.
+
+| Situation | Localhost client | Remote client |
+|---|---|---|
+| Remote client and remote access off (`allow-remote: false`, no `MANAGEMENT_PASSWORD`) | n/a | `403 {"error":"remote management disabled"}` |
+| No `secret-key` and no `MANAGEMENT_PASSWORD` | **allowed without a key** (`X-Management-Auth: bypass`) | Server refuses to start if `allow-remote: true` |
+| `secret-key: "disabled"` (set by `POST /skip`) | allowed without a key (`X-Management-Auth: localhost-bypass`) | key required, and nothing matches, so always `401` |
+| A key is configured | key required | key required |
+
+When a key is required:
+
+| Status | Body |
+|---|---|
+| `401` | `{"error":"missing management key"}` |
+| `401` | `{"error":"invalid management key"}` |
+| `403` | `{"error":"IP banned due to too many failed attempts. Try again in <duration>"}`: 5 failed attempts from one remote IP block it for 30 minutes (localhost is never banned) |
+
+Every response from routes behind this check carries `X-CPA-VERSION`, `X-CPA-COMMIT`, and `X-CPA-BUILD-DATE`.
+
+Management routes also go through the global CORS middleware (`Access-Control-Allow-Origin: *`). Browser pages on other origins can call them if they know the key, which is one more reason to keep them local.
+
+## First-run setup
+
+These four routes are registered **before** the auth middleware, so they need no key. The three that change state only work from localhost.
+
+### GET /setup-status
+
+```json
+{"isConfigured": true, "authDisabled": false}
+```
+
+`authDisabled` is `true` when no key is configured, or when the key is `disabled` and the caller is on localhost. In the current code `isConfigured` is always `true`.
+
+### POST /initialize
+
+Sets the first management key.
 
 ```bash
 curl -X POST http://localhost:18080/v0/management/initialize \
   -H "Content-Type: application/json" \
-  -d '{
-    "password": "your-secure-password"
-  }'
+  -d '{"secret": "YOUR_NEW_MANAGEMENT_KEY"}'
 ```
 
-See [Authentication](/api/authentication) for details.
-
-## Endpoint Categories
-
-<CardGroup cols={2}>
-  <Card title="Configuration" icon="gear">
-    Manage server configuration and settings
-    - Get/update `config.yaml`
-    - Manage API keys
-    - Configure providers
-  </Card>
-  
-  <Card title="Monitoring" icon="chart-line">
-    Track usage and performance
-    - Usage statistics
-    - Provider health
-    - Request logs
-  </Card>
-  
-  <Card title="Intelligent Systems" icon="brain">
-    Access advanced AI capabilities
-    - Memory statistics
-    - Steering rules
-    - Hook status
-    - Analytics
-  </Card>
-  
-  <Card title="Provider Management" icon="layer-group">
-    Control AI providers
-    - Test connectivity
-    - Discover models
-    - Manage credentials
-  </Card>
-</CardGroup>
-
-## Quick Examples
-
-### Get Server Configuration
-
-```bash
-curl http://localhost:18080/v0/management/config \
-  -H "X-Management-Key: your-secret-key"
-```
-
-### Update Configuration
-
-```bash
-curl -X PUT http://localhost:18080/v0/management/config.yaml \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/yaml" \
-  --data-binary @config.yaml
-```
-
-### Get Usage Statistics
-
-```bash
-curl http://localhost:18080/v0/management/usage \
-  -H "X-Management-Key: your-secret-key"
-```
-
-### Test Provider
-
-```bash
-curl -X POST http://localhost:18080/v0/management/providers/test \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "geminicli",
-    "model": "gemini-2.5-pro"
-  }'
-```
-
-## Setup Workflow
-
-New installations can use the setup flow:
-
-### 1. Check Setup Status
-
-```bash
-curl http://localhost:18080/v0/management/setup-status
-```
-
-**Response**:
-```json
-{
-  "initialized": false,
-  "skipped": false,
-  "allow_remote": false
-}
-```
-
-### 2. Initialize or Skip
-
-```bash
-# Option A: Initialize with secret
-curl -X POST http://localhost:18080/v0/management/initialize \
-  -H "Content-Type: application/json" \
-  -d '{"password": "secure-password"}'
-
-# Option B: Skip setup (localhost-only access)
-curl -X POST http://localhost:18080/v0/management/skip
-```
-
-### 3. Access Management Endpoints
-
-After initialization, use the secret key:
-
-```bash
-curl http://localhost:18080/v0/management/config \
-  -H "X-Management-Key: your-secret-key"
-```
-
-## Localhost Bypass
-
-When accessing from `localhost` and remote management is disabled:
-
-```yaml config.yaml
-remote_management:
-  allow_remote: false  # Default
-```
-
-Management endpoints allow **unauthenticated** access from localhost for better UX.
-
-<Warning>
-Only enable `allow_remote: true` when you need external access. Always use strong secret keys for remote access.
-</Warning>
-
-## Remote Access
-
-To enable remote management:
-
-```yaml config.yaml
-remote_management:
-  allow_remote: true
-  secret_key: "<bcrypt-hashed-password>"  # Set via initialize endpoint
-```
-
-Or use environment variable:
-
-```bash
-export MANAGEMENT_PASSWORD="your-password"
-./switchAILocal
-```
-
-## Security Features
-
-### Rate Limiting
-
-Failed authentication attempts trigger temporary IP bans:
-
-- **Max failures**: 5 attempts
-- **Ban duration**: 30 minutes
-- **Scope**: Per remote IP
-
-### CORS Disabled
-
-Management endpoints disable CORS to prevent browser-based attacks.
-
-### Localhost Restriction
-
-Optionally restrict management to localhost only:
-
-```yaml config.yaml
-ampcode:
-  restrict_management_to_localhost: true
-```
-
-## Response Format
-
-All management endpoints return JSON:
-
-### Success Response
-
-```json
-{
-  "success": true,
-  "data": { ... }
-}
-```
-
-### Error Response
-
-```json
-{
-  "error": "Invalid management key"
-}
-```
-
-## Common Headers
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `X-Management-Key` | Yes | Management secret key |
-| `Content-Type` | Varies | `application/json` or `application/yaml` |
-| `Authorization` | No | Alternative to X-Management-Key: `Bearer <key>` |
-
-## Version Information
-
-All responses include version headers:
-
-```
-X-CPA-VERSION: 1.0.0
-X-CPA-COMMIT: abc123def
-X-CPA-BUILD-DATE: 2026-03-09T10:00:00Z
-```
-
-## Available Endpoints
-
-### Configuration Management
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/config` | GET | Get JSON configuration |
-| `/config.yaml` | GET | Get YAML configuration |
-| `/config.yaml` | PUT | Update configuration |
-| `/debug` | GET/PUT | Get/set debug mode |
-| `/logging-to-file` | GET/PUT | Get/set file logging |
-| `/usage-statistics-enabled` | GET/PUT | Get/set usage tracking |
-| `/proxy-url` | GET/PUT/DELETE | Manage proxy settings |
-
-### Provider Management
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/providers/test` | POST | Test provider connectivity |
-| `/providers/discover-models` | POST | Discover available models |
-| `/gemini-api-key` | GET/PUT/PATCH/DELETE | Manage Gemini keys |
-| `/claude-api-key` | GET/PUT/PATCH/DELETE | Manage Claude keys |
-| `/switchai-api-key` | GET/PUT/PATCH/DELETE | Manage switchAI keys |
-| `/codex-api-key` | GET/PUT/PATCH/DELETE | Manage Codex keys |
-
-### Monitoring
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/usage` | GET | Usage statistics |
-| `/metrics` | GET | Superbrain metrics |
-| `/logs` | GET | Server logs |
-| `/request-error-logs` | GET | Error logs |
-| `/request-log-by-id/:id` | GET | Specific request log |
-
-### Intelligent Systems
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/memory/stats` | GET | Memory system statistics |
-| `/heartbeat/status` | GET | Provider health status |
-| `/steering/rules` | GET | Loaded steering rules |
-| `/steering/reload` | POST | Reload steering rules |
-| `/hooks/status` | GET | Hook execution status |
-| `/hooks/reload` | POST | Reload hooks |
-| `/analytics` | GET | Computed analytics |
-
-### Advanced
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/cache/metrics` | GET | Cache statistics |
-| `/cache/clear` | POST | Clear semantic cache |
-| `/state-box/status` | GET | State directory info |
-| `/latest-version` | GET | Check for updates |
-
-## Python Client Example
-
-```python
-import requests
-
-class ManagementClient:
-    def __init__(self, base_url="http://localhost:18080", secret_key=None):
-        self.base_url = base_url
-        self.headers = {}
-        if secret_key:
-            self.headers["X-Management-Key"] = secret_key
-    
-    def get_config(self):
-        response = requests.get(
-            f"{self.base_url}/v0/management/config",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def get_usage(self):
-        response = requests.get(
-            f"{self.base_url}/v0/management/usage",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def test_provider(self, provider, model):
-        response = requests.post(
-            f"{self.base_url}/v0/management/providers/test",
-            headers=self.headers,
-            json={"provider": provider, "model": model}
-        )
-        response.raise_for_status()
-        return response.json()
-
-# Usage
-client = ManagementClient(secret_key="your-secret-key")
-config = client.get_config()
-print(f"Debug mode: {config['debug']}")
-
-usage = client.get_usage()
-print(f"Total requests: {usage['total_requests']}")
-```
-
-## JavaScript Client Example
-
-```javascript
-class ManagementClient {
-  constructor(baseURL = 'http://localhost:18080', secretKey = null) {
-    this.baseURL = baseURL;
-    this.headers = secretKey ? { 'X-Management-Key': secretKey } : {};
-  }
-
-  async getConfig() {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/config`,
-      { headers: this.headers }
-    );
-    if (!response.ok) throw new Error('Failed to get config');
-    return response.json();
-  }
-
-  async getUsage() {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/usage`,
-      { headers: this.headers }
-    );
-    if (!response.ok) throw new Error('Failed to get usage');
-    return response.json();
-  }
-
-  async testProvider(provider, model) {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/providers/test`,
-      {
-        method: 'POST',
-        headers: { ...this.headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, model })
-      }
-    );
-    if (!response.ok) throw new Error('Failed to test provider');
-    return response.json();
-  }
-}
-
-// Usage
-const client = new ManagementClient(
-  'http://localhost:18080',
-  'your-secret-key'
-);
-
-const config = await client.getConfig();
-console.log(`Debug mode: ${config.debug}`);
-
-const usage = await client.getUsage();
-console.log(`Total requests: ${usage.total_requests}`);
-```
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Configuration" icon="gear" href="/api/management/config">
-    Manage server configuration
-  </Card>
-  <Card title="Providers" icon="layer-group" href="/api/management/providers">
-    Control AI provider settings
-  </Card>
-  <Card title="Authentication" icon="key" href="/api/authentication">
-    Set up management authentication
-  </Card>
-</CardGroup>
+- Stores the bcrypt hash in `remote-management.secret-key` **and sets `allow-remote: true`**. Set it back to `false` if you only manage locally.
+- Returns `200 {"status":"ok","message":"management secret initialized successfully"}`.
+- `400` when `secret` is missing.
+- `403` from a non-localhost client, or when a key already exists (in config or env).
+
+### POST /skip
+
+No body. Sets `secret-key: "disabled"` and `allow-remote: false`: keyless access from localhost only. This overwrites an existing key. Returns `{"status":"ok","message":"auth disabled for localhost"}`, or `403` from a remote client.
+
+### POST /reset
+
+No body. Clears `secret-key` and sets `allow-remote: false`. Returns `{"status":"ok","message":"configuration reset"}`, or `403` from a remote client.
+
+## Conventions
+
+- Bodies and responses are JSON unless noted.
+- Requests that change configuration write `config.yaml` (comments preserved) and respond `{"status":"ok"}`. A write failure returns `500 {"error":"failed to save config: ..."}`.
+- Simple settings take `{"value": <bool|int|string>}`. PUT and PATCH behave the same on them.
+- Changes take effect immediately (hot reload).
+
+## Route index
+
+| Method(s) | Path | Page |
+|---|---|---|
+| GET | `/setup-status` | this page |
+| POST | `/initialize`, `/skip`, `/reset` | this page |
+| GET | `/config` | [Config](/api/management/config#configuration) |
+| GET, PUT | `/config.yaml` | [Config](/api/management/config#configuration) |
+| GET | `/latest-version` | [Config](/api/management/config#configuration) |
+| GET, PUT, PATCH | `/debug`, `/logging-to-file`, `/usage-statistics-enabled`, `/request-log`, `/ws-auth`, `/request-retry`, `/max-retry-interval`, `/quota-exceeded/switch-project`, `/quota-exceeded/switch-preview-model` | [Config](/api/management/config#settings) |
+| GET, PUT, PATCH, DELETE | `/proxy-url` | [Config](/api/management/config#settings) |
+| GET, DELETE | `/logs` | [Config](/api/management/config#logs) |
+| GET | `/request-error-logs`, `/request-error-logs/:name`, `/request-log-by-id/:id` | [Config](/api/management/config#logs) |
+| GET | `/usage`, `/metrics`, `/observability/dashboard` | [Config](/api/management/config#usage-and-metrics) |
+| GET | `/autoroute/status`, `/autoroute/journal` | [Config](/api/management/config#auto-routing-telemetry) |
+| GET | `/memory/stats`, `/heartbeat/status`, `/steering/rules`, `/hooks/status`, `/analytics` | [Config](/api/management/config#intelligent-systems) |
+| POST | `/steering/reload`, `/hooks/reload` | [Config](/api/management/config#intelligent-systems) |
+| GET | `/skills`, `/feedback/stats`, `/feedback/recent`, `/cache/metrics` | [Config](/api/management/config#intelligence-service) (`503` when `intelligence.enabled` is false) |
+| POST | `/feedback`, `/cache/clear` | [Config](/api/management/config#intelligence-service) (same) |
+| GET | `/state-box/status` | [Config](/api/management/config#state-box) (only when a state box is configured) |
+| GET | `/ampcode` | [Config](/api/management/config#ampcode) |
+| GET, PUT, PATCH, DELETE | `/ampcode/upstream-url`, `/ampcode/upstream-api-key`, `/ampcode/model-mappings` | [Config](/api/management/config#ampcode) |
+| GET, PUT, PATCH | `/ampcode/restrict-management-to-localhost`, `/ampcode/force-model-mappings` | [Config](/api/management/config#ampcode) |
+| GET, PUT, PATCH, DELETE | `/api-keys` | [Providers](/api/management/providers#client-api-keys) |
+| GET, PUT, PATCH, DELETE | `/gemini-api-key`, `/claude-api-key`, `/codex-api-key`, `/switchai-api-key` | [Providers](/api/management/providers#provider-key-lists) |
+| GET, PUT, PATCH, DELETE | `/openai-compatibility` | [Providers](/api/management/providers#openai-compatibility) |
+| GET, PUT, PATCH, DELETE | `/oauth-excluded-models` | [Providers](/api/management/providers#oauth-excluded-models) |
+| POST | `/providers/test`, `/providers/discover-models` | [Providers](/api/management/providers#testing-providers) |
+| GET, POST, DELETE | `/auth-files` | [Providers](/api/management/providers#auth-files) |
+| GET | `/auth-files/models`, `/auth-files/download` | [Providers](/api/management/providers#auth-files) |
+| POST | `/vertex/import` | [Providers](/api/management/providers#auth-files) |
+| GET | `/anthropic-auth-url`, `/codex-auth-url`, `/gemini-cli-auth-url`, `/antigravity-auth-url`, `/qwen-auth-url`, `/iflow-auth-url` | [Providers](/api/management/providers#oauth-login-flows) |
+| POST | `/iflow-auth-url`, `/oauth-callback` | [Providers](/api/management/providers#oauth-login-flows) |
+| GET | `/get-auth-status` | [Providers](/api/management/providers#oauth-login-flows) |
+
+Any other path under `/v0/management` returns `404`.
