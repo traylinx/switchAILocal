@@ -1,0 +1,250 @@
+---
+title: 'Configuration Reference'
+description: 'Every top-level config.yaml key, its type and its default'
+icon: 'list'
+---
+
+Defaults are the values used when a key is absent from `config.yaml`. They are
+not the values in `config.example.yaml`, which turns many features on.
+
+Keys not listed here are ignored without a warning.
+
+## Server and logging
+
+| Key | Type | Default | Details |
+| --- | ---- | ------- | ------- |
+| `host` | string | `""` (all interfaces) | [Server](/configuration/server#listener) |
+| `port` | int | none (random free port) | [Server](/configuration/server#listener) |
+| `tls.enable` / `tls.cert` / `tls.key` | bool / string / string | `false` / `""` / `""` | [Server](/configuration/server#tls) |
+| `auth-dir` | string | none | [Server](/configuration/server#credential-folder) |
+| `debug` | bool | `false` | [Server](/configuration/server#logging) |
+| `logging-to-file` | bool | `false` | [Server](/configuration/server#logging) |
+| `logs-max-total-size-mb` | int | `0` (no limit) | [Server](/configuration/server#logging) |
+| `request-log` | bool | `false` | [Server](/configuration/server#logging) |
+| `usage-statistics-enabled` | bool | `false` | [Server](/configuration/server#logging) |
+| `observability.log-format` | string | `text` | [Server](/configuration/server#observability) |
+| `observability.metrics.enabled` / `.path` | bool / string | `false` / `/metrics` | [Server](/configuration/server#observability) |
+| `observability.request-events.enabled` / `.output` / `.file-path` | bool / string / string | `false` / `stdout` / `logs/events.ndjson` | [Server](/configuration/server#observability) |
+| `proxy-url` | string | `""` | [Server](/configuration/server#outbound-proxy) |
+| `performance` | object | all features off, see page | [Server](/configuration/server#performance) |
+
+## Requests and routing
+
+| Key | Type | Default | Details |
+| --- | ---- | ------- | ------- |
+| `request-retry` | int | `0` | [Server](/configuration/server#retries-and-cooldowns) |
+| `max-retry-interval` | int (seconds) | `0` | [Server](/configuration/server#retries-and-cooldowns) |
+| `disable-cooling` | bool | `false` | [Server](/configuration/server#retries-and-cooldowns) |
+| `quota-exceeded.switch-project` / `.switch-preview-model` | bool | `false` | Not used in 0.6.2 |
+| `streaming.keepalive-seconds` | int | disabled | [Server](/configuration/server#streaming) |
+| `streaming.bootstrap-retries` | int | `0` | [Server](/configuration/server#streaming) |
+| `routing.strategy` | string | `round-robin` | [Server](/configuration/server#credential-selection) |
+| `routing.auto-model-priority` | string[] | none | Legacy; migrated to `auto-routing.preferences` |
+| `force-model-prefix` | bool | `false` | [Server](/configuration/server#credential-selection) |
+| `auto-routing` | object | `enabled: false` | See [below](#auto-routing) |
+| `virtual-models` | map | none | [Providers](/configuration/providers#virtual-models) |
+
+## Access
+
+| Key | Type | Default | Details |
+| --- | ---- | ------- | ------- |
+| `api-keys` | string[] | `[]` (client auth off) | [Security](/configuration/security#client-api-keys) |
+| `ws-auth` | bool | `true` | [Security](/configuration/security#client-api-keys) |
+| `remote-management.allow-remote` | bool | `false` | [Security](/configuration/security#management-access) |
+| `remote-management.secret-key` | string | `""` (no key for localhost) | [Security](/configuration/security#management-access) |
+| `remote-management.disable-control-panel` | bool | `false` | [Security](/configuration/security#management-access) |
+| `remote-management.panel-github-repository` | string | `https://github.com/traylinx/switchAILocal-Management-Center` | [Security](/configuration/security#management-access) |
+| `auth.providers` | list | none | Legacy. When `api-keys` is empty, the keys of the first `type: config-api-key` entry are used; nothing else is read. |
+
+## Providers
+
+| Key | Type | Default | Details |
+| --- | ---- | ------- | ------- |
+| `gemini-api-key` | list | none | [Providers](/configuration/providers#google-ai-studio-gemini) |
+| `claude-api-key` | list | none | [Providers](/configuration/providers#anthropic-api) |
+| `codex-api-key` | list | none | [Providers](/configuration/providers#openai-api-codex-api-key) |
+| `switchai-api-key` | list | none | [Providers](/configuration/providers#traylinx-switchai) |
+| `openai-compatibility` | list | none | [Providers](/configuration/providers#openai-compatible-services) |
+| `vertex-api-key` | list | none | [Providers](/configuration/providers#vertex-compatible-services) |
+| `ollama` | object | `enabled: false` | [Providers](/configuration/providers#ollama) |
+| `lmstudio` | object | `enabled: false` | [Providers](/configuration/providers#lm-studio) |
+| `opencode` | object | `enabled: false` | [Providers](/configuration/providers#opencode) |
+| `oauth-excluded-models` | map | none | [Providers](/configuration/providers#hiding-models-from-oauth-and-cli-credentials) |
+
+## Features
+
+### payload
+
+Default and override rules that set JSON fields in upstream requests per model
+and protocol.
+
+```yaml
+payload:
+  default: []    # set a field only if the request lacks it
+  override: []   # always set the field
+```
+
+Details: [Payload injection](/advanced/payload-injection).
+
+### plugin
+
+```yaml
+plugin:
+  enabled: false
+  plugin-dir: "./plugins"
+  enabled-plugins: ["cortex-router"]
+```
+
+| Key | Default | Meaning |
+| --- | ------- | ------- |
+| `enabled` | `false` | Run Lua plugins |
+| `plugin-dir` | none | Folder with plugin folders (the Docker image ships `/app/plugins`) |
+| `enabled-plugins` | `[]` | Plugin names to load |
+
+Details: [Lua plugins](/advanced/lua-plugins).
+
+### intelligence
+
+Cortex routing for `model: "auto"`: classification, semantic matching, skills,
+caching. Restart required.
+
+| Key | Default |
+| --- | ------- |
+| `enabled` | `false` |
+| `router-model` | `ollama:qwen:0.5b` |
+| `router-fallback` | `openai:gpt-4o-mini` |
+| `matrix` | `{}` (intent to model) |
+| `skills.enabled` / `skills.directory` | `false` / `plugins/cortex-router/skills` |
+| `embedding.enabled` / `embedding.model` | `false` / `all-MiniLM-L6-v2` |
+| `semantic-tier.enabled` / `.confidence-threshold` | `false` / `0.85` |
+| `skill-matching.enabled` / `.confidence-threshold` | `false` / `0.80` |
+| `semantic-cache.enabled` / `.similarity-threshold` / `.max-size` | `false` / `0.95` / `10000` |
+| `confidence.enabled` | `false` |
+| `verification.enabled` / `.confidence-threshold-low` / `-high` | `false` / `0.60` / `0.90` |
+| `cascade.enabled` / `.quality-threshold` | `false` / `0.70` |
+| `feedback.enabled` / `.retention-days` | `false` / `90` |
+| `discovery` | `enabled`, `probe-on-startup`, `probe-interval`, `probe-timeout`, `passive-monitoring`, `cache-ttl` |
+| `learning` | `min-sample-size` `100`, `confidence-threshold` `0.85`, `analysis-interval` `24h`, `auto-apply` `false` |
+
+The embedding engine needs ONNX Runtime and a model downloaded with
+`scripts/download-embedding-model.sh` (to `~/.switchailocal/models/`). Without
+them the server logs a warning and disables the semantic tier and cache.
+
+`config.example.yaml` lists `intelligence.discovery.refresh-interval` and
+`cache-dir`; those keys are not read.
+
+Details: [Cortex router](/intelligent-systems/cortex-router).
+
+### auto-routing
+
+Scores candidate models when a client asks for `auto`. Restart required.
+
+| Key | Default |
+| --- | ------- |
+| `enabled` | `false` |
+| `max-resolution-ms` | `5ms` |
+| `weights` (`availability`, `quota`, `latency`, `success-rate`) | `0.35`, `0.25`, `0.20`, `0.20` (restored if they do not sum to 1) |
+| `preferences` | `[]` of `{model, preference, reason}` |
+| `providers` | map of `{tier, monthly-budget, model-tiers}` |
+| `discovery` | `probe-interval` `15m`, `probe-timeout` `5s`, `cache-ttl` `24h`, plus `enabled`, `probe-on-startup`, `passive-monitoring` |
+| `conservation` | `enabled`, `simple-threshold-tokens`, `premium-conservation-at` |
+| `lab` | `enabled`, `adaptation-interval`, `max-weight-drift`, `min-observation-window` |
+| `intent-matrix` | map of intent to model list |
+| `disabled-providers` | providers that are never selected |
+
+Details: [Auto-routing](/api/auto-routing).
+
+### superbrain
+
+Monitoring and self-healing for CLI executions. `enabled: false`,
+`mode: disabled` by default. This block uses snake_case keys
+(`component_flags`, `stdin_injection`, ...). Live-reloadable.
+Details: [Superbrain](/intelligent-systems/superbrain).
+
+### heartbeat
+
+| Key | Default |
+| --- | ------- |
+| `enabled` | `false` |
+| `interval` / `timeout` | `5m` / `5s` |
+| `auto-discovery` | `true` |
+| `quota-warning-threshold` / `quota-critical-threshold` | `0.80` / `0.95` |
+| `max-concurrent-checks` | `10` |
+| `retry-attempts` / `retry-delay` | `2` / `1s` |
+| `providers` | per-provider overrides |
+
+Status: `GET /v0/management/heartbeat/status`. Details:
+[Heartbeat](/intelligent-systems/heartbeat).
+
+### memory
+
+`enabled: false`, `base-dir: .switchailocal/memory`, `retention-days: 90`,
+`max-log-size-mb: 100`, `compression: true`. Details:
+[Memory commands](/cli/memory#server-configuration).
+
+### steering and hooks
+
+| Key | Default |
+| --- | ------- |
+| `steering.enabled` | `false` |
+| `steering.rules-dir` (alias `steering-dir`) | `.switchailocal/steering` |
+| `steering.hot-reload` | `true` |
+| `hooks.enabled` | `false` |
+| `hooks.hooks-dir` | `.switchailocal/hooks` |
+| `hooks.hot-reload` | `true` |
+
+Relative paths resolve against the folder the server starts in. Reload rules
+with `POST /v0/management/steering/reload` and `/hooks/reload`.
+
+### billboard
+
+```yaml
+billboard:
+  enabled: false
+  base-dir: "~/.switchailocal/billboard"
+```
+
+When enabled, CLI-provider calls run in `base-dir` and get a system
+instruction to use it for file output when no path is given. When disabled,
+CLI calls run in an empty `~/.switchailocal/cli-sandbox` folder.
+
+### ampcode
+
+Integration for the Amp coding CLI: Amp's account and thread routes under
+`/api/*` are proxied to an upstream, and model requests can be remapped.
+
+| Key | Default | Meaning |
+| --- | ------- | ------- |
+| `upstream-url` | `""` | Upstream Amp control plane |
+| `upstream-api-key` | `""` | Authorization override for upstream calls |
+| `restrict-management-to-localhost` | `false` | Only accept those `/api/*` routes from loopback |
+| `model-mappings` | `[]` | `{from, to, regex}` rewrites for models Amp requests |
+| `force-model-mappings` | `false` | Apply mappings even when a local credential serves the original model |
+
+Legacy top-level keys `amp-upstream-url`, `amp-upstream-api-key`,
+`amp-restrict-management-to-localhost` and `amp-model-mappings` are migrated
+into this block.
+
+### notifications
+
+Lets clients send Telegram messages through the gateway without holding the
+bot token: `POST /v1/notifications/telegram/sendMessage`.
+
+```yaml
+notifications:
+  telegram:
+    enabled: false
+    bots:
+      - name: "default"
+        token: "123456:your-bot-token"
+        allowed-chat-ids: [123456789]
+```
+
+| Key | Default | Meaning |
+| --- | ------- | ------- |
+| `telegram.enabled` | `false` | Endpoint answers `503` when off or when `bots` is empty |
+| `telegram.bots[].name` | | Selected by the request's `bot` field; `default` when omitted |
+| `telegram.bots[].token` | | Bot token (stored as written; no `${VAR}` expansion) |
+| `telegram.bots[].allowed-chat-ids` | `[]` (any chat) | Allowed `chat_id` values; others get `403` |
+
+Details: [Notifications](/advanced/notifications).

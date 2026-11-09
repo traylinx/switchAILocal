@@ -1,0 +1,206 @@
+---
+title: 'Virtual Models & Load Balancing'
+description: 'Expose one stable model ID backed by a weighted, capability-aware pool of provider models'
+icon: 'layer-group'
+---
+
+## What it is
+
+A **virtual model** is a public model ID (for example `ail-compound`) that is not tied to one provider. It is backed by a pool of **members**, each a concrete `provider` + `model` pair. For every request switchAILocal:
+
+1. Classifies the request (plain chat, chat with tools, multi-turn tool replay, image input, embeddings, speech, ...).
+2. Keeps only the members whose declared `capabilities` can serve that request class.
+3. Picks one eligible member with **smooth weighted round-robin**.
+4. Optionally retries once on a different member if the upstream fails with a recoverable error.
+5. Rewrites the `model` field of the response (including every SSE chunk) back to the public ID.
+
+Virtual models are defined in `config.yaml` under `virtual-models:` and are implemented in `internal/virtualmodels/router.go`.
+
+## When to use it
+
+- You want clients to keep one model name while you swap or rebalance the providers behind it.
+- You want to split traffic between two subscriptions or vendors in a fixed ratio (for example 60/40).
+- You need tool-calling or image requests to land only on members that actually support them, while plain chat can use any member.
+- You want a cheap automatic second attempt on another backend when one provider returns 429 or 5xx.
+
+If you instead want several API keys for the *same* provider to share load, you do not need a virtual model: list multiple keys and use `routing.strategy` (see [Routing](/concepts/routing)).
+
+## Minimal working config
+
+```yaml config.yaml
+virtual-models:
+  team-chat:
+    description: "Shared chat model"
+    expose: true                 # list it in /v1/models
+    fallback: true               # one retry on another member on 402/408/429/5xx
+    members:
+      - id: groq-oss
+        provider: groq           # must match a configured provider ID
+        model: openai/gpt-oss-20b
+        weight: 3
+        capabilities:
+          operations: [chat, chat_text_tools]
+          input: [text]
+          output: [text]
+          tools: true
+      - id: local-llama
+        provider: ollama
+        model: llama3.2
+        weight: 2
+        capabilities:
+          operations: [chat]
+          input: [text]
+
+openai-compatibility:
+  - name: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_your_key_here"
+    models:
+      - name: "openai/gpt-oss-20b"
+
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+```
+
+With weights `3` and `2`, plain chat requests to `team-chat` go `groq-oss, local-llama, groq-oss, local-llama, groq-oss` and repeat (60/40 over every five requests). Requests that carry `tools` only see `groq-oss`, because `local-llama` does not declare `tools: true`.
+
+## Example request
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "team-chat",
+    "messages": [{"role": "user", "content": "Summarize the CAP theorem in two sentences."}]
+  }'
+```
+
+The response reports `"model": "team-chat"` no matter which member served it. The chosen member is logged at info level (`selected virtual model member` with `member_id`, `provider`, `native_model`, `request_class`).
+
+## Configuration reference
+
+### Pool fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `description` | `""` | Shown in `/v1/models`. |
+| `expose` | `false` | List the pool in `/v1/models`. Hidden pools are still routable by name. |
+| `strategy` | `weighted-round-robin` | Accepted values: `weighted-round-robin`, `round-robin`. Both use the same smooth weighted round-robin; give every member `weight: 1` for an even split. Any other value fails config loading. |
+| `fallback` | `false` | On a recoverable failure, retry once on a different eligible member. |
+| `response_model` | `requested` | Only `requested` is meaningful today: the response `model` field is always rewritten to the public ID. |
+| `members` | required | List of backends (see below). |
+
+### Member fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `id` | required | Unique (case-insensitive) within the pool. Used for routing state and logs. |
+| `provider` | required | Provider ID, lower-cased. This is the executor key: an `openai-compatibility` `name` (for example `groq`, `minimax`), or a built-in ID such as `ollama`, `lmstudio`, `opencode`, `gemini`, `claude`, `codex`, `geminicli`, `claudecli`, `vibecli`. |
+| `model` | required | Model name sent to that provider. |
+| `enabled` | `true` | `false` removes the member from selection. |
+| `weight` | `1` | Relative share. `0` is treated as `1`; negative values fail config loading. |
+| `capabilities` | see below | What the member can serve. |
+| `visibility`, `proof` | — | Stored for operators; not used by the router. |
+
+### Capabilities
+
+| Field | Meaning |
+|-------|---------|
+| `operations` | Request classes the member accepts (see the table below). **If omitted, the member only serves plain text chat.** |
+| `input` | Accepted input modalities: `text`, `image`, `audio`. |
+| `output` | Produced modalities: `text`, `image`, `audio`. Defaults to `text`. |
+| `tools` | `true` if the member supports OpenAI `tools` / `tool_choice`. |
+| `tool_history_replay` / `agentic_safe` | Either one must be `true` for the member to receive conversations that already contain tool calls or tool results. |
+| `context` | Declared context window. Used for the `context_length` shown in `/v1/models` (maximum over enabled members). |
+| `proof_required_for`, `agentic_safe_after` | Informational; not evaluated by the router. |
+
+### Request classes and accepted `operations` values
+
+| Request | Class | Member must list one of |
+|---------|-------|------------------------|
+| Chat, text only | `chat_text` | `chat_text`, `chat`, `text` |
+| Chat with `tools` or `tool_choice` | `chat_text_tools` | `chat_text_tools`, `chat_tools`, `chat` |
+| Chat whose history contains tool calls/results | `chat_multiturn_tools` | `chat_multiturn_tools` |
+| Chat with image parts | `chat_image_understanding` | `chat_image_understanding`, `vision` (and `input` must include `image`) |
+| Chat with audio parts | `chat_audio_understanding` | `chat_audio_understanding`, `audio_understanding` (and `input` must include `audio`) |
+| Chat with image and audio | `chat_multimodal_understanding` | `chat_multimodal_understanding`, `multimodal`, or both of the above |
+| `POST /v1/embeddings` | `embeddings` | `embeddings`, `embedding` |
+| `POST /v1/images/generations` | `image_generation` | `image_generation`, `image_gen` (and `output` must include `image`) |
+| `POST /v1/audio/speech` | `speech_generation` | `speech_generation`, `speech` (and `output` must include `audio`) |
+| `POST /v1/music/generations` | `music_generation` | `music_generation`, `music` (and `output` must include `audio`) |
+| `POST /v1/music/lyrics` | `lyrics_generation` | `lyrics_generation`, `lyrics` |
+
+Detection looks at OpenAI Chat Completions bodies (`messages`, `tools`, `tool_choice`, `role: "tool"`, `tool_calls`, `tool_call_id`, content parts of type `image_url`/`input_image`/`input_audio`/`audio_url`) and at Responses API `input` items (`function_call`, `function_call_output`, ...).
+
+<Warning>
+`chat_multiturn_tools` is deliberately **not** implied by `chat`. Agent clients replay tool calls on every turn; only members you have verified for that should list it. The router keeps separate rotation state for `chat_text` and `chat_multiturn_tools`, so capability metadata is the only safety boundary.
+</Warning>
+
+## How selection works
+
+- **Algorithm:** smooth weighted round-robin (the nginx algorithm). Each eligible member's counter grows by its weight; the highest counter wins and is reduced by the total weight. Members are ordered by `id`, so results are deterministic.
+- **Buckets:** rotation state is kept per `pool | request class` (media classes add `tools` / `tool_history` qualifiers). A tool request does not advance the plain-chat rotation.
+- **Persistence:** state is written best-effort to `virtual_models_state.json` in the state directory (`$SWITCHAI_STATE_DIR`, default `~/.switchailocal`), so ratios continue across restarts. If the file cannot be written, routing still works.
+- **Config changes:** a bucket's state resets when its member IDs, weights or capabilities change (a hash of the member set is stored with the state).
+
+## Fallback
+
+With `fallback: true`, if the selected member fails with HTTP 402, 408, 429, any 5xx, or an error without a status code, switchAILocal picks **one** other eligible member (excluding the failed one) and retries. The fallback pick does not advance the rotation counters, and the fallback provider is skipped if its circuit breaker is open.
+
+Limits:
+- One fallback attempt per request.
+- Applies to chat-style requests (Chat Completions, Completions, Responses, Anthropic Messages): non-streaming, and streaming when the upstream fails before the stream is opened. Errors after the first streamed chunk cannot be retried. Non-streaming embeddings, image, speech and music requests do not fall back.
+- Other 4xx errors (400, 401, 403, 404, 422) are returned to the client unchanged.
+
+Credential-level retries and cooldowns inside a single provider still apply underneath; see [Failover](/advanced/failover).
+
+## Model listing behaviour
+
+- Exposed pools appear in `GET /v1/models` with `"type": "virtual"`, `"owned_by": "switchai"`, aggregated `modalities`, `tool_call`, `vision`/`audio` flags and `context_length`.
+- Concrete provider aliases can be hidden from `/v1/models` while staying routable with `expose: false` or `visibility: private` on the `openai-compatibility` model entry.
+- **`ail-` catalog mode:** if any listed model ID starts with `ail-`, `/v1/models` returns only IDs that start with `ail-`. Name your public pools `ail-*` only if you want that behaviour.
+
+## Defaults and limits
+
+| Item | Value |
+|------|-------|
+| Strategy | smooth weighted round-robin (both accepted strategy names) |
+| Default weight | 1 |
+| Fallback attempts | at most 1 |
+| No eligible member | HTTP 422, message `no eligible backend for <model> request: requires <class>` |
+| Startup validation | empty pool ID, unknown strategy, missing member `id`/`provider`/`model`, duplicate member `id`, negative weight, or an exposed pool with zero enabled members all stop the server from loading the config |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="422 no eligible backend ... requires chat_text_tools">
+    No enabled member declares a matching operation. Add `chat_text_tools` (or `chat`) to `operations` and set `tools: true` on at least one member. For agent loops that send tool results back, also add `chat_multiturn_tools` and `tool_history_replay: true`.
+  </Accordion>
+  <Accordion title="no active credentials found for provider 'x'">
+    The member's `provider` has no usable credential, or its `model` is not registered for that credential. For API providers the member model must appear in that provider's `models:` list (as `name` or `alias`) or be discovered via `models-url`. Local providers (`ollama`, `lmstudio`, `opencode`, auto-detected CLIs) skip this check.
+  </Accordion>
+  <Accordion title="executor not registered for provider 'x'">
+    `provider` does not match any executor. Check spelling and case against the `openai-compatibility` `name` or the built-in provider IDs listed in [Providers](/concepts/providers).
+  </Accordion>
+  <Accordion title="The split is not 60/40">
+    Ratios hold per request class. Tool requests, image requests and plain chat rotate independently, and members that are ineligible for a class are skipped. Check the `request_class` field in the logs.
+  </Accordion>
+  <Accordion title="Only ail-* models show up in /v1/models">
+    That is `ail-` catalog mode (see above). Rename the pool, or expose your other models under `ail-*` aliases.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Where virtual models sit in the model resolution order
+  </Card>
+  <Card title="Failover" icon="shield-halved" href="/advanced/failover">
+    Retries, cooldowns, circuit breakers and stream watchdogs
+  </Card>
+</CardGroup>

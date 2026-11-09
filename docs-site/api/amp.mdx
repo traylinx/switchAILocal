@@ -1,0 +1,62 @@
+---
+title: 'Amp CLI Routes'
+description: 'Provider alias routes and the optional upstream proxy used by the Amp CLI'
+---
+
+switchAILocal has built-in support for the [Amp](https://ampcode.com) coding CLI. Two sets of routes are registered at startup.
+
+**Auth:** client API key on every route below (see the root-level exceptions further down).
+
+## Provider alias routes (always on)
+
+Amp addresses models as `/api/provider/{provider}/...`. These routes map straight onto the normal handlers, so Amp requests use your local providers:
+
+| Route | Handler |
+|---|---|
+| `GET /api/provider/{provider}/models`, `GET /api/provider/{provider}/v1/models` | `anthropic`: Anthropic model list; `google`: Gemini model list; anything else: OpenAI model list |
+| `POST /api/provider/{provider}/chat/completions`, `.../v1/chat/completions` | [Chat completions](/api/chat-completions) |
+| `POST /api/provider/{provider}/completions`, `.../v1/completions` | [Completions](/api/chat-completions#post-v1completions) |
+| `POST /api/provider/{provider}/responses`, `.../v1/responses` | [Responses](/api/responses) |
+| `POST /api/provider/{provider}/v1/messages`, `.../v1/messages/count_tokens` | [Messages](/api/messages) |
+| `GET /api/provider/{provider}/v1beta/models`, `GET/POST .../v1beta/models/*` | [Gemini API](/api/gemini) |
+
+`{provider}` does not choose the backend; the `model` field does, exactly as on `/v1`.
+
+POST routes are wrapped in a fallback, applied in this order:
+
+1. Use a local provider if one serves the model. With `ampcode.force-model-mappings: true`, step 2 is tried first.
+2. Otherwise apply `ampcode.model-mappings` (`from` → `to`, optionally `regex`) and use the mapped model if a local provider serves it.
+3. Otherwise forward the request to the Amp upstream, which uses Amp credits, if `ampcode.upstream-url` is set.
+
+## Upstream proxy routes (need `ampcode.upstream-url`)
+
+Every request on these routes is reverse-proxied to `ampcode.upstream-url`. The client's `Authorization` and `X-Api-Key` headers are removed and replaced with `ampcode.upstream-api-key` when that is set.
+
+| Routes | Methods |
+|---|---|
+| `/api/internal`, `/api/user`, `/api/auth`, `/api/meta`, `/api/telemetry`, `/api/threads`, `/api/otel`, `/api/tab` (each also `/*path`), `/api/ads` | any |
+| `/api/provider/google/v1beta1/*path` | POST to `.../models/...` goes through the local Gemini bridge with the fallback above; everything else is proxied |
+| `/threads`, `/threads/*path`, `/docs`, `/docs/*path`, `/settings`, `/settings/*path`, `/threads.rss`, `/news.rss` | GET |
+| `/auth`, `/auth/*path` | any |
+
+Behaviour of these routes:
+
+- `503 {"error":"amp upstream proxy not available"}` when `upstream-url` is empty.
+- CORS headers are cleared and `OPTIONS` returns `403`, to block browser-based cross-site calls.
+- With `ampcode.restrict-management-to-localhost: true`, non-loopback peers get `403`. The check uses the TCP peer address, not forwarded headers.
+- The root-level `/threads`, `/auth`, `/docs`, and `/settings` routes (and their sub-paths) skip the API-key check so the Amp browser login flow works. `/threads.rss`, `/news.rss`, and everything under `/api/*` require a key.
+
+## Configuration
+
+```yaml config.yaml
+ampcode:
+  upstream-url: "https://ampcode.com"     # empty = alias routes only
+  upstream-api-key: "YOUR_AMP_KEY"
+  restrict-management-to-localhost: false
+  force-model-mappings: false
+  model-mappings:
+    - from: "claude-opus-4"
+      to: "claude-sonnet-4-5"
+```
+
+All `ampcode` settings are hot-reloadable and can be changed through the management [`/v0/management/ampcode/*`](/api/management/config#ampcode) endpoints.

@@ -1,585 +1,274 @@
 ---
 title: Failover & Load Balancing
-description: Automatic credential rotation, quota handling, and intelligent provider failover
+description: Credential rotation, cooldowns, cross-provider failover, circuit breakers, timeouts and streaming recovery
 icon: arrows-rotate
 ---
 
-**Failover & Load Balancing** ensures your AI requests succeed even when providers fail, quotas are exceeded, or credentials expire. switchAILocal automatically rotates through credentials, switches providers, and intelligently routes around failures.
+switchAILocal keeps a request alive through several independent layers. Each layer has its own config key, and most of them are **off or zero unless you set them**. This page describes what each layer does, in the order a request passes through it.
 
-## Overview
+| Layer | What it does | Config | Default when omitted |
+|---|---|---|---|
+| Load shedding | Rejects requests above an in-flight ceiling with `503` | `performance.load-shedding` | disabled |
+| Rate limiting | Global and per-API-key token buckets, `429` on excess | `performance.rate-limiter` | disabled |
+| Circuit breaker | Skips providers that keep failing | `performance.circuit-breaker` | disabled |
+| Credential rotation | Picks one credential per provider, tries the others on failure | `routing.strategy` | `round-robin` |
+| Credential cooldown | Parks a failing credential/model pair for a while | `disable-cooling` | enabled |
+| Cross-provider failover | Tries the next provider that serves the same model ID | automatic | enabled |
+| Cooldown-wait retry | Waits for the nearest cooldown to expire, then retries | `request-retry`, `max-retry-interval` | off (`max-retry-interval: 0`) |
+| Timeouts & stall watchdog | Bounds non-streaming requests and detects stalled streams | `performance.provider-timeouts`, `performance.streaming` | 120s, 15s first byte, 60s stall |
+| Streaming bootstrap retry | Re-runs a stream that failed before the first byte | `streaming.bootstrap-retries` | `0` |
+| Virtual-model fallback | Retries once on another pool member | `virtual-models.<id>.fallback` | off |
 
-switchAILocal provides multiple layers of reliability:
+<Note>
+The values in `config.example.yaml` (circuit breaker on, `keepalive-seconds: 15`, `bootstrap-retries: 2`) are example settings, not built-in defaults. If you start from an empty config you get the defaults in the table above.
+</Note>
 
-- **Credential Rotation**: Round-robin or fill-first across multiple API keys
-- **Quota Management**: Automatic project switching when quotas are exceeded
-- **Retry Logic**: Configurable retries for transient failures
-- **Intelligent Failover**: AI-powered routing to alternative providers (Superbrain)
+## Minimal resilient config
 
-<Tip>
-For advanced failover with AI-powered provider selection, see [Superbrain](/intelligent-systems/superbrain).
-</Tip>
+```yaml config.yaml
+# Two credentials for the same provider: rotation + per-credential cooldown
+gemini-api-key:
+  - api-key: "YOUR_GEMINI_KEY_1"
+  - api-key: "YOUR_GEMINI_KEY_2"
 
-## Routing Strategies
-
-Control how switchAILocal selects credentials when multiple are available.
-
-### Configuration
-
-```yaml
 routing:
-  strategy: "round-robin"  # or "fill-first"
-```
+  strategy: "round-robin"   # or "fill-first"
 
-### Round-Robin (Default)
-
-Distributes requests evenly across all available credentials:
-
-```yaml
-routing:
-  strategy: "round-robin"
-
-gemini-api-key:
-  - api-key: "key-1"
-  - api-key: "key-2"
-  - api-key: "key-3"
-```
-
-**Behavior:**
-- Request 1 → `key-1`
-- Request 2 → `key-2`
-- Request 3 → `key-3`
-- Request 4 → `key-1` (cycles back)
-
-**Use Cases:**
-- Even load distribution across accounts
-- Fair quota consumption
-- Testing multiple credentials
-
-### Fill-First
-
-Uses the first credential until it fails or hits quota, then moves to the next:
-
-```yaml
-routing:
-  strategy: "fill-first"
-
-gemini-api-key:
-  - api-key: "key-1"  # Primary
-  - api-key: "key-2"  # Backup
-  - api-key: "key-3"  # Emergency
-```
-
-**Behavior:**
-- All requests use `key-1`
-- On failure/quota → switch to `key-2`
-- On failure/quota → switch to `key-3`
-- After recovery, stays on current key
-
-**Use Cases:**
-- Primary/backup credential hierarchy
-- Minimize account switching
-- Cost optimization (cheaper accounts first)
-
-<Accordion title="Changing Strategy at Runtime">
-You can change the routing strategy at runtime using the Management API:
-
-```bash
-curl http://localhost:18080/api/config/routing \
-  -X POST \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"strategy": "fill-first"}'
-```
-
-The change takes effect immediately without restart.
-</Accordion>
-
-## Quota Exceeded Handling
-
-Automatic failover when provider quotas are exceeded.
-
-### Configuration
-
-```yaml
-quota-exceeded:
-  switch-project: true          # Move to next credential
-  switch-preview-model: true    # Fallback to preview models
-```
-
-### Project Switching
-
-When a credential hits quota, automatically try the next one:
-
-```yaml
-quota-exceeded:
-  switch-project: true
-
-gemini-api-key:
-  - api-key: "project-a-key"
-  - api-key: "project-b-key"
-  - api-key: "project-c-key"
-```
-
-**Behavior:**
-
-<CodeGroup>
-```text Request Flow
-1. Request sent with project-a-key
-2. Response: 429 Quota Exceeded
-3. Retry with project-b-key
-4. Success!
-```
-
-```text When All Fail
-1. Request sent with project-a-key → 429
-2. Retry with project-b-key → 429
-3. Retry with project-c-key → 429
-4. Return 429 to client with all attempts logged
-```
-</CodeGroup>
-
-### Preview Model Fallback
-
-Automatically downgrade to preview/experimental models when stable models hit quota:
-
-```yaml
-quota-exceeded:
-  switch-preview-model: true
-
-gemini-api-key:
-  - api-key: "AIza..."
-    models:
-      - name: "gemini-2.5-pro"          # Stable
-      - name: "gemini-2.5-pro-preview"  # Preview (fallback)
-```
-
-**Behavior:**
-- Request for `gemini-2.5-pro` hits quota
-- Automatically retry with `gemini-2.5-pro-preview`
-- Client receives response from preview model
-
-<Warning>
-Preview models may have different capabilities, rate limits, or stability. Use with caution in production.
-</Warning>
-
-## Retry Logic
-
-Automatic retries for transient failures.
-
-### Configuration
-
-```yaml
-request-retry: 3  # Number of retries
-```
-
-### Retryable Errors
-
-Requests are automatically retried for these HTTP status codes:
-
-- **403** Forbidden (temporary auth issues)
-- **408** Request Timeout
-- **500** Internal Server Error
-- **502** Bad Gateway
-- **503** Service Unavailable
-- **504** Gateway Timeout
-
-### Behavior
-
-```yaml
-request-retry: 3
-```
-
-<CodeGroup>
-```text Success on Retry
-1. Request → 503 Service Unavailable
-2. Retry 1 → 503 Service Unavailable
-3. Retry 2 → 200 OK ✓
-```
-
-```text All Retries Exhausted
-1. Request → 500 Internal Server Error
-2. Retry 1 → 500 Internal Server Error
-3. Retry 2 → 500 Internal Server Error
-4. Retry 3 → 500 Internal Server Error
-5. Return 500 to client
-```
-</CodeGroup>
-
-### Retry with Credential Rotation
-
-When combined with multiple credentials, retries rotate through them:
-
-```yaml
+# Wait up to 30s for a cooled-down credential, at most 2 extra rounds
 request-retry: 2
-routing:
-  strategy: "round-robin"
+max-retry-interval: 30
 
-gemini-api-key:
-  - api-key: "key-1"
-  - api-key: "key-2"
-```
-
-**Behavior:**
-1. Request with `key-1` → 503
-2. Retry 1 with `key-2` → 503
-3. Retry 2 with `key-1` → 200 OK ✓
-
-<Tip>
-Combining retries with credential rotation provides resilience against both transient failures and per-account issues.
-</Tip>
-
-## Streaming Failover
-
-Special handling for streaming requests.
-
-### Configuration
-
-```yaml
-streaming:
-  keepalive-seconds: 15    # SSE heartbeat interval
-  bootstrap-retries: 2      # Retries before first byte
-```
-
-### Bootstrap Retries
-
-For streaming requests, switchAILocal can retry **before sending any data to the client**:
-
-```yaml
-streaming:
-  bootstrap-retries: 2
-```
-
-**Behavior:**
-- Request starts streaming
-- Provider fails **before** first chunk
-- Retry with next credential
-- Client never sees the failure
-
-<Accordion title="Why Bootstrap Retries?">
-Once streaming starts and the first byte is sent to the client, the HTTP response is committed. We can't retry after that point without breaking the client connection.
-
-**Bootstrap retries** let us retry transparently while the client is still waiting for the first chunk.
-</Accordion>
-
-### SSE Keepalive
-
-Prevent connection timeouts during long streaming responses:
-
-```yaml
 streaming:
   keepalive-seconds: 15
+  bootstrap-retries: 2
+
+performance:
+  circuit-breaker:
+    enabled: true
+    failure-threshold: 3
+    reset-timeout: 5m
+    half-open-max: 3
+  provider-timeouts:
+    default: 120s
+  streaming:
+    first-byte-timeout: 15s
+    stall-timeout: 60s
 ```
 
-Sends a heartbeat comment every 15 seconds:
+Example request (nothing special is needed on the client side):
 
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-2.5-flash", "messages": [{"role": "user", "content": "ping"}]}'
 ```
-data: {"chunk": "..."}
 
-: keepalive
+## Credential rotation
 
-data: {"chunk": "..."}
+When several credentials belong to the same provider (several `gemini-api-key` entries, several `api-key-entries` under one `openai-compatibility` provider, several OAuth logins), the selector picks one per request:
+
+- **`round-robin`** (default) keeps a cursor per `provider:model` and moves to the next available credential on every request.
+- **`fill-first`** always takes the first available credential (sorted by credential ID) and only moves on while that one is cooling down. Aliases `fillfirst` and `ff` are accepted.
+
+Changing `routing.strategy` in `config.yaml` is applied on hot reload without a restart.
+
+Within one request, if the chosen credential fails, switchAILocal tries **every other credential of the same provider** before giving up on that provider. Each failure records a cooldown on that credential (see below).
+
+## Credential cooldowns
+
+A failure parks the credential for the requested model. A parked credential is skipped by the selector until its cooldown ends; the next success on that credential and model resets its state and backoff level.
+
+| Upstream status | Cooldown | Notes |
+|---|---|---|
+| `401` | 30 min | marked `unauthorized` |
+| `402` | 30 min | marked `payment_required` |
+| `403` | 3 s | treated as a transient WAF/edge block |
+| `404` | 12 h | model treated as not available on this credential |
+| `429` | `Retry-After` if sent, else exponential: 1s, 2s, 4s … capped at 30 min | backoff level resets on success |
+| `408`, `500`, `502`, `503`, `504` | 1 min | |
+| other (e.g. `400`) | none | the credential stays selectable |
+
+Source: `sdk/switchailocal/auth/conductor.go` (`MarkResult`, `nextQuotaCooldown`).
+
+When **all** credentials of a provider are in a `429` quota cooldown for a model, that provider fails with `429` and a `Retry-After` header:
+
+```json
+{"error": {"code": "model_cooldown", "message": "All credentials for model gemini-2.5-flash are cooling down via provider gemini", "model": "gemini-2.5-flash", "reset_time": "12s", "reset_seconds": 12, "provider": "gemini"}}
 ```
 
-Disable by setting to `0`:
+If the credentials are parked for other reasons (for example a 401), the error is `auth_unavailable: no active auth available for provider '...'`, returned as `500`.
+
+`disable-cooling: true` turns off only the **exponential 429 backoff**. A `Retry-After` header from the upstream is still honoured, and the other cooldowns in the table still apply.
+
+## Cross-provider failover
+
+A model ID can be served by more than one provider, for example when two `openai-compatibility` providers both declare the alias `fast`. switchAILocal then:
+
+1. Rotates the **starting provider** per model on every request (provider-level round-robin).
+2. On failure, classifies the error and either advances to the next provider or stops.
+
+An explicit prefix such as `ollama:llama3.2` pins the request to that one provider, so there is nothing to fail over to.
+
+### Error classes
+
+The classifier (`internal/failover/classify.go`) maps every executor error to one class:
+
+| Class | Typical trigger | Advances to next provider? |
+|---|---|---|
+| `transient` | 5xx, 408, connection refused/reset, timeout, unexpected EOF | yes |
+| `rate_limit` | 429 | yes |
+| `auth` | 401, 403 | yes |
+| `out_of_credits` | 402, or a 400 whose message contains hints like `insufficient_quota`, `billing_hard_limit_reached`, `insufficient credit` | yes |
+| `context_length` | 400 whose message contains `context_length_exceeded`, `maximum context length`, `prompt is too long`, … | yes |
+| `stall_pre_first_byte` | stream produced nothing before `first-byte-timeout` | yes |
+| `unknown` | anything else | yes |
+| `permanent` | other 400, 404, 405, 415, 422 | **no**, returned to the client |
+| `stall_mid_stream` | stream stalled after bytes were sent | **no** |
+| `client_disconnect` | the caller cancelled | **no** |
+
+`context_length` and `out_of_credits` currently advance like any other class; they do not yet restrict the next attempt to larger-window or funded providers.
+
+Every decision is logged as a structured line you can grep for:
+
+```text
+level=warning msg="provider failover" event=failover attempt=1 primary_provider=kimi next_provider=deepseek error_class=rate_limit http_status=429
+level=info    msg="provider failover recovered" event=failover_recovered recovered_on=deepseek attempts=2 prev_error_class=rate_limit
+level=warning msg="provider failover aborted (terminal error class)" event=failover_abort provider=kimi error_class=permanent http_status=400
+```
+
+## Cooldown-wait retry (`request-retry`)
+
+After every provider and credential has been tried once, switchAILocal can **wait for the nearest cooldown to expire and run the whole round again**.
+
+```yaml
+request-retry: 3        # extra rounds
+max-retry-interval: 30  # seconds; maximum time to wait for a cooldown
+```
+
+A retry round only happens when all of these are true:
+
+- `max-retry-interval` is greater than `0` (default `0`, so retries are **off** unless you set it)
+- at least one candidate credential is in a timed cooldown that ends within `max-retry-interval`
+- rounds remain (`request-retry` extra rounds after the first attempt)
+
+<Warning>
+`request-retry` on its own does not re-send a request on 5xx errors. The comment in older example configs ("retry on 403, 408, 500, 502, 503, 504") describes cooldown durations, not an immediate retry loop. Set `max-retry-interval` to enable waiting.
+</Warning>
+
+Both values are hot-reloadable and can also be changed at runtime through the management API (`/v0/management/request-retry`, `/v0/management/max-retry-interval`).
+
+## Circuit breaker
+
+The breaker keeps one state machine per provider ID (`gemini`, `claude`, `ollama`, or the lower-cased `name` of an `openai-compatibility` entry):
+
+- **closed**: requests pass. Consecutive failures are counted.
+- **open**: after `failure-threshold` consecutive failures, the provider is skipped for `reset-timeout`.
+- **half-open**: after `reset-timeout`, up to `half-open-max` probe requests pass. One success closes the breaker; one failure re-opens it.
+
+```yaml
+performance:
+  circuit-breaker:
+    enabled: true          # default false
+    failure-threshold: 3   # default 5 when enabled and unset
+    reset-timeout: 5m      # default 30s
+    half-open-max: 3       # default 3
+```
+
+Only `5xx` and `429` results count as breaker failures; `400`/`401`/`403` do not. If every provider for a request is open, the request fails with `503` (`all downstream providers (...) are currently overloaded or open`).
+
+<Note>
+In this release, breaker failures and successes are recorded only for requests resolved by the auto-router (`model: "auto"`). Directly addressed models are still **gated** by an open breaker, but they do not move its counters.
+</Note>
+
+## Timeouts and stream stall detection
+
+```yaml
+performance:
+  provider-timeouts:
+    default: 120s
+    per-provider:
+      ollama: 180s     # keys are provider IDs, not vendor names
+      claude: 60s
+  streaming:
+    first-byte-timeout: 15s
+    stall-timeout: 60s
+    per-provider:      # first-byte overrides only
+      minimax: 30s
+```
+
+- **`provider-timeouts`** bounds the whole **non-streaming** upstream call. It is applied by the Gemini, Vertex, Claude, Codex, Qwen, iFlow, Antigravity and OpenAI-compatible executors. Keys must match the provider ID (`claude`, not `anthropic`; the `openai-compatibility` `name` in lower case).
+- **`streaming.first-byte-timeout`** is the maximum wait for the first upstream byte of a stream. A stall here is classified `stall_pre_first_byte` and fails over to the next provider.
+- **`streaming.stall-timeout`** is the maximum gap between chunks once streaming has started. A stall here is `stall_mid_stream`: the stream is ended with an error event, because bytes already sent cannot be retracted.
+- The stall watchdog runs in the OpenAI-compatible executor (all `openai-compatibility` providers). MiniMax music streams raise the floors to 60s first byte and 120s stall.
+
+Upstream errors embedded inside an SSE stream with HTTP 200 (for example `data: {"type":"error",...}` or `data: {"error":{...}}` without `choices`) are detected and converted into real errors with the embedded status code, so they enter the same failover path.
+
+## Streaming recovery
 
 ```yaml
 streaming:
-  keepalive-seconds: 0  # Disabled
+  keepalive-seconds: 15   # SSE ": keep-alive" comment interval; 0 or omitted = off
+  bootstrap-retries: 2    # re-runs before the first byte; 0 or omitted = off
 ```
 
-## Intelligent Failover (Superbrain)
+- **Bootstrap retries**: if a stream fails **before any payload byte** reached the client, and the status is 401, 402, 403, 408, 429, 5xx or unknown, switchAILocal starts the stream again (credential and provider selection run again). The client never sees the failed attempt.
+- **Keep-alive**: sends `: keep-alive` SSE comments so proxies and clients do not close idle connections during long reasoning phases.
+- **Mid-stream errors** are written as a final SSE event in OpenAI error shape, followed by the end of the stream:
 
-AI-powered provider selection based on capabilities and success rates.
+```text
+data: {"error":{"message":"upstream stall (mid_stream) on provider \"kimi\" after 1m0s","type":"server_error","code":"internal_server_error"}}
+```
 
-### Configuration
+## Load shedding and rate limiting
 
 ```yaml
-superbrain:
-  enabled: true
-  mode: "conservative"  # or "autopilot"
-  
-  fallback:
+performance:
+  load-shedding:
     enabled: true
-    providers:
-      - "geminicli"   # First choice
-      - "gemini"      # Second choice
-      - "ollama"      # Last resort
-    min_success_rate: 0.5  # Minimum 50% success rate
-```
-
-### How It Works
-
-When a provider fails, Superbrain:
-
-1. **Analyzes the failure** using AI diagnosis
-2. **Selects an alternative provider** based on:
-   - Provider capabilities (context size, streaming, CLI support)
-   - Current availability
-   - Historical success rates
-   - Request requirements
-3. **Adapts the request** for the new provider
-4. **Routes and executes** transparently
-
-### Provider Selection Criteria
-
-<CodeGroup>
-```yaml Capabilities
-# Provider must support:
-- Streaming: if original request was streaming
-- CLI: if original provider was CLI-based
-- Context size: at least as large as original
-```
-
-```yaml Availability
-# Provider must be:
-- Currently responsive
-- Not in backoff period
-- Have credentials configured
-```
-
-```yaml Success Rate
-# Historical performance:
-- Minimum 50% success rate (configurable)
-- Recent success weighted higher
-- Per-provider tracking
-```
-</CodeGroup>
-
-### Example Failover Flow
-
-```yaml
-superbrain:
-  fallback:
-    providers: ["geminicli", "gemini", "ollama"]
-    min_success_rate: 0.5
-```
-
-<CodeGroup>
-```text Scenario: geminicli fails
-1. Request to geminicli → Auth Error
-2. Superbrain diagnoses: "Authentication failure"
-3. Checks fallback providers:
-   - geminicli: ✗ (failed)
-   - gemini: ✓ (available, 85% success rate)
-   - ollama: ✓ (available, 92% success rate)
-4. Selects: gemini (first available in list)
-5. Adapts request for Gemini API format
-6. Routes to gemini → Success!
-```
-
-```text Scenario: All providers unavailable
-1. Request to geminicli → Timeout
-2. Fallback to gemini → Quota Exceeded
-3. Fallback to ollama → Connection Refused
-4. Return error to client with details:
-   - Attempted providers: geminicli, gemini, ollama
-   - Failure reasons: timeout, quota, connection
-   - Healing actions taken: 3 fallback attempts
-```
-</CodeGroup>
-
-### Transparent Metadata
-
-All failover actions are logged in response metadata:
-
-```json
-{
-  "x-switchai-healing-actions": [
-    {
-      "action_type": "fallback_routing",
-      "description": "Routed to gemini after geminicli auth failure",
-      "success": true,
-      "timestamp": "2026-03-09T10:30:00Z",
-      "details": {
-        "original_provider": "geminicli",
-        "fallback_provider": "gemini",
-        "reason": "Authentication failure",
-        "capability_match": 0.95
-      }
-    }
-  ]
-}
-```
-
-<Tip>
-For complete Superbrain documentation, see [Superbrain Intelligence](/intelligent-systems/superbrain).
-</Tip>
-
-## Multi-Provider Configuration
-
-Configure multiple providers for comprehensive failover:
-
-```yaml
-# Primary: Gemini
-gemini-api-key:
-  - api-key: "AIza-primary"
-  - api-key: "AIza-backup"
-
-# Backup: Claude
-claude-api-key:
-  - api-key: "sk-ant-primary"
-
-# Emergency: Local Ollama
-ollama:
-  enabled: true
-  base-url: "http://localhost:11434"
-
-# Routing
-routing:
-  strategy: "round-robin"
-
-quota-exceeded:
-  switch-project: true
-
-request-retry: 3
-
-superbrain:
-  enabled: true
-  fallback:
+    max-in-flight: 500        # default 500
+    retry-after-seconds: 5    # default 5
+  rate-limiter:
     enabled: true
-    providers: ["gemini", "claude", "ollama"]
-    min_success_rate: 0.5
+    global-requests-per-second: 1000   # default 1000
+    global-burst: 500                  # default 500
+    per-key-requests-per-second: 60    # default 60
+    per-key-burst: 30                  # default 30
 ```
 
-**Result:**
-1. Requests round-robin across Gemini keys
-2. On quota → switch to backup Gemini key
-3. On failure → retry up to 3 times
-4. On persistent failure → Superbrain routes to Claude
-5. On Claude failure → route to local Ollama
+Load shedding returns `503` with `Retry-After`; the rate limiter returns `429` with `Retry-After: 1`. Both run before authentication and routing and apply to every route.
 
-## Monitoring & Metrics
+## Virtual-model fallback
 
-### Management Dashboard
+Requests to a [virtual model](/advanced/virtual-models) with `fallback: true` get one more chance: on a recoverable error (402, 408, 429, 5xx, or no status) the router picks a different eligible member and retries once. See the virtual models page for pool and capability rules.
 
-View real-time failover metrics:
+## Superbrain fallback
 
-1. Open http://localhost:18080/dashboard
-2. Navigate to **Provider Health**
-3. View:
-   - Success rates per provider
-   - Quota status
-   - Active credential
-   - Failover events
-
-### API Endpoint
-
-Query provider statistics programmatically:
-
-```bash
-curl http://localhost:18080/api/providers/stats \
-  -H "Authorization: Bearer sk-test-123"
-```
-
-**Response:**
-
-```json
-{
-  "providers": [
-    {
-      "name": "gemini",
-      "success_rate": 0.92,
-      "total_requests": 1523,
-      "failed_requests": 122,
-      "quota_exceeded": 15,
-      "active_credential": "key-1",
-      "available_credentials": 3
-    },
-    {
-      "name": "claude",
-      "success_rate": 0.88,
-      "total_requests": 412,
-      "failed_requests": 49,
-      "quota_exceeded": 0,
-      "active_credential": "key-1",
-      "available_credentials": 1
-    }
-  ]
-}
-```
-
-## Best Practices
-
-### 1. Use Multiple Credentials Per Provider
-
-```yaml
-gemini-api-key:
-  - api-key: "key-1"  # Primary
-  - api-key: "key-2"  # Backup
-  - api-key: "key-3"  # Emergency
-```
-
-### 2. Enable Quota Switching
-
-```yaml
-quota-exceeded:
-  switch-project: true
-```
-
-### 3. Configure Reasonable Retries
-
-```yaml
-request-retry: 3  # Balance between reliability and latency
-```
-
-### 4. Set Up Multi-Provider Failover
-
-```yaml
-superbrain:
-  fallback:
-    providers: ["primary", "backup", "local"]
-```
-
-### 5. Monitor Success Rates
-
-Regularly check provider health:
-
-```bash
-curl http://localhost:18080/api/providers/stats
-```
-
-### 6. Test Failover Scenarios
-
-Simulate failures to verify configuration:
-
-```bash
-# Temporarily disable a credential to test failover
-curl http://localhost:18080/api/credentials/disable \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{"provider": "gemini", "key_id": "key-1"}'
-```
+[Superbrain](/intelligent-systems/superbrain) adds diagnosis and recovery for CLI-backed providers (`superbrain.fallback.providers`, `min_success_rate`). It is disabled by default (`superbrain.enabled: false`) and is separate from the request-level failover described above.
 
 ## Troubleshooting
 
-### Failover Not Working
+<AccordionGroup>
+  <Accordion title="Requests fail immediately instead of failing over">
+    - Check the error class in the logs (`event=failover_abort`). `permanent` errors (400, 404, 422) are returned to the client by design.
+    - Make sure more than one provider actually serves the model ID: `GET /v1/models` lists IDs, `GET /v1/providers` lists providers. A prefixed model (`ollama:...`) pins one provider.
+  </Accordion>
+  <Accordion title="429 model_cooldown although the upstream is healthy again">
+    The credential is still in its cooldown window (for example 30 minutes after a 401). Wait for `reset_seconds`, fix the credential, or restart to clear in-memory state. Use `fill-first` only if you want strict primary/backup ordering.
+  </Accordion>
+  <Accordion title="request-retry seems to have no effect">
+    Set `max-retry-interval` to a value larger than the cooldowns you want to wait out (for example `60`). With the default `0` no retry rounds run.
+  </Accordion>
+  <Accordion title="Streams are cut off with a stall error">
+    Increase `performance.streaming.stall-timeout`, or give the slow provider a larger first-byte budget under `performance.streaming.per-provider`. Reasoning models can pause for a long time between chunks.
+  </Accordion>
+  <Accordion title="Breaker never opens for a failing provider">
+    Confirm `performance.circuit-breaker.enabled: true`. Counters only move for auto-routed requests and only on 5xx/429.
+  </Accordion>
+</AccordionGroup>
 
-**Problem:** Requests fail instead of failing over
+## See also
 
-**Solutions:**
-- Verify multiple credentials configured: `curl http://localhost:18080/api/providers`
-- Check `quota-exceeded.switch-project: true`
-- Enable debug logging: `debug: true`
-- Verify credentials are valid: Test each manually
-
-### Excessive Retries
-
-**Problem:** Requests take too long due to retries
-
-**Solutions:**
-- Reduce `request-retry` value
-- Decrease `streaming.bootstrap-retries`
-- Check provider health: Remove failing providers
-
-### Wrong Credential Used
-
-**Problem:** Not using expected credential
-
-**Solutions:**
-- Check routing strategy: `round-robin` vs `fill-first`
-- View current selection: Dashboard → Provider Health
-- Force specific credential using `prefix:model` syntax
-
-## See Also
-
-- [Superbrain Intelligence](/intelligent-systems/superbrain) - AI-powered failover
-- [Configuration Reference](/configuration/overview) - Complete config options
-- [Provider Setup](/guides/setup-providers) - Multi-provider configuration
+- [Virtual Models](/advanced/virtual-models): capability-aware pools with weighted balancing
+- [Routing](/concepts/routing): how a model ID is resolved to providers
+- [Superbrain](/intelligent-systems/superbrain): CLI process healing

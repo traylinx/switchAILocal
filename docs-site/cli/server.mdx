@@ -1,204 +1,227 @@
 ---
 title: "Server Command"
-description: "Start the switchAILocal proxy server with comprehensive configuration options"
+description: "Start switchAILocal, choose the config file, and the environment variables it reads"
 ---
-
-## Overview
-
-The main `switchAILocal` command starts the proxy server that provides OpenAI/Gemini/Claude compatible API interfaces for CLI models.
 
 ## Usage
 
 ```bash
 switchAILocal [flags]
+switchAILocal memory <command> [options]
 ```
 
-## Server Flags
+With no login flag, `switchAILocal` loads its configuration and starts the HTTP
+server. Login flags run a one-off authentication flow instead and exit; see
+[Login commands](/cli/login). `memory` is a separate subcommand; see
+[Memory commands](/cli/memory).
 
-<ParamField path="--config" type="string" default="config.yaml">
-  Path to the configuration file. The server looks for `config.yaml` in the current working directory by default.
-  
+Flags use Go's flag syntax: `-config file`, `--config file` and
+`--config=file` are equivalent. `switchAILocal -h` prints the version line and
+the flag list.
+
+## Flags
+
+<ParamField path="-config" type="string" default="./config.yaml">
+  Path to the configuration file. Without it, the server loads `config.yaml`
+  from the current working directory and exits if the file does not exist.
+
+  For safety the path is validated:
+  - it may not contain `..` or `~` (use `$HOME/...` and let the shell expand it);
+  - an absolute path must be inside your home directory, `/etc/`, `/usr/` or `/var/`.
+
   ```bash
-  switchAILocal --config /path/to/custom-config.yaml
+  switchAILocal -config "$HOME/.config/switchailocal/config.yaml"
+  switchAILocal -config /etc/switchailocal/config.yaml
   ```
+
+  Ignored when a remote config store is configured (see [Config sources](#config-sources)).
 </ParamField>
 
-<ParamField path="--password" type="string">
-  Server password for authentication. For security, prefer using the `SERVER_PASSWORD` environment variable instead.
-  
-  <Warning>
-    Using `--password` on the command line exposes the password in process listings. Use environment variables for production.
-  </Warning>
-  
-  ```bash
-  export SERVER_PASSWORD="your-secure-password"
-  switchAILocal
-  ```
+<ParamField path="-password" type="string">
+  Local management password, intended for apps that embed and supervise the
+  server. Hidden from `-h`.
+
+  Setting it changes runtime behavior:
+  - localhost requests to `/v0/management/*` may authenticate with this value;
+  - a `GET /keep-alive` endpoint is enabled (send the password as
+    `Authorization: Bearer <password>` or `X-Local-Password`);
+  - **the server shuts down if `/keep-alive` is not called for 10 seconds.**
+
+  Do not use it for a normal interactive server. To protect management access
+  use `remote-management.secret-key` or `MANAGEMENT_PASSWORD`
+  ([Security](/configuration/security)).
 </ParamField>
 
-<ParamField path="--project_id" type="string">
-  Google Cloud Project ID for Gemini API access. Only required when using Vertex AI or project-specific Gemini endpoints.
-  
-  ```bash
-  switchAILocal --project_id my-gcp-project-123
-  ```
+<ParamField path="-no-browser" type="boolean" default="false">
+  For login flows: print the authorization URL instead of opening a browser.
 </ParamField>
 
-## Environment Variables
+<ParamField path="-project_id" type="string">
+  For `-login` (Gemini) only: the Google Cloud project to use. When omitted, you
+  pick from the projects available to your account.
+</ParamField>
 
-The server supports extensive configuration through environment variables, especially for cloud deployments.
+Login flags (`-login`, `-claude-login`, `-codex-login`, `-qwen-login`,
+`-iflow-login`, `-iflow-cookie`, `-antigravity-login`, `-ollama-login`,
+`-vibe-login`, `-vertex-import`) are documented on [Login commands](/cli/login).
 
-### Storage Backends
+There is no `--version` or `--port` flag. The version is printed on the first
+line of every run; the port comes from `config.yaml`.
+
+## What happens at startup
+
+1. Prints `switchAILocal Version: <v>, Commit: <sha>, BuiltAt: <date>`.
+2. Loads `.env` from the current directory, if present, into the environment
+   (existing variables win). The OAuth client variables below are read
+   earlier and must be exported in the shell.
+3. Loads the config (see below). A missing or unparsable file is fatal.
+4. Warns if the config file or `auth-dir` is readable by group or others
+   (`should be 600 or more restrictive`).
+5. Hashes a plaintext `remote-management.secret-key` with bcrypt and writes the
+   hash back into the file.
+6. Refuses to start if `remote-management.allow-remote: true` is set without a
+   `secret-key` or `MANAGEMENT_PASSWORD`.
+7. Detects `gemini`, `claude`, `codex` and `vibe` on `PATH` and registers them as
+   providers, then starts model discovery in the background.
+8. Starts listening and prints:
+
+```text
+API server started successfully on: 127.0.0.1:18080
+Management UI available at: http://localhost:18080/management
+```
+
+The second line is omitted when `remote-management.disable-control-panel` is
+`true`. Stop the server with `Ctrl+C` (SIGINT) or SIGTERM.
+
+<Note>
+  `port` has no built-in default. `config.example.yaml` sets `18080`; if you
+  leave `port` out, the server listens on a random free port.
+</Note>
+
+## Config sources
+
+The server picks exactly one source, in this order:
+
+| Priority | Enabled by | Config and credentials live in |
+| -------- | ---------- | ------------------------------ |
+| 1 | `PGSTORE_DSN` | PostgreSQL, mirrored to `<PGSTORE_LOCAL_PATH>/pgstore` |
+| 2 | `OBJECTSTORE_ENDPOINT` | S3-compatible bucket, mirrored to `<OBJECTSTORE_LOCAL_PATH>/objectstore` |
+| 3 | `GITSTORE_GIT_URL` | Git repository, cloned to `<GITSTORE_LOCAL_PATH>/gitstore` |
+| 4 | `-config` | The given file |
+| 5 | (default) | `./config.yaml` |
+
+With a remote store, the config is bootstrapped from `config.example.yaml` in
+the current directory on first use, and `auth-dir` is replaced by the store's
+own credential folder. The local mirror path defaults to `WRITABLE_PATH`, or
+the current directory.
+
+## Environment variables
+
+### General
+
+| Variable | Effect |
+| -------- | ------ |
+| `MANAGEMENT_PASSWORD` | Management API key accepted in addition to `remote-management.secret-key`. Also satisfies the `allow-remote` secret requirement. |
+| `WRITABLE_PATH` | Base folder for `logs/`, the management panel `static/` folder and remote-store mirrors. Default: current directory (logs), config folder (panel). |
+| `MANAGEMENT_STATIC_PATH` | Folder (or full path to `management.html`) that holds the management panel. Overrides `WRITABLE_PATH` and the config folder. |
+| `DEPLOY` | Set to `cloud` to start without a usable config: the process stays up idle, without serving HTTP, until restarted with a valid config. |
+| `REMOTE_COMMAND_HOST` | Forward CLI-provider executions to a [bridge agent](/installation#bridge-agent) at this `http(s)://` URL instead of running the CLI locally. |
+| `TZ` | Time zone for log timestamps (the Docker image sets `UTC`). |
+
+### OAuth client credentials
+
+Required only for the matching login flow; see [Login commands](/cli/login).
+
+| Variable | Used by |
+| -------- | ------- |
+| `GEMINI_CLIENT_ID`, `GEMINI_CLIENT_SECRET` | `-login` (Gemini) |
+| `QWEN_CLIENT_ID` | `-qwen-login` |
+| `IFLOW_CLIENT_ID`, `IFLOW_CLIENT_SECRET` | `-iflow-login` |
+| `ANTIGRAVITY_CLIENT_ID`, `ANTIGRAVITY_CLIENT_SECRET` | `-antigravity-login` |
+
+### Remote config stores
 
 <AccordionGroup>
-  <Accordion title="PostgreSQL Token Store">
-    Enable centralized token storage using PostgreSQL:
-
-    <ParamField path="PGSTORE_DSN" type="string">
-      PostgreSQL connection string
-      ```bash
-      export PGSTORE_DSN="postgresql://user:pass@localhost:5432/switchai"
-      ```
-    </ParamField>
-
-    <ParamField path="PGSTORE_SCHEMA" type="string">
-      Database schema name (optional)
-    </ParamField>
-
-    <ParamField path="PGSTORE_LOCAL_PATH" type="string">
-      Local spool directory for cached data
-    </ParamField>
+  <Accordion title="PostgreSQL">
+    | Variable | Meaning |
+    | -------- | ------- |
+    | `PGSTORE_DSN` | Connection string. Enables the store. |
+    | `PGSTORE_SCHEMA` | Schema name (optional). |
+    | `PGSTORE_LOCAL_PATH` | Local mirror base folder (optional). |
   </Accordion>
-
-  <Accordion title="Git Token Store">
-    Enable version-controlled token storage using Git:
-
-    <ParamField path="GITSTORE_GIT_URL" type="string">
-      Git repository URL for token storage
-    </ParamField>
-
-    <ParamField path="GITSTORE_GIT_USERNAME" type="string">
-      Git username for authentication
-    </ParamField>
-
-    <ParamField path="GITSTORE_GIT_TOKEN" type="string">
-      Git access token (personal access token or password)
-    </ParamField>
-
-    <ParamField path="GITSTORE_LOCAL_PATH" type="string">
-      Local path for git repository clone
-    </ParamField>
+  <Accordion title="S3-compatible object store">
+    | Variable | Meaning |
+    | -------- | ------- |
+    | `OBJECTSTORE_ENDPOINT` | Endpoint. `http://` disables TLS, `https://` or no scheme uses TLS. Path-style addressing. Enables the store. |
+    | `OBJECTSTORE_ACCESS_KEY` | Access key ID. |
+    | `OBJECTSTORE_SECRET_KEY` | Secret key. |
+    | `OBJECTSTORE_BUCKET` | Bucket name. |
+    | `OBJECTSTORE_LOCAL_PATH` | Local mirror base folder (optional). |
   </Accordion>
-
-  <Accordion title="Object Store (S3-Compatible)">
-    Enable S3-compatible object storage for tokens:
-
-    <ParamField path="OBJECTSTORE_ENDPOINT" type="string">
-      S3-compatible endpoint URL (supports http:// or https://)
-    </ParamField>
-
-    <ParamField path="OBJECTSTORE_ACCESS_KEY" type="string">
-      Access key ID
-    </ParamField>
-
-    <ParamField path="OBJECTSTORE_SECRET_KEY" type="string">
-      Secret access key
-    </ParamField>
-
-    <ParamField path="OBJECTSTORE_BUCKET" type="string">
-      Bucket name for token storage
-    </ParamField>
-
-    <ParamField path="OBJECTSTORE_LOCAL_PATH" type="string">
-      Local cache directory
-    </ParamField>
+  <Accordion title="Git">
+    | Variable | Meaning |
+    | -------- | ------- |
+    | `GITSTORE_GIT_URL` | Repository URL. Enables the store. |
+    | `GITSTORE_GIT_USERNAME` | Username. |
+    | `GITSTORE_GIT_TOKEN` | Token or password. |
+    | `GITSTORE_LOCAL_PATH` | Local clone base folder (optional). |
   </Accordion>
 </AccordionGroup>
 
-### Cloud Deployment
+Each variable is also read in lowercase (for example `pgstore_dsn`). The
+server logs a warning when a connection string contains inline credentials.
 
-<ParamField path="DEPLOY" type="string">
-  Set to `cloud` to enable cloud deployment mode. In this mode, the server waits for configuration before starting.
-  
-  ```bash
-  export DEPLOY="cloud"
-  switchAILocal
-  ```
-</ParamField>
+### Advanced
+
+| Variable | Effect |
+| -------- | ------ |
+| `SWITCHAI_STATE_DIR` | State folder for the [State Box](/advanced/state-box). Default `~/.switchailocal`. |
+| `SWITCHAI_READONLY` | `1` makes the State Box read-only. |
+| `ONNXRUNTIME_LIB_PATH` | Path to the ONNX Runtime library for the local embedding engine. |
+| `INSTANCE_ID`, `AIL_INSTANCE_ID` | Seed for virtual-model scheduling when several instances share a config (falls back to the hostname). |
+| `AIL_AUTOINJECT_WEBSEARCH`, `AIL_AUTOINJECT_MODELS`, `AIL_AUTOINJECT_FORCE_THRESHOLD` | Opt-in automatic `web_search` tool injection for listed models. |
+| `AIL_DEBUG_DUMP` | `true` logs every raw chat-completions request body. Debugging only: bodies may contain secrets. |
 
 ## Examples
 
 <CodeGroup>
-```bash Local Development
-# Start with default config.yaml in current directory
+```bash Default
+# ./config.yaml in the current directory
 switchAILocal
 ```
 
-```bash Custom Config
-# Use a specific configuration file
-switchAILocal --config /etc/switchai/production.yaml
+```bash Explicit config
+switchAILocal -config /etc/switchailocal/config.yaml
 ```
 
-```bash PostgreSQL Backend
-# Use PostgreSQL for centralized token storage
-export PGSTORE_DSN="postgresql://admin:secret@db.example.com:5432/switchai"
+```bash Management password from the environment
+MANAGEMENT_PASSWORD='a-long-random-secret' switchAILocal
+```
+
+```bash PostgreSQL store
+export PGSTORE_DSN="postgresql://user:password@db.example.com:5432/switchai"
 export PGSTORE_SCHEMA="public"
 switchAILocal
 ```
-
-```bash Cloud Deployment
-# Cloud deployment with object storage
-export DEPLOY="cloud"
-export OBJECTSTORE_ENDPOINT="https://s3.amazonaws.com"
-export OBJECTSTORE_ACCESS_KEY="AKIA..."
-export OBJECTSTORE_SECRET_KEY="..."
-export OBJECTSTORE_BUCKET="switchai-tokens"
-switchAILocal
-```
-
-```bash With Password Auth
-# Secure password authentication
-export SERVER_PASSWORD="$(openssl rand -base64 32)"
-switchAILocal --config config.yaml
-```
 </CodeGroup>
 
-## Output
+## Exit behavior
 
-When the server starts successfully, you'll see:
+Startup errors are logged and the process exits; the exit status is `0` even
+on failure, so supervisors should check logs or `/health` rather than the exit
+code.
 
-```
-switchAILocal Version: v1.2.3, Commit: abc123, BuiltAt: 2026-03-09T10:00:00Z
-switchAILocal Version: v1.2.3, Commit: abc123, BuiltAt: 2026-03-09T10:00:00Z
-INFO[0000] Configuration loaded from: /path/to/config.yaml
-INFO[0001] Server listening on http://localhost:8080
-INFO[0001] OpenAI-compatible endpoint: http://localhost:8080/v1
-```
+| Log message | Cause |
+| ----------- | ----- |
+| `failed to read config file: open .../config.yaml: no such file or directory` | No config at the chosen path |
+| `failed to parse config file` | Invalid YAML |
+| `invalid config path: ...` | `-config` failed path validation |
+| `invalid auth directory path: ...` | `auth-dir` contains `..`, or is an absolute path outside home, `/etc`, `/usr` or `/var` |
+| `remote-management.allow-remote is true but no secret is set` | Set a secret or disable remote management |
+| `virtual-models.<id> ...` | Invalid [virtual model](/configuration/providers#virtual-models) definition |
 
-## Security Considerations
+## Related
 
-<Warning>
-  The server performs security validation on startup:
-  
-  - **File Permissions**: Configuration and auth files should have restrictive permissions (600 or more restrictive)
-  - **Path Traversal**: File paths are validated to prevent directory traversal attacks
-  - **Sensitive Data**: Passwords and tokens in error messages are automatically sanitized
-  - **Environment Variables**: Sensitive environment variables are checked for common security issues
-</Warning>
-
-## Configuration Precedence
-
-The server loads configuration in the following order:
-
-1. **PostgreSQL Store** (if `PGSTORE_DSN` is set)
-2. **Object Store** (if `OBJECTSTORE_ENDPOINT` is set)
-3. **Git Store** (if `GITSTORE_GIT_URL` is set)
-4. **Local File** (specified via `--config` or default `config.yaml`)
-
-When multiple storage backends are configured, PostgreSQL takes highest precedence.
-
-## Related Commands
-
-- [Login Commands](/cli/login) - Authenticate with AI providers
-- [Memory Commands](/cli/memory) - Manage routing history and preferences
-- [Heartbeat Commands](/cli/heartbeat) - Monitor provider health
+- [Login commands](/cli/login)
+- [Memory commands](/cli/memory)
+- [Configuration overview](/configuration/overview)

@@ -46,7 +46,8 @@
               "configuration/overview",
               "configuration/server",
               "configuration/providers",
-              "configuration/security"
+              "configuration/security",
+              "configuration/reference"
             ]
           },
           {
@@ -55,7 +56,8 @@
               "intelligent-systems/cortex-router",
               "intelligent-systems/superbrain",
               "intelligent-systems/memory",
-              "intelligent-systems/heartbeat"
+              "intelligent-systems/heartbeat",
+              "intelligent-systems/hooks"
             ]
           },
           {
@@ -65,7 +67,10 @@
               "advanced/lua-plugins",
               "advanced/cortex-answer-schema",
               "advanced/failover",
-              "advanced/state-box"
+              "advanced/state-box",
+              "advanced/virtual-models",
+              "advanced/media",
+              "advanced/notifications"
             ]
           },
           {
@@ -99,7 +104,14 @@
               "api/models",
               "api/embeddings",
               "api/music",
-              "api/websocket"
+              "api/websocket",
+              "api/responses",
+              "api/messages",
+              "api/images",
+              "api/audio",
+              "api/notifications",
+              "api/gemini",
+              "api/system"
             ]
           },
           {
@@ -107,7 +119,8 @@
             "pages": [
               "api/provider-prefixes",
               "api/auto-routing",
-              "api/cli-attachments"
+              "api/cli-attachments",
+              "api/amp"
             ]
           },
           {

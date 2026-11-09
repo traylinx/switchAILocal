@@ -1,399 +1,117 @@
 ---
 title: 'Architecture'
-description: 'Understanding switchAILocal core architecture and components'
+description: 'The components a request passes through, and where each feature plugs in'
 icon: 'sitemap'
 ---
 
 ## Overview
 
-switchAILocal is a unified AI proxy server that provides OpenAI-compatible API interfaces for multiple AI service providers. It acts as an intelligent gateway that manages authentication, routing, and request translation across CLI tools, cloud APIs, and local models.
-
-## Core Components
-
-The architecture is built around several key subsystems that work together to provide a seamless proxy experience:
-
-<CardGroup cols={2}>
-  <Card title="Service Manager" icon="gear">
-    Orchestrates the complete lifecycle including authentication, file watching, HTTP server, and provider integrations.
-  </Card>
-  <Card title="Auth Manager" icon="key">
-    Handles credential management, OAuth flows, API keys, and automatic token refresh for all providers.
-  </Card>
-  <Card title="Executor Layer" icon="play">
-    Provider-specific executors that handle request translation and execution against upstream APIs.
-  </Card>
-  <Card title="Intelligence Service" icon="brain">
-    Powers Cortex Router Phase 2 with semantic matching, intent classification, and dynamic model allocation.
-  </Card>
-</CardGroup>
-
-## System Flow
+switchAILocal is a single Go binary that exposes OpenAI-, Anthropic- and Gemini-compatible HTTP APIs and forwards each request to one of many backends: local CLI tools, local model servers, or cloud APIs. Everything runs in one process on your machine; there is no external database unless you opt into a remote token store.
 
 ```mermaid
 graph TD
-    A[Client Application] -->|OpenAI-compatible API| B[API Server]
-    B --> C[Auth Manager]
-    C --> D[Selector]
-    D --> E[Executor Layer]
-    E --> F[Provider APIs]
-    E --> G[Local CLI Tools]
-    E --> H[Cloud Services]
-    I[Config Watcher] -.->|Hot Reload| C
-    J[Intelligence Service] -.->|Smart Routing| D
+    A[Client: OpenAI / Anthropic / Gemini SDK] -->|HTTP :18080| B[API server - gin]
+    B --> C[Client key check]
+    C --> D[Model resolution]
+    D -->|prefix, Lua hook, virtual model, auto-routing, registry| E[Provider list + upstream model]
+    E --> F[Circuit breaker filter]
+    F --> G[Auth manager]
+    G -->|selector: round-robin / fill-first| H[Credential]
+    H --> I[Executor for that provider]
+    I --> J[Translator: request/response format]
+    J --> K[CLI subprocess / local server / cloud API]
+    L[Config + auth-dir watcher] -.->|hot reload| G
+    M[Discovery] -.->|models| N[Model registry]
+    N -.-> D
+    N -.-> G
 ```
 
-<Note>
-The architecture supports hot-reloading of configuration changes without requiring a server restart.
-</Note>
+## Components
 
-## Request Lifecycle
+| Component | Code | Role |
+|-----------|------|------|
+| API server | `internal/api/server.go` | Routes (`/v1/*`, `/openai/v1/*`, `/v1beta/*`, `/v0/management/*`, `/v1/ws`), CORS, auth middleware, management dashboard. |
+| Request handlers | `sdk/api/handlers` | Parse the request, resolve the model, call the auth manager, stream or return the response, rewrite the public model name. |
+| Model registry | `internal/registry` | Which credential (client) serves which model ID; feeds `/v1/models` and routing. |
+| Discovery | `internal/discovery` | Fetches model lists (Gemini CLI list, Ollama tags, OpenCode agents, `models-url`) into the registry, with an on-disk cache. |
+| Auth manager | `sdk/switchailocal/auth/conductor.go` | Holds credentials and executors, selects a credential, retries, tracks per-model cooldowns, refreshes OAuth tokens. |
+| Executors | `internal/runtime/executor` | One per provider family: `geminicli`, `gemini`, `vertex`, `claude`, `codex`, `qwen`, `iflow`, `antigravity`, `aistudio`, `ollama`, `lmstudio`, `opencode`, `vibe`, the generic OpenAI-compatible executor, and the local CLI executor. |
+| Translators | `internal/translator`, `sdk/translator` | Convert between OpenAI Chat, OpenAI Responses, Claude Messages, Gemini, Gemini CLI, Codex and Antigravity formats in both directions. |
+| Watcher | `internal/watcher` | Watches `config.yaml` and `auth-dir`; rebuilds credentials and executors on change. |
+| Virtual model router | `internal/virtualmodels` | Capability-aware weighted pools. |
+| Auto-routing | `internal/autoroute` | Scores candidates for `model: auto`. |
+| Lua engine | `internal/plugin` | `on_request` / `on_response` hooks (Cortex Router and other plugins). |
+| Performance | `internal/performance` | Circuit breaker, rate limiter, load shedding. |
 
-### 1. Request Reception
+## Request lifecycle
 
-The API server (`cmd/server/main.go`) receives OpenAI-compatible requests:
+1. **Authentication.** The client key is checked against `api-keys` (Bearer, `x-api-key`, `x-goog-api-key`, `?key=`, `?auth_token=`).
+2. **Model resolution.** In order: explicit `provider:` prefix, Lua `on_request` hook, virtual model, auto-routing for `auto`/`cortex`, registry lookup. Details in [Routing](/concepts/routing).
+3. **Circuit breaker.** Providers with an open breaker are dropped (when enabled).
+4. **Credential selection.** For each provider in order, the auth manager filters credentials by model support and cooldown and lets the selector pick one.
+5. **Execution.** The provider's executor translates the request, applies [payload rules](/advanced/payload-injection) where that executor supports them, and calls the backend. Streams from OpenAI-compatible providers (and MiniMax music) pass through a watchdog that enforces first-byte and stall timeouts.
+6. **Failure handling.** Errors are classified (rate limit, auth, transient, permanent, ...). Recoverable classes move on to the next credential/provider; terminal ones return immediately. See [Failover](/advanced/failover).
+7. **Response.** The body is translated back to the client's format; for virtual models the `model` field is rewritten to the public name.
 
-```go
-// Server starts with configuration
-func StartService(cfg *config.Config, configPath string, password string)
-```
+## State
 
-### 2. Authentication
+- **Credentials** carry a status plus a per-model state map (`Unavailable`, `NextRetryAfter`, quota backoff level). One key can be cooling down for one model while serving others.
+- **Rotation cursors** for round-robin and provider rotation are in memory.
+- **Virtual model rotation** is persisted to `virtual_models_state.json` in the state directory (`SWITCHAI_STATE_DIR`, default `~/.switchailocal`). See [State Box](/advanced/state-box).
+- **Token files and the discovery cache** live in `auth-dir` (default `~/.switchailocal`).
 
-The **Auth Manager** (`sdk/switchailocal/auth/conductor.go`) orchestrates credential selection:
+## Hot reload
 
-```go
-type Manager struct {
-    store     Store
-    executors map[string]ProviderExecutor
-    selector  Selector
-    auths     map[string]*Auth
-}
-```
+On a `config.yaml` change the watcher diffs old and new config, re-synthesizes credentials from config blocks and token files, re-binds executors, re-registers models, and swaps the selector if `routing.strategy` changed. In-flight requests are not interrupted. Some subsystems (auto-routing candidates, the Lua engine, `openai-compatibility` discovery sources) are only built at startup; restart after changing them.
 
-<Accordion title="Auth Manager Responsibilities">
-- **Credential Selection**: Choose appropriate credentials using routing strategies
-- **State Management**: Track auth status, quota limits, and cooldown periods
-- **Auto-Refresh**: Automatically refresh OAuth tokens before expiration
-- **Failure Handling**: Mark credentials unavailable and implement backoff strategies
-</Accordion>
+## Optional subsystems
 
-### 3. Routing & Execution
+These are off by default and documented separately:
 
-The system uses a **Selector** to pick credentials based on your routing strategy:
+- [Cortex Router](/intelligent-systems/cortex-router) (Lua plugin + `intelligence:` block)
+- [Auto-routing](/guides/auto-routing-setup) (`auto-routing:`)
+- [Virtual models](/advanced/virtual-models) (`virtual-models:`)
+- [Memory](/intelligent-systems/memory), [Heartbeat](/intelligent-systems/heartbeat), [Hooks](/intelligent-systems/hooks), [Superbrain](/intelligent-systems/superbrain)
+- [Notifications relay](/advanced/notifications)
+- Observability: Prometheus metrics on `observability.metrics.path` and NDJSON request events (`observability.request-events`)
 
-```go
-type Selector interface {
-    Pick(ctx context.Context, provider, model string, 
-         opts Options, auths []*Auth) (*Auth, error)
-}
-```
+## Extension points (Go SDK)
 
-Built-in selectors:
-- **RoundRobinSelector**: Distributes requests evenly across credentials
-- **FillFirstSelector**: Uses first credential until exhausted
-
-### 4. Provider Execution
-
-Each provider has a dedicated **Executor** that implements:
+When embedding switchAILocal as a library (`sdk/switchailocal`):
 
 ```go
 type ProviderExecutor interface {
     Identifier() string
-    Execute(ctx context.Context, auth *Auth, 
-            req Request, opts Options) (Response, error)
-    ExecuteStream(ctx context.Context, auth *Auth,
-                  req Request, opts Options) (<-chan StreamChunk, error)
+    Execute(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (executor.Response, error)
+    ExecuteStream(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (<-chan executor.StreamChunk, error)
     Refresh(ctx context.Context, auth *Auth) (*Auth, error)
+    CountTokens(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (executor.Response, error)
+}
+
+type Selector interface {
+    Pick(ctx context.Context, provider, model string, opts executor.Options, auths []*Auth) (*Auth, error)
 }
 ```
 
-<CardGroup cols={3}>
-  <Card title="CLI Executors" icon="terminal">
-    GeminiCLIExecutor
-    
-    OllamaExecutor
-    
-    OpenCodeExecutor
-  </Card>
-  <Card title="Cloud Executors" icon="cloud">
-    GeminiExecutor
-    
-    ClaudeExecutor
-    
-    CodexExecutor
-  </Card>
-  <Card title="Compat Executors" icon="plug">
-    OpenAICompatExecutor
-    
-    LMStudioExecutor
-    
-    AntigravityExecutor
-  </Card>
-</CardGroup>
+- Register an executor with `service.CoreManager().RegisterExecutor(exec)`; its `Identifier()` becomes the provider ID.
+- Replace the selector with `CoreManager().SetSelector(sel)`.
+- Receive per-request usage records with `service.RegisterUsagePlugin(p)` where `p` implements `HandleUsage(ctx, usage.Record)`.
 
-## Token Translation Pipeline
+See [Embedding SDK](/sdk/embedding/overview) for a complete example.
 
-Requests flow through a translation pipeline (`sdk/translator/pipeline.go`) that converts between formats:
-
-```text
-OpenAI Format → Gemini Format
-OpenAI Format → Claude Format  
-Gemini Format → OpenAI Format
-... and more
-```
-
-<Tip>
-The translator supports bidirectional conversion, allowing you to use any API format with any provider.
-</Tip>
-
-## State Management
-
-### Auth State
-
-Each authentication credential tracks its own state:
-
-```go
-type Auth struct {
-    ID              string
-    Provider        string
-    Status          Status        // Active, Error, Disabled
-    Unavailable     bool
-    NextRetryAfter  time.Time
-    Quota           QuotaState
-    ModelStates     map[string]*ModelState
-}
-```
-
-### Model-Level State
-
-Fine-grained tracking per model per credential:
-
-```go
-type ModelState struct {
-    Unavailable     bool
-    Status          Status
-    NextRetryAfter  time.Time
-    Quota           QuotaState
-    LastError       *Error
-}
-```
-
-<Note>
-Model-level state allows one API key to serve `gpt-4` while `gpt-3.5-turbo` is in cooldown.
-</Note>
-
-## Concurrency Model
-
-The system uses Go's concurrency primitives for safe operation:
-
-```go
-type Manager struct {
-    mu              sync.RWMutex  // Protects auth map
-    auths           map[string]*Auth
-    providerOffsets map[string]int // Round-robin state
-}
-```
-
-- **Read locks** for credential selection (high throughput)
-- **Write locks** only for state updates
-- **Atomic operations** for retry counters
-
-## Storage Layer
-
-Multiple storage backends for different deployment scenarios:
-
-<CardGroup cols={2}>
-  <Card title="File Store" icon="file">
-    Local filesystem storage for single-node deployments
-    
-    ```yaml
-    auth-dir: "~/.switchailocal"
-    ```
-  </Card>
-  <Card title="Postgres Store" icon="database">
-    Distributed storage for multi-node deployments
-    
-    ```bash
-    PGSTORE_DSN=postgres://...
-    ```
-  </Card>
-  <Card title="Git Store" icon="git-alt">
-    Version-controlled storage with remote sync
-    
-    ```bash
-    GITSTORE_GIT_URL=https://...
-    ```
-  </Card>
-  <Card title="Object Store" icon="box">
-    S3-compatible storage for cloud deployments
-    
-    ```bash
-    OBJECTSTORE_ENDPOINT=s3.amazonaws.com
-    ```
-  </Card>
-</CardGroup>
-
-## Hot-Reload Mechanism
-
-The **Config Watcher** (`internal/watcher/watcher.go`) monitors configuration changes:
-
-```go
-type Watcher struct {
-    configPath string
-    authDir    string
-    dispatcher *Dispatcher
-}
-```
-
-When changes are detected:
-1. Parse new configuration
-2. Calculate diff from current state
-3. Dispatch targeted updates (add/remove/update)
-4. Reload executors without dropping connections
-
-<Tip>
-You can add new API keys or update models without restarting the server.
-</Tip>
-
-## WebSocket Gateway
-
-For real-time streaming providers:
-
-```go
-type Manager struct {
-    sessions map[string]*Session
-    mu       sync.RWMutex
-}
-```
-
-Supports long-lived connections for providers like Gemini Live API.
-
-## Intelligence Layer (Cortex Phase 2)
-
-When enabled, the Intelligence Service adds:
-
-- **Semantic Matching**: Embed requests and match against known patterns
-- **Intent Classification**: Use LLM to classify request intent
-- **Dynamic Routing**: Route based on content, not just model name
-- **Skill Augmentation**: Inject context from skill definitions
-
-```yaml
-intelligence:
-  enabled: true
-  router-model: "ollama:gpt-oss:20b-cloud"
-  semantic-tier:
-    enabled: true
-    confidence-threshold: 0.85
-```
-
-## Security Architecture
-
-Security is enforced at multiple layers:
-
-### Path Validation
-
-```go
-func validateFilePath(path string) error {
-    // Check for path traversal
-    if strings.Contains(path, "..") || strings.Contains(path, "~") {
-        return fmt.Errorf("invalid file path")
-    }
-    // Validate control characters
-    // Check absolute paths
-}
-```
-
-### Error Sanitization
-
-```go
-func sanitizeError(err error, context string) error {
-    // Remove credentials from error messages
-    // Mask tokens and keys
-    // Strip sensitive patterns
-}
-```
-
-### File Permissions
-
-```go
-func checkFilePermissions(filePath string) error {
-    // Ensure config files are not world-readable
-    if mode.Perm()&0077 != 0 {
-        return fmt.Errorf("insecure permissions")
-    }
-}
-```
-
-## Extension Points
-
-The architecture supports custom extensions:
-
-### Custom Executors
-
-```go
-type MyExecutor struct{}
-
-func (e *MyExecutor) Identifier() string { return "my-provider" }
-func (e *MyExecutor) Execute(...) (Response, error) { /* ... */ }
-
-// Register with manager
-manager.RegisterExecutor(myExecutor)
-```
-
-### Custom Selectors
-
-```go
-type MySelector struct{}
-
-func (s *MySelector) Pick(ctx, provider, model, opts, auths) (*Auth, error) {
-    // Custom selection logic
-}
-
-manager.SetSelector(&MySelector{})
-```
-
-### Usage Plugins
-
-```go
-type MyPlugin struct{}
-
-func (p *MyPlugin) OnRequest(ctx, model, input, output int) {
-    // Track usage
-}
-
-service.RegisterUsagePlugin(&MyPlugin{})
-```
-
-## Performance Considerations
-
-<CardGroup cols={2}>
-  <Card title="Connection Pooling" icon="network-wired">
-    HTTP clients use connection pooling for reduced latency
-  </Card>
-  <Card title="Streaming Support" icon="water">
-    SSE streaming with heartbeat keepalives
-  </Card>
-  <Card title="Retry Logic" icon="rotate">
-    Exponential backoff with configurable limits
-  </Card>
-  <Card title="Quota Management" icon="gauge">
-    Per-model cooldown to respect rate limits
-  </Card>
-</CardGroup>
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
   <Card title="Providers" href="/concepts/providers" icon="plug">
-    Learn about supported providers and how to configure them
+    Provider families and how they are enabled
   </Card>
   <Card title="Routing" href="/concepts/routing" icon="route">
-    Explore routing strategies and credential selection
+    Model resolution and credential selection
   </Card>
-  <Card title="Authentication" href="/concepts/authentication" icon="shield">
-    Understand authentication flows and credential management
+  <Card title="Authentication" href="/concepts/authentication" icon="key">
+    Client keys, OAuth logins and token storage
   </Card>
-  <Card title="Configuration" href="/configuration/config-reference" icon="gear">
-    Complete configuration reference
+  <Card title="Configuration" href="/configuration/overview" icon="gear">
+    Configuration reference
   </Card>
 </CardGroup>

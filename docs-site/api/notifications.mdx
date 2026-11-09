@@ -1,0 +1,88 @@
+---
+title: 'Notifications'
+description: 'POST /v1/notifications/telegram/sendMessage: relay a Telegram message through the gateway'
+---
+
+## POST /v1/notifications/telegram/sendMessage
+
+Relays a message to the Telegram Bot API (`sendMessage`). Use it when the caller, for example a sandboxed agent, cannot reach the internet directly or should not hold a bot token.
+
+**Auth:** client API key.
+
+### Enable it
+
+The endpoint returns `503` until it is switched on:
+
+```yaml config.yaml
+notifications:
+  telegram:
+    enabled: true
+    # Optional server-side bots. Callers can also send their own token per request.
+    bots:
+      - name: "default"
+        token: "YOUR_TELEGRAM_BOT_TOKEN"
+        allowed-chat-ids: [123456789]   # optional allowlist; empty = any chat
+```
+
+The config is read on every request, so edits apply without a restart.
+
+### Request (JSON)
+
+<ParamField body="chat_id" type="integer" required>
+  Telegram chat ID as a JSON number (channels and groups are negative). A string returns `400 invalid_json`.
+</ParamField>
+<ParamField body="text" type="string" required>Non-empty, at most 4096 characters.</ParamField>
+<ParamField body="parse_mode" type="string">`Markdown`, `MarkdownV2`, or `HTML`.</ParamField>
+<ParamField body="disable_web_page_preview" type="boolean">Suppress link previews.</ParamField>
+<ParamField body="disable_notification" type="boolean">Send silently.</ParamField>
+<ParamField body="reply_to_message_id" type="integer">Reply to an existing message.</ParamField>
+<ParamField body="bot" type="string">Name of a server-side bot. Empty means `default`.</ParamField>
+<ParamField body="bot_token" type="string">Per-request bot token (prefer the header below).</ParamField>
+
+Only these fields are forwarded to Telegram. Anything else is dropped.
+
+### Token resolution
+
+The first match wins:
+
+1. `X-Telegram-Bot-Token` request header
+2. `bot_token` body field
+3. `notifications.telegram.bots[]` entry whose `name` equals `bot` (or `default` when `bot` is empty)
+
+`allowed-chat-ids` only applies to tokens from step 3. A caller that brings its own token is responsible for its own destinations.
+
+### Response
+
+Telegram's response body is returned verbatim with Telegram's HTTP status (`application/json; charset=utf-8`), for example:
+
+```json
+{"ok": true, "result": {"message_id": 42, "chat": {"id": 123456789}, "date": 1767225600, "text": "Build finished"}}
+```
+
+### Errors
+
+Gateway errors use `{"error":{"message","type","code"}}`:
+
+| Status | `code` | Cause |
+|---|---|---|
+| `503` | `telegram_disabled` | `notifications.telegram.enabled` is false |
+| `503` | `no_config` | Server has no active config |
+| `400` | `empty_body` / `invalid_json` / `read_body_failed` | Bad body |
+| `400` | `missing_chat_id` / `missing_text` / `text_too_long` | Validation |
+| `400` | `no_bot_token` | No header, no body token, and no `default` bot |
+| `404` | `unknown_bot` | `bot` names a bot that is not configured, and no per-request token |
+| `403` | `chat_not_allowed` | Server-side bot with an allowlist that does not include `chat_id` |
+| `502` | `telegram_unreachable` / `telegram_response_read_failed` | Network failure (15 s timeout) |
+
+Each call is logged with the authenticating client API key, bot name, chat ID, and outcome. Bot tokens are never logged.
+
+### Example
+
+```bash
+curl http://localhost:18080/v1/notifications/telegram/sendMessage \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"chat_id": 123456789, "text": "Build finished", "disable_notification": true}'
+```
+
+The upstream call honours the global `proxy-url`.

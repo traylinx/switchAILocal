@@ -1,354 +1,153 @@
 ---
-title: 'Models'
-description: 'List and discover available AI models from all providers'
+title: 'Models & Providers'
+description: 'GET /v1/models, GET /v1/providers, and POST /v1/models/refresh'
 ---
 
-## List Models
+## GET /v1/models
 
-```
-GET /v1/models
-```
+Lists the models clients can request. Also served at `GET /openai/v1/models`. For the Gemini-format list, see [`GET /v1beta/models`](/api/gemini).
 
-Returns all available models from all connected providers. Compatible with the OpenAI Models API.
+**Auth:** client API key.
 
-## Request
+### Query parameters
 
-No parameters required. Include authentication header.
+<ParamField query="modality" type="string">
+  Keep only models whose `capabilities` array contains this value: `text`, `vision`, `image`, `audio`, or `embedding`.
+</ParamField>
 
-```bash
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
-```
+### What is listed
 
-## Response Format
+- Exposed virtual models (`virtual-models.<id>.expose: true`) come first, then every registered model.
+- Models with `visibility: private`, `expose: false` aliases, and credential-prefixed IDs (`prefix/model`) are hidden. They stay routable.
+- IDs are de-duplicated case-insensitively.
+- **If any listed ID starts with `ail-`, only `ail-*` IDs are returned.** This keeps a curated public catalog when you define stable `ail-*` aliases.
 
-<ResponseField name="object" type="string">
-  Always `list`
-</ResponseField>
-
-<ResponseField name="data" type="array">
-  Array of model objects
-  
-  <Expandable title="Model Object Properties">
-    <ResponseField name="id" type="string">
-      Model identifier (e.g., `gemini-2.5-pro`, `geminicli:gemini-2.5-pro`)
-    </ResponseField>
-    <ResponseField name="object" type="string">
-      Always `model`
-    </ResponseField>
-    <ResponseField name="created" type="integer">
-      Unix timestamp of model registration
-    </ResponseField>
-    <ResponseField name="owned_by" type="string">
-      Provider name (e.g., `google`, `anthropic`, `ollama`)
-    </ResponseField>
-  </Expandable>
-</ResponseField>
-
-## Response Example
+### Response
 
 ```json
 {
   "object": "list",
   "data": [
     {
-      "id": "gemini-2.5-pro",
+      "id": "ail-compound",
       "object": "model",
-      "created": 1709251200,
-      "owned_by": "google"
-    },
-    {
-      "id": "geminicli:gemini-2.5-pro",
-      "object": "model",
-      "created": 1709251200,
-      "owned_by": "google-cli"
-    },
-    {
-      "id": "claude-sonnet-4",
-      "object": "model",
-      "created": 1709251200,
-      "owned_by": "anthropic"
-    },
-    {
-      "id": "ollama:llama3.2",
-      "object": "model",
-      "created": 1709251200,
-      "owned_by": "ollama"
+      "owned_by": "switchai",
+      "capabilities": ["text", "vision"],
+      "attachment": true,
+      "tool_call": true,
+      "reasoning": false,
+      "modalities": {"input": ["text", "image"], "output": ["text"]},
+      "vision": true,
+      "context_length": 1000000
     }
   ]
 }
 ```
 
-## Examples
+<ResponseField name="id" type="string">The value to send as `model`.</ResponseField>
+<ResponseField name="object" type="string">Always `model`.</ResponseField>
+<ResponseField name="created" type="integer">Registration time (Unix seconds), when known.</ResponseField>
+<ResponseField name="owned_by" type="string">Provider or `switchai` for operator-defined aliases and virtual models.</ResponseField>
+<ResponseField name="capabilities" type="string[]">
+  Coarse capability labels. Taken from the virtual-model pool for virtual models. Otherwise derived from `intelligence.matrix`: `image_gen` gives `image`, `vision` gives `vision`, `transcription`/`speech`/`audio` give `audio`, `embedding` gives `embedding`, any other key gives `text`. Defaults to `["text"]`.
+</ResponseField>
+<ResponseField name="attachment, tool_call, reasoning, modalities, vision, audio" type="mixed">
+  Capability-discovery fields used by AI-SDK based clients (OpenCode, Cursor, Continue) to decide whether to send images or audio. Present when known.
+</ResponseField>
+<ResponseField name="native_tools" type="object[]">
+  Provider-native tools the model supports, for example `[{"type":"web_search","description":"...","params":{...}}]`. Only present when configured. Splice entries into your own `tools` array; see [Native tool injection](/api/chat-completions#native-tool-injection).
+</ResponseField>
+<ResponseField name="context_length, max_completion_tokens" type="integer">Present when configured or discovered.</ResponseField>
 
-<CodeGroup>
-```bash cURL
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
+### Claude Code clients
+
+When the `User-Agent` starts with `claude-cli`, the endpoint answers in the Anthropic models shape instead: `{"data":[{"id","object","owned_by","created","type","display_name"}]}` built from models registered for the Claude handler.
+
+### Example
+
+```bash
+curl "http://localhost:18080/v1/models?modality=vision" \
+  -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-```python Python
-from openai import OpenAI
+---
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
+## GET /v1/providers
 
-models = client.models.list()
-for model in models.data:
-    print(f"{model.id} - {model.owned_by}")
-```
+Lists providers that currently have at least one registered model.
 
-```javascript Node.js
-import OpenAI from 'openai';
+**Auth:** client API key.
 
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123'
-});
-
-const models = await client.models.list();
-models.data.forEach(model => {
-  console.log(`${model.id} - ${model.owned_by}`);
-});
-```
-
-```go Go
-import "github.com/sashabaranov/go-openai"
-
-client := openai.NewClient("sk-test-123")
-client.BaseURL = "http://localhost:18080/v1"
-
-models, err := client.ListModels(context.Background())
-if err != nil {
-    log.Fatal(err)
-}
-
-for _, model := range models.Models {
-    fmt.Printf("%s - %s\n", model.ID, model.OwnedBy)
-}
-```
-</CodeGroup>
-
-## Model Naming Convention
-
-### With Provider Prefix
-
-Models with provider prefixes explicitly route to that provider:
-
-```
-geminicli:gemini-2.5-pro  → Gemini CLI
-claudecli:claude-sonnet-4 → Claude CLI
-ollama:llama3.2           → Ollama
-switchai:auto             → switchAI with auto-routing
-```
-
-### Without Provider Prefix
-
-Models without prefixes allow auto-routing:
-
-```
-gemini-2.5-pro   → Any Gemini provider (CLI, API, or switchAI)
-claude-sonnet-4  → Any Claude provider
-llama3.2         → Auto-detect local provider
-```
-
-See [Provider Prefixes](/api/provider-prefixes) for details.
-
-## Refresh Models
-
-```
-POST /v1/models/refresh
-```
-
-Trigger model re-discovery from all providers. Useful after adding new providers or models.
-
-### Request
-
-<ParamField query="provider" type="string">
-  Optional: Refresh only a specific provider (e.g., `ollama`, `geminicli`)
+<ParamField query="filter" type="string" default="all">
+  `active`, `inactive`, or `all`. Providers are only listed while they have models, so they always report `active`, and `filter=inactive` returns an empty list.
 </ParamField>
 
-### Examples
-
-<CodeGroup>
-```bash Refresh All
-curl -X POST http://localhost:18080/v1/models/refresh \
-  -H "Authorization: Bearer sk-test-123"
-```
-
-```bash Refresh Provider
-curl -X POST "http://localhost:18080/v1/models/refresh?provider=ollama" \
-  -H "Authorization: Bearer sk-test-123"
-```
-</CodeGroup>
-
-### Response
-
 ```json
 {
-  "message": "Model refresh completed",
-  "provider": "ollama"
-}
-```
-
-## Gemini Native API
-
-For Gemini-specific clients, use the native endpoint:
-
-```
-GET /v1beta/models
-```
-
-Returns models in Gemini format with `supportedGenerationMethods`:
-
-```json
-{
-  "models": [
+  "object": "list",
+  "data": [
     {
-      "name": "models/gemini-2.5-pro",
-      "displayName": "Gemini 2.5 Pro",
-      "description": "Stable release of Gemini 2.5 Pro",
-      "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536,
-      "supportedGenerationMethods": [
-        "generateContent",
-        "countTokens"
-      ]
+      "id": "geminicli",
+      "name": "Gemini CLI",
+      "type": "cli",
+      "mode": "local",
+      "status": "active",
+      "model_count": 3,
+      "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-pro-preview"]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (Local)",
+      "type": "api",
+      "mode": "local",
+      "status": "active",
+      "model_count": 2,
+      "models": ["llama3.2", "qwen3-embedding:0.6b"]
     }
   ]
 }
 ```
 
-## Filter by Provider Type
+| Field | Values |
+|---|---|
+| `id` | Provider key used for routing and `provider:` prefixes (`geminicli`, `claudecli`, `codex`, `vibe`/`vibecli`, `ollama`, `gemini`, `claude`, `switchai`, OpenAI-compatible entry names, ...) |
+| `type` | `cli` or `api` |
+| `mode` | `local` or `online` |
+| `models` | All registered IDs for this provider, including hidden aliases |
 
-Use the provider status endpoint to filter models:
+Results are sorted by `id`.
 
-```
-GET /v1/providers?filter=active
-```
-
-See [Provider Prefixes](/api/provider-prefixes) for filtering options.
-
-## Model Capabilities
-
-Different models support different features:
-
-| Capability | Gemini | Claude | Ollama | switchAI | MiniMax |
-|------------|--------|--------|--------|----------|---------|
-| Chat Completions | ✅ | ✅ | ✅ | ✅ | ✅ (`MiniMax-M2.7`) |
-| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Function Calling | ✅ | ✅ | ⚠️ | ✅ | ✅ |
-| Vision | ✅ | ✅ | ⚠️ | ✅ | ✅ (`MiniMax-M2.7`) |
-| JSON Mode | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Embeddings | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Native web search | ❌ | ❌ | ❌ | ❌ | ✅ (`tools: [{"type":"web_search"}]`) |
-| Image generation | ❌ | ❌ | ❌ | ❌ | ✅ (`image-01`) |
-| Text-to-speech | ❌ | ❌ | ❌ | ❌ | ✅ (`speech-2.8-hd`, binary `audio/mpeg`) |
-| Music generation | ❌ | ❌ | ❌ | ❌ | ✅ (`music-2.6`, `music-cover`) |
-| Music streaming (raw MP3, ~20s TTFB) | ❌ | ❌ | ❌ | ❌ | ✅ (`music-2.6` + `stream: true`) |
-| Lyrics generation | ❌ | ❌ | ❌ | ❌ | ✅ (`/v1/music/lyrics`) |
-
-⚠️ = Model-dependent
-
-## Model Discovery
-
-switchAILocal automatically discovers models from:
-
-1. **Configuration File**: Models defined in `config.yaml`
-2. **CLI Providers**: Models detected from installed CLI tools
-3. **Local Servers**: Models from Ollama, LM Studio
-4. **API Providers**: Models from authenticated API providers
-5. **Dynamic Registration**: Models registered at runtime
-
-### Discovery Sources
-
-<Tabs>
-  <Tab title="CLI Discovery">
-    ```bash
-    # Gemini CLI models discovered from:
-    gemini models list
-    
-    # Claude CLI models discovered from:
-    claude models
-    
-    # Results cached for performance
-    ```
-  </Tab>
-  
-  <Tab title="Ollama Discovery">
-    ```bash
-    # Ollama models queried from:
-    curl http://localhost:11434/api/tags
-    
-    # Auto-prefixed with 'ollama:'
-    ```
-  </Tab>
-  
-  <Tab title="API Discovery">
-    ```bash
-    # API provider models fetched from:
-    # - Google AI Studio: /v1beta/models
-    # - Anthropic: Static model list
-    # - OpenAI: /v1/models
-    ```
-  </Tab>
-  
-  <Tab title="Manual Config">
-    ```yaml config.yaml
-    # Manually define custom models
-    models:
-      - id: custom-model
-        provider: openai-compat
-        endpoint: https://api.example.com/v1
-    ```
-  </Tab>
-</Tabs>
-
-## Troubleshooting
-
-### No Models Returned
-
-**Cause**: No providers configured or authenticated
-
-**Solution**:
-1. Verify provider setup: Check `config.yaml` for API keys
-2. Test CLI tools: Run `gemini --version`, `claude --version`
-3. Check logs: Look for provider initialization errors
-4. Try refresh: `POST /v1/models/refresh`
-
-### Missing Specific Model
-
-**Cause**: Provider not authenticated or model not available
-
-**Solution**:
-1. Verify provider access: Test CLI tool directly
-2. Check subscription: Ensure model is in your plan
-3. Refresh models: Force re-discovery
-4. Check spelling: Model IDs are case-sensitive
-
-### Stale Model List
-
-**Cause**: Models cached from previous discovery
-
-**Solution**:
 ```bash
-# Force refresh all providers
-curl -X POST http://localhost:18080/v1/models/refresh \
-  -H "Authorization: Bearer sk-test-123"
+curl http://localhost:18080/v1/providers -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-## Next Steps
+---
 
-<CardGroup cols={2}>
-  <Card title="Provider Prefixes" icon="tag" href="/api/provider-prefixes">
-    Learn model routing and provider selection
-  </Card>
-  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
-    Use models for chat completions
-  </Card>
-  <Card title="Auto-Routing" icon="route" href="/api/auto-routing">
-    Let switchAILocal choose the best provider
-  </Card>
-</CardGroup>
+## POST /v1/models/refresh
+
+Re-runs model discovery and re-registers discovered models. The call is synchronous and has a 30-second timeout.
+
+**Auth:** client API key.
+
+<ParamField query="provider" type="string">
+  Refresh one discovery source only (for example `ollama`). Omit to refresh all.
+</ParamField>
+
+| Status | Body |
+|---|---|
+| `200` | `{"message":"Model refresh completed","provider":"ollama"}` (`provider` is `""` when omitted) |
+| `500` | `{"error":"refresh failed: <reason>"}` |
+| `503` | `{"error":"Model discovery not initialized"}` |
+
+```bash
+curl -X POST "http://localhost:18080/v1/models/refresh?provider=ollama" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Where models come from
+
+- **Config:** `models:` aliases under `gemini-api-key`, `claude-api-key`, `codex-api-key`, `switchai-api-key`, and `openai-compatibility` entries, plus `virtual-models`.
+- **Discovery:** installed CLIs (`gemini`, `claude`, `codex`, `vibe`), Ollama (`ollama.auto-discover`), LM Studio, OpenCode, and provider `models-url` endpoints.
+- **OAuth credentials:** auth files in `auth-dir`.
+
+Model IDs are case-sensitive when routing.

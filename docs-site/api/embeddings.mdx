@@ -1,440 +1,76 @@
 ---
 title: 'Embeddings'
-description: 'Generate vector embeddings for text inputs'
+description: 'POST /v1/embeddings'
 ---
 
-## Endpoint
+## POST /v1/embeddings
 
-```
-POST /v1/embeddings
-```
+OpenAI-compatible embeddings. Also served at `POST /openai/v1/embeddings`.
 
-Generate vector embeddings for one or more text inputs. Compatible with the OpenAI Embeddings API.
+**Auth:** client API key.
 
-<Note>
-Embeddings support varies by provider. Gemini and Ollama provide the best embedding model availability.
-</Note>
+The gateway reads only `model`. The JSON body is forwarded unchanged to the provider, except that `model` is rewritten to the upstream model name when you used an alias.
 
-## Request Body
-
-<ParamField body="input" type="string | array" required>
-  Input text or array of texts to generate embeddings for.
+<ParamField body="model" type="string">
+  Embedding model ID or alias (for example `ollama:nomic-embed-text` or a configured alias such as `ail-embed`). When omitted, `intelligence.matrix.embedding` is used; if that is not set either, the request fails with `400`.
 </ParamField>
 
-<ParamField body="model" type="string" required>
-  The embedding model to use. Examples:
-  - `gemini:text-embedding-004`
-  - `ollama:nomic-embed-text`
-  - `switchai:text-embedding-3-small`
+<ParamField body="input" type="string | string[]" required>
+  Text to embed. Validated by the provider, not the gateway.
 </ParamField>
 
-<ParamField body="encoding_format" type="string">
-  Format for the embeddings: `float` or `base64` (default: `float`)
+<ParamField body="encoding_format, dimensions, user" type="mixed">
+  Forwarded as-is. Support depends on the provider.
 </ParamField>
 
-<ParamField body="dimensions" type="integer">
-  Number of dimensions for the embedding (model-dependent)
-</ParamField>
+### Which providers can serve embeddings
 
-## Response Format
+Embeddings work through providers that implement the `embeddings` operation:
 
-<ResponseField name="object" type="string">
-  Always `list`
-</ResponseField>
+- **Ollama**: calls Ollama's OpenAI-compatible `/v1/embeddings`.
+- **OpenAI-compatible providers** (`openai-compatibility` entries, `switchai-api-key`, and any other provider handled by the generic OpenAI-compatible executor): calls `<base-url>/embeddings`.
 
-<ResponseField name="data" type="array">
-  Array of embedding objects
-  
-  <Expandable title="Embedding Object Properties">
-    <ResponseField name="object" type="string">
-      Always `embedding`
-    </ResponseField>
-    <ResponseField name="index" type="integer">
-      Position in the input array
-    </ResponseField>
-    <ResponseField name="embedding" type="array">
-      Vector of floating point numbers representing the embedding
-    </ResponseField>
-  </Expandable>
-</ResponseField>
+Other providers (CLI tools, the native Gemini and Claude executors) do not have an embeddings path. Point `model` at an Ollama or OpenAI-compatible model.
 
-<ResponseField name="model" type="string">
-  The model used to generate embeddings
-</ResponseField>
+### Response
 
-<ResponseField name="usage" type="object">
-  Token usage statistics
-  
-  <Expandable title="Usage Properties">
-    <ResponseField name="prompt_tokens" type="integer">
-      Number of tokens in the input
-    </ResponseField>
-    <ResponseField name="total_tokens" type="integer">
-      Total tokens processed
-    </ResponseField>
-  </Expandable>
-</ResponseField>
-
-## Examples
-
-### Basic Request
-
-<CodeGroup>
-```bash cURL
-curl http://localhost:18080/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{
-    "model": "gemini:text-embedding-004",
-    "input": "The quick brown fox jumps over the lazy dog"
-  }'
-```
-
-```python Python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
-
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input="The quick brown fox jumps over the lazy dog"
-)
-
-embedding = response.data[0].embedding
-print(f"Embedding dimensions: {len(embedding)}")
-print(f"First 5 values: {embedding[:5]}")
-```
-
-```javascript Node.js
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123'
-});
-
-const response = await client.embeddings.create({
-  model: 'gemini:text-embedding-004',
-  input: 'The quick brown fox jumps over the lazy dog'
-});
-
-const embedding = response.data[0].embedding;
-console.log(`Embedding dimensions: ${embedding.length}`);
-console.log(`First 5 values: ${embedding.slice(0, 5)}`);
-```
-</CodeGroup>
-
-### Batch Embeddings
-
-Generate embeddings for multiple texts:
-
-<CodeGroup>
-```python Python
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=[
-        "Machine learning is a subset of AI",
-        "Deep learning uses neural networks",
-        "Natural language processing enables text understanding"
-    ]
-)
-
-for i, data in enumerate(response.data):
-    print(f"Text {i}: {len(data.embedding)} dimensions")
-```
-
-```javascript Node.js
-const response = await client.embeddings.create({
-  model: 'gemini:text-embedding-004',
-  input: [
-    'Machine learning is a subset of AI',
-    'Deep learning uses neural networks',
-    'Natural language processing enables text understanding'
-  ]
-});
-
-response.data.forEach((data, i) => {
-  console.log(`Text ${i}: ${data.embedding.length} dimensions`);
-});
-```
-</CodeGroup>
-
-### Similarity Search
-
-Use embeddings for semantic similarity:
-
-```python
-import numpy as np
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
-
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-# Generate embeddings
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=[
-        "What is machine learning?",
-        "How do I train a neural network?",
-        "Best pizza toppings"
-    ]
-)
-
-embeddings = [d.embedding for d in response.data]
-
-# Compare first query to others
-query = embeddings[0]
-similarity_1 = cosine_similarity(query, embeddings[1])
-similarity_2 = cosine_similarity(query, embeddings[2])
-
-print(f"ML vs Neural Networks: {similarity_1:.3f}")
-print(f"ML vs Pizza: {similarity_2:.3f}")
-```
-
-## Supported Models
-
-### Gemini Embeddings
-
-| Model | Dimensions | Max Input | Description |
-|-------|------------|-----------|-------------|
-| `gemini:text-embedding-004` | 768 | 2048 tokens | Latest embedding model |
-| `gemini:text-embedding-preview-1009` | 768 | 2048 tokens | Preview model |
-| `gemini:embedding-001` | 768 | 2048 tokens | Legacy model |
-
-### Ollama Embeddings
-
-Ollama provides various open-source embedding models:
-
-```bash
-# Pull embedding model
-ollama pull nomic-embed-text
-
-# Use in request
-curl http://localhost:18080/v1/embeddings \
-  -H "Authorization: Bearer sk-test-123" \
-  -d '{
-    "model": "ollama:nomic-embed-text",
-    "input": "Sample text"
-  }'
-```
-
-### switchAI Embeddings
-
-switchAI provides access to multiple embedding providers:
-
-```python
-response = client.embeddings.create(
-    model="switchai:text-embedding-3-small",
-    input="Text to embed"
-)
-```
-
-## Response Example
+The provider's response is returned unchanged with `200` and `application/json`. For OpenAI-shaped providers:
 
 ```json
 {
   "object": "list",
-  "data": [
-    {
-      "object": "embedding",
-      "index": 0,
-      "embedding": [
-        0.0123,
-        -0.0234,
-        0.0345,
-        // ... 765 more values
-      ]
-    }
-  ],
-  "model": "gemini:text-embedding-004",
-  "usage": {
-    "prompt_tokens": 8,
-    "total_tokens": 8
-  }
+  "data": [{"object": "embedding", "index": 0, "embedding": [0.0123, -0.0456, 0.0789]}],
+  "model": "nomic-embed-text",
+  "usage": {"prompt_tokens": 9, "total_tokens": 9}
 }
 ```
 
-## Use Cases
+Streaming is not supported.
 
-### Semantic Search
-
-Find similar documents:
-
-```python
-# 1. Embed all documents
-documents = ["doc1 text", "doc2 text", "doc3 text"]
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=documents
-)
-doc_embeddings = [d.embedding for d in response.data]
-
-# 2. Embed query
-query = "search query"
-query_response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=query
-)
-query_embedding = query_response.data[0].embedding
-
-# 3. Find most similar
-similarities = [
-    cosine_similarity(query_embedding, doc_emb)
-    for doc_emb in doc_embeddings
-]
-best_match = documents[np.argmax(similarities)]
-```
-
-### Clustering
-
-Group similar texts:
-
-```python
-from sklearn.cluster import KMeans
-
-# Generate embeddings
-texts = ["text1", "text2", "text3", ...]
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=texts
-)
-embeddings = np.array([d.embedding for d in response.data])
-
-# Cluster
-kmeans = KMeans(n_clusters=3)
-labels = kmeans.fit_predict(embeddings)
-```
-
-### Recommendation Systems
-
-Recommend similar items:
-
-```python
-# Embed user preferences and item descriptions
-user_pref = "I like action movies with great CGI"
-items = ["Movie A: Action-packed blockbuster", "Movie B: Romantic drama", ...]
-
-response = client.embeddings.create(
-    model="gemini:text-embedding-004",
-    input=[user_pref] + items
-)
-
-user_emb = response.data[0].embedding
-item_embs = [d.embedding for d in response.data[1:]]
-
-# Rank by similarity
-scores = [cosine_similarity(user_emb, item) for item in item_embs]
-top_items = sorted(zip(items, scores), key=lambda x: x[1], reverse=True)
-```
-
-## Error Handling
+### Examples
 
 <CodeGroup>
-```python Python
-from openai import OpenAI, APIError
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123"
-)
-
-try:
-    response = client.embeddings.create(
-        model="invalid-model",
-        input="Test text"
-    )
-except APIError as e:
-    print(f"API error: {e.message}")
-    print(f"Status: {e.status_code}")
+```bash cURL
+curl http://localhost:18080/v1/embeddings \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama:nomic-embed-text", "input": ["first text", "second text"]}'
 ```
 
-```javascript Node.js
-import OpenAI from 'openai';
+```python Python
+from openai import OpenAI
 
-const client = new OpenAI({
-  baseURL: 'http://localhost:18080/v1',
-  apiKey: 'sk-test-123'
-});
-
-try {
-  const response = await client.embeddings.create({
-    model: 'invalid-model',
-    input: 'Test text'
-  });
-} catch (error) {
-  console.error('API error:', error.message);
-  console.error('Status:', error.status);
-}
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="YOUR_API_KEY")
+resp = client.embeddings.create(model="ollama:nomic-embed-text", input="The quick brown fox")
+print(len(resp.data[0].embedding))
 ```
 </CodeGroup>
 
-## Performance Tips
+### Errors
 
-<AccordionGroup>
-  <Accordion title="Batch Processing">
-    Process multiple texts in a single request for better throughput:
-    ```python
-    # Good: Single request for 10 texts
-    response = client.embeddings.create(
-        model="gemini:text-embedding-004",
-        input=texts  # List of 10 texts
-    )
-    
-    # Avoid: 10 separate requests
-    for text in texts:
-        response = client.embeddings.create(
-            model="gemini:text-embedding-004",
-            input=text
-        )
-    ```
-  </Accordion>
-
-  <Accordion title="Caching">
-    Cache embeddings for frequently used texts:
-    ```python
-    import pickle
-    
-    # Save embeddings
-    with open('embeddings.pkl', 'wb') as f:
-        pickle.dump(embeddings, f)
-    
-    # Load cached embeddings
-    with open('embeddings.pkl', 'rb') as f:
-        embeddings = pickle.load(f)
-    ```
-  </Accordion>
-
-  <Accordion title="Model Selection">
-    Choose appropriate model for your use case:
-    - **Gemini**: Best for multilingual and semantic search
-    - **Ollama**: Best for privacy and offline usage
-    - **switchAI**: Best for unified access to multiple providers
-  </Accordion>
-</AccordionGroup>
-
-## Limitations
-
-| Provider | Max Tokens | Dimensions | Notes |
-|----------|------------|------------|-------|
-| Gemini | 2048 | 768 | Supports batch requests |
-| Ollama | Model-dependent | Model-dependent | Local processing |
-| Claude | N/A | N/A | No embedding support |
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Models" icon="cube" href="/api/models">
-    Discover available embedding models
-  </Card>
-  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
-    Use embeddings for RAG systems
-  </Card>
-</CardGroup>
+| Status | When |
+|---|---|
+| `400` | `model not specified and no 'embedding' configured in intelligence.matrix`, or `unknown provider for model <id>` |
+| `401` | Missing or invalid API key |
+| upstream status | OpenAI-compatible provider errors keep their status |
+| `500` | Ollama errors (for example a model that is not pulled) surface as `500` with Ollama's message |

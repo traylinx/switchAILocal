@@ -1,239 +1,144 @@
 ---
 title: Provider Setup Guide
-description: Configure AI providers to work with switchAILocal
+description: Configure each provider family switchAILocal supports, with a working request for each
 ---
 
-## Overview
+## Before you start
 
-switchAILocal supports multiple AI providers through three authentication methods. Choose the method that works best for your use case.
+- Copy the example config: `cp config.example.yaml config.yaml`.
+- Every request needs a client key from `api-keys:` (the examples use `sk-test-123`). If `api-keys` is empty, requests are accepted without a key.
+- After editing `config.yaml`, most changes are hot-reloaded. Adding or removing an `openai-compatibility` provider is safest with a restart.
+- Check what is routable at any time:
 
-## Authentication Methods
+```bash
+curl -s http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"
+curl -s "http://localhost:18080/v1/providers?filter=active" -H "Authorization: Bearer sk-test-123"
+```
 
-<Note>
-  Most users should start with **CLI Wrappers** (Option A) for the fastest setup with zero configuration.
-</Note>
+For the concepts behind provider IDs, prefixes and model registration, read [Providers](/concepts/providers) first.
 
-### Option A: CLI Wrappers (Recommended)
+| You have... | Use | Request model looks like |
+|-------------|-----|--------------------------|
+| `gemini`, `claude`, `codex` or `vibe` CLI installed and logged in | [CLI providers](#cli-providers) | `geminicli:gemini-2.5-pro` |
+| Ollama, LM Studio or OpenCode running locally | [Local servers](#local-servers) | `ollama:llama3.2` |
+| A Gemini, Anthropic or OpenAI API key | [Native API keys](#native-api-keys) | your alias, e.g. `sonnet` |
+| Any OpenAI-compatible endpoint (Groq, OpenRouter, DeepSeek, MiniMax, Kimi, DashScope, ...) | [OpenAI-compatible](#openai-compatible-providers) | your alias |
+| A Vertex AI service account | [Vertex](#vertex-ai) | `gemini-2.5-pro` |
 
-If you already have `gemini`, `claude`, `codex`, or `vibe` CLI tools installed and authenticated, switchAILocal uses them automatically.
+---
+
+## CLI providers
+
+switchAILocal looks for `gemini`, `claude`, `codex` and `vibe` on its `PATH` at startup and registers each one it finds. Nothing goes in `config.yaml`; your existing CLI login and subscription are used.
 
 <Steps>
-  <Step title="Verify CLI Installation">
-    Check that your CLI tools are installed and working:
-    
+  <Step title="Check the binaries">
     ```bash
     gemini --version
     claude --version
     codex --version
+    vibe --version
     ```
+    Each must work for the same user, and with the same `PATH`, that runs switchAILocal.
   </Step>
-  
-  <Step title="Use CLI Prefix">
-    Reference the CLI provider using the `cli` suffix in your model name:
-    
+  <Step title="Start switchAILocal and confirm detection">
+    The startup log prints `Registered local CLI proxy and auth for <name> (<provider-id>)` for each binary found.
+  </Step>
+  <Step title="Send a request">
     <CodeGroup>
     ```bash cURL
     curl http://localhost:18080/v1/chat/completions \
-      -H "Content-Type: application/json" \
       -H "Authorization: Bearer sk-test-123" \
-      -d '{
-        "model": "geminicli:gemini-2.5-pro",
-        "messages": [{"role": "user", "content": "Hello!"}]
-      }'
+      -H "Content-Type: application/json" \
+      -d '{"model": "geminicli:gemini-2.5-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
     ```
-    
+
     ```python Python
     from openai import OpenAI
 
-    client = OpenAI(
-        base_url="http://localhost:18080/v1",
-        api_key="sk-test-123"
-    )
-
-    response = client.chat.completions.create(
+    client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
+    resp = client.chat.completions.create(
         model="geminicli:gemini-2.5-pro",
-        messages=[{"role": "user", "content": "Hello!"}]
+        messages=[{"role": "user", "content": "Hello!"}],
     )
+    print(resp.choices[0].message.content)
     ```
-    
+
     ```javascript JavaScript
     import OpenAI from 'openai';
 
-    const client = new OpenAI({
-      baseURL: 'http://localhost:18080/v1',
-      apiKey: 'sk-test-123'
-    });
-
-    const response = await client.chat.completions.create({
+    const client = new OpenAI({ baseURL: 'http://localhost:18080/v1', apiKey: 'sk-test-123' });
+    const resp = await client.chat.completions.create({
       model: 'geminicli:gemini-2.5-pro',
-      messages: [{ role: 'user', content: 'Hello!' }]
+      messages: [{ role: 'user', content: 'Hello!' }],
     });
     ```
     </CodeGroup>
   </Step>
-  
-  <Step title="Supported Providers">
-    Available CLI providers:
-    
-    | Provider | CLI Tool | Prefix | Example Model |
-    |----------|----------|--------|---------------|
-    | Google Gemini | `gemini` | `geminicli:` | `geminicli:gemini-2.5-pro` |
-    | Anthropic Claude | `claude` | `claudecli:` | `claudecli:claude-sonnet-4` |
-    | OpenAI Codex | `codex` | `codex:` | `codex:gpt-4` |
-    | Mistral Vibe | `vibe` | `vibe:` | `vibe:mistral-large` |
-    | OpenCode | `opencode` | `opencode:` | `opencode:build` |
-  </Step>
 </Steps>
+
+| CLI | Provider ID / prefix | Model selection | Streaming |
+|-----|----------------------|-----------------|-----------|
+| `gemini` | `geminicli:` | The part after the prefix is passed as `--model`. `geminicli:` alone uses the CLI default. | yes |
+| `claude` | `claudecli:` | Uses the CLI's configured model; the name after the prefix is not forwarded. | yes |
+| `codex` | `codex:` | Uses the CLI's configured model. | buffered |
+| `vibe` | `vibecli:` | Uses the CLI's configured model. | buffered |
+
+Per-request CLI options such as file attachments, sandbox/auto-approve and session resume go in `extra_body.cli`; see [CLI Attachments](/api/cli-attachments).
+
+<Tip>
+Running switchAILocal in Docker but the CLIs on the host? Run `bridge-agent` on the host (`BRIDGE_AGENT_SECRET` required, listens on `127.0.0.1:18888` by default) and set `REMOTE_COMMAND_HOST` in the container. The bridge only runs `gemini`, `claude`, `vibe` and `codex`, and streaming is buffered.
+</Tip>
 
 ---
 
-### Option B: API Keys (Standard)
-
-For cloud API providers, add API keys directly to your `config.yaml`.
-
-<Steps>
-  <Step title="Copy Example Config">
-    ```bash
-    cp config.example.yaml config.yaml
-    ```
-  </Step>
-  
-  <Step title="Add Provider Credentials">
-    Edit `config.yaml` and add your API keys:
-    
-    <CodeGroup>
-    ```yaml Google Gemini
-    gemini-api-key:
-      - api-key: "AIzaSy..."
-        prefix: "google"
-        base-url: "https://generativelanguage.googleapis.com"
-    ```
-    
-    ```yaml Anthropic Claude
-    claude-api-key:
-      - api-key: "sk-ant-..."
-        models:
-          - name: "claude-3-5-sonnet-20241022"
-            alias: "sonnet"
-    ```
-    
-    ```yaml OpenAI
-    codex-api-key:
-      - api-key: "sk-..."
-        base-url: "https://api.openai.com/v1"
-    ```
-    
-    ```yaml Traylinx SwitchAI
-    switchai-api-key:
-      - api-key: "sk-lf-..."
-        base-url: "https://switchai.traylinx.com/v1"
-        models:
-          - name: "openai/gpt-oss-120b"
-            alias: "switchai-fast"
-    ```
-    </CodeGroup>
-  </Step>
-  
-  <Step title="Use Without CLI Suffix">
-    ```bash
-    curl http://localhost:18080/v1/chat/completions \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer sk-test-123" \
-      -d '{"model": "gemini:gemini-2.5-pro", "messages": [...]}'
-    ```
-  </Step>
-</Steps>
-
----
-
-### Option C: OAuth Login (Advanced)
-
-For users who want switchAILocal to manage OAuth tokens directly without CLI tools.
-
-<Note>
-  This method requires `GEMINI_CLIENT_ID` and `GEMINI_CLIENT_SECRET` environment variables. Most users should use **Option A** or **Option B** instead.
-</Note>
-
-<Steps>
-  <Step title="Set Environment Variables">
-    ```bash
-    export GEMINI_CLIENT_ID="your-client-id"
-    export GEMINI_CLIENT_SECRET="your-client-secret"
-    ```
-  </Step>
-  
-  <Step title="Run OAuth Login">
-    <CodeGroup>
-    ```bash Google Gemini
-    ./switchAILocal --login
-    ```
-    
-    ```bash Anthropic Claude
-    ./switchAILocal --claude-login
-    ```
-    </CodeGroup>
-  </Step>
-  
-  <Step title="Complete Browser Authentication">
-    A browser window will open for you to authorize switchAILocal. After approval, tokens are stored in `~/.switchailocal/`.
-  </Step>
-</Steps>
-
----
-
-## Local Model Providers
+## Local servers
 
 ### Ollama
 
-Connect to locally running Ollama models.
+```yaml config.yaml
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
+```
 
-<Steps>
-  <Step title="Enable Ollama in Config">
-    ```yaml config.yaml
-    ollama:
-      enabled: true
-      base-url: "http://localhost:11434"
-      auto-discover: true  # Automatically fetch available models
-    ```
-  </Step>
-  
-  <Step title="Start Ollama">
-    ```bash
-    ollama serve
-    ```
-  </Step>
-  
-  <Step title="Pull Models">
-    ```bash
-    ollama pull llama3.2
-    ollama pull qwen:0.5b
-    ```
-  </Step>
-  
-  <Step title="Use Ollama Models">
-    ```bash
-    curl http://localhost:18080/v1/chat/completions \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer sk-test-123" \
-      -d '{"model": "ollama:llama3.2", "messages": [...]}'
-    ```
-  </Step>
-</Steps>
+```bash
+ollama serve &
+ollama pull llama3.2
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "ollama:llama3.2", "messages": [{"role": "user", "content": "Hi"}]}'
+```
+
+`auto-discover` registers every model from `/api/tags` under its Ollama name, so plain `"model": "llama3.2"` also works. With the `ollama:` prefix any model name is forwarded, discovered or not. Embeddings: `POST /v1/embeddings` with `"model": "ollama:<embedding-model>"`.
 
 ### LM Studio
-
-Connect to LM Studio for local model hosting.
 
 ```yaml config.yaml
 lmstudio:
   enabled: true
   base-url: "http://localhost:1234/v1"
-  auto-discover: true
+
+virtual-models:
+  qwen2.5-7b-instruct:            # name the pool exactly like the LM Studio model ID
+    expose: true
+    members:
+      - id: lms-main
+        provider: lmstudio
+        model: "qwen2.5-7b-instruct"
+        capabilities: {operations: [chat], input: [text]}
 ```
 
-### OpenCode
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "qwen2.5-7b-instruct", "messages": [{"role": "user", "content": "Hi"}]}'
+```
 
-Integrate with OpenCode for specialized development tasks.
+LM Studio models are not auto-discovered and `lmstudio:` is not a recognized prefix, so reach them through a [virtual model](/advanced/virtual-models). The LM Studio executor forwards the request body unchanged, including the `model` value the client sent, which is why the pool ID above matches the LM Studio model ID. Start the LM Studio local server and load the model first.
+
+### OpenCode
 
 ```yaml config.yaml
 opencode:
@@ -242,97 +147,263 @@ opencode:
   default-agent: "build"
 ```
 
+```bash
+opencode serve --port 4096 &
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "opencode:build", "messages": [{"role": "user", "content": "List the files in this repo"}], "session_id": "my-task-1"}'
+```
+
+Only the last user message is sent to OpenCode. Reuse the same `session_id` to continue a conversation in the same OpenCode session.
+
 ---
 
-## OpenAI-Compatible Providers
+## Native API keys
 
-Connect any OpenAI-compatible API endpoint.
+<Warning>
+API keys for `gemini-api-key`, `claude-api-key` and `codex-api-key` do not come with a built-in model list in this release. **List every model you want under `models:`**, or the key cannot serve requests.
+</Warning>
+
+<CodeGroup>
+```yaml Google Gemini
+gemini-api-key:
+  - api-key: "your-gemini-api-key"
+    # base-url defaults to https://generativelanguage.googleapis.com
+    models:
+      - name: "gemini-2.5-pro"
+      - name: "gemini-2.5-flash"
+        alias: "flash"
+```
+
+```yaml Anthropic Claude
+claude-api-key:
+  - api-key: "sk-ant-your-key"
+    # base-url defaults to https://api.anthropic.com
+    models:
+      - name: "claude-sonnet-4-5-20250929"
+        alias: "sonnet"
+```
+
+```yaml OpenAI (Responses API)
+codex-api-key:
+  - api-key: "sk-your-openai-key"
+    base-url: "https://api.openai.com/v1"   # required
+    models:
+      - name: "gpt-5"
+```
+
+```yaml switchAI hosted
+switchai-api-key:
+  - api-key: "your-switchai-key"
+    # base-url defaults to https://switchai.traylinx.com/v1
+    models:
+      - name: "openai/gpt-oss-120b"
+        alias: "switchai-fast"
+```
+</CodeGroup>
+
+Request with the alias (or the name if there is no alias):
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "sonnet", "messages": [{"role": "user", "content": "Hi"}]}'
+```
+
+You can also pin the provider: `gemini:gemini-2.5-pro`, `claude:sonnet`, `codex:gpt-5`, `switchai:switchai-fast`.
+
+Common options on every entry: `prefix` (also registers `prefix/<model>`), `proxy-url`, `headers`, `excluded-models` (wildcards allowed). `models-url` registers everything an OpenAI-style `/models` endpoint returns for `switchai-api-key`; on the Gemini and Claude blocks it is only used by the auto-routing probe.
+
+---
+
+## OpenAI-compatible providers
+
+Any OpenAI-style API. `name` becomes the provider ID; `base-url` is required.
 
 ```yaml config.yaml
 openai-compatibility:
   - name: "groq"
-    prefix: "groq"
     base-url: "https://api.groq.com/openai/v1"
     api-key-entries:
-      - api-key: "gsk_..."
-  
+      - api-key: "gsk_your_key"
+    models:
+      - name: "openai/gpt-oss-20b"
+        alias: "gpt-oss-20b"
+
   - name: "openrouter"
-    prefix: "or"
     base-url: "https://openrouter.ai/api/v1"
     api-key-entries:
-      - api-key: "sk-or-v1-..."
-```
-
----
-
-## Load Balancing
-
-Configure multiple credentials per provider for automatic load balancing.
-
-```yaml config.yaml
-gemini-api-key:
-  - api-key: "AIzaSy...account1"
-  - api-key: "AIzaSy...account2"
-  - api-key: "AIzaSy...account3"
-
-routing:
-  strategy: "round-robin"  # or "fill-first"
-```
-
-<Accordion title="Routing Strategies">
-  - **round-robin**: Distributes requests evenly across all credentials
-  - **fill-first**: Uses the first credential until quota is exhausted, then moves to the next
-</Accordion>
-
----
-
-## Model Aliasing
-
-Create friendly aliases for frequently used models.
-
-```yaml config.yaml
-switchai-api-key:
-  - api-key: "sk-lf-..."
+      - api-key: "sk-or-v1-your-key"
     models:
-      - name: "openai/gpt-oss-120b"
-        alias: "fast"
-      - name: "deepseek-reasoner"
-        alias: "reasoner"
-```
+      - name: "anthropic/claude-sonnet-4.5"
+        alias: "or-sonnet"
 
-Use aliases in requests:
+  - name: "deepseek"
+    base-url: "https://api.deepseek.com/v1"
+    models-url: "https://api.deepseek.com/v1/models"   # optional: also register everything listed upstream
+    api-key-entries:
+      - api-key: "sk-your-deepseek-key"
+    models:
+      - name: "deepseek-v4-pro"
+        alias: "deepseek-pro"
+        context_length: 1000000
+
+  - name: "kimi"
+    base-url: "https://api.kimi.com/coding/v1"
+    headers:
+      User-Agent: "switchAILocal/1.0"   # some coding endpoints check the client
+    api-key-entries:
+      - api-key: "sk-kimi-your-key"
+    models:
+      - name: "kimi-k2.6"
+        alias: "kimi"
+```
 
 ```bash
 curl http://localhost:18080/v1/chat/completions \
-  -d '{"model": "fast", "messages": [...]}'
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "deepseek-pro", "messages": [{"role": "user", "content": "Hi"}]}'
+```
+
+Notes:
+
+- Clients send the **alias**; the upstream receives `name`. An alias may contain a colon (`groq:gpt-oss-20b`) if your client expects that shape; it is matched as a literal string.
+- Several `api-key-entries` are rotated by `routing.strategy`. Each entry can set its own `proxy-url`.
+- Hide a model from `/v1/models` but keep it routable with `expose: false` or `visibility: private`.
+- `capabilities` and `native_tools` on a model are advertised in `/v1/models` for agent clients. See [Media Generation](/advanced/media) for image, speech, transcription and music models (MiniMax adapters).
+- `kimi-history-shim` defaults to `true`; leave it on for Kimi and DeepSeek thinking models.
+
+---
+
+## Vertex AI
+
+Service account (Google Cloud):
+
+```bash
+./switchAILocal --vertex-import /path/to/service-account.json
+```
+
+The credential registers the built-in Vertex Gemini list (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-3-pro-image-preview`).
+
+Vertex-style gateways that take an API key:
+
+```yaml config.yaml
+vertex-api-key:
+  - api-key: "your-gateway-key"          # sent as x-goog-api-key
+    base-url: "https://gateway.example.com/api"   # required
+    models:
+      - name: "gemini-2.5-pro"
+        alias: "vertex-pro"
+```
+
+---
+
+## OAuth logins
+
+Login flags write a token file into `auth-dir` and exit; start the server normally afterwards.
+
+```bash
+./switchAILocal --login                 # Gemini (Code Assist); needs GEMINI_CLIENT_ID / GEMINI_CLIENT_SECRET
+./switchAILocal --login --project_id my-gcp-project
+./switchAILocal --codex-login
+./switchAILocal --antigravity-login     # needs ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET
+./switchAILocal --qwen-login            # needs QWEN_CLIENT_ID
+./switchAILocal --iflow-login           # needs IFLOW_CLIENT_ID / IFLOW_CLIENT_SECRET
+./switchAILocal --iflow-cookie
+```
+
+Add `--no-browser` on a headless machine to print the URL instead of opening it. The callback listens on localhost (Gemini `8085`, Codex `1455`, Claude `54545`, iFlow `11451`, Antigravity `51121`), so on a remote machine forward that port with SSH.
+
+<Warning>
+Several login flows are incomplete in this release; see the limitations in [Providers](/concepts/providers#oauth-and-login-based-providers). For Claude use the `claude` CLI or a `claude-api-key`; for Gemini the `gemini` CLI is the simplest path.
+</Warning>
+
+---
+
+## Several keys for one provider
+
+```yaml config.yaml
+routing:
+  strategy: "round-robin"   # or "fill-first"
+
+gemini-api-key:
+  - api-key: "your-key-account-1"
+    models: [{name: "gemini-2.5-flash"}]
+  - api-key: "your-key-account-2"
+    models: [{name: "gemini-2.5-flash"}]
+```
+
+- `round-robin` rotates keys per model.
+- `fill-first` uses the first key until it is cooling down (for example after a 429), then the next.
+
+To balance across **different** providers behind one name, or in fixed ratios, use [Virtual Models](/advanced/virtual-models).
+
+---
+
+## Excluding models
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "your-gemini-api-key"
+    models: [{name: "gemini-2.5-pro"}, {name: "gemini-2.5-flash"}]
+    excluded-models: ["*-preview"]
+
+oauth-excluded-models:      # for login/token-file credentials, keyed by provider ID
+  geminicli: ["*-preview"]
 ```
 
 ---
 
 ## Verification
 
-List all available models to verify provider setup:
-
 ```bash
-curl http://localhost:18080/v1/models \
-  -H "Authorization: Bearer sk-test-123"
+# Public model catalog
+curl -s http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"
+
+# Re-run model discovery (optionally ?provider=ollama)
+curl -s -X POST http://localhost:18080/v1/models/refresh -H "Authorization: Bearer sk-test-123"
+
+# Test one provider config without saving it (Management API)
+curl -s -X POST http://localhost:18080/v0/management/providers/test \
+  -H "X-Management-Key: your-management-key" -H "Content-Type: application/json" \
+  -d '{"provider_id": "ollama", "category": "local", "config": {"base-url": "http://localhost:11434"}}'
 ```
 
-Check provider health status:
+The Management API is off until `remote-management.secret-key` (or `MANAGEMENT_PASSWORD`) is set.
 
-```bash
-curl http://localhost:18080/v0/management/heartbeat/status \
-  -H "X-Management-Key: your-secret-key"
-```
+## Troubleshooting
 
----
+<AccordionGroup>
+  <Accordion title="no active credentials found for provider 'gemini'">
+    The key exists but the requested model is not in its `models:` list (or is excluded). Add it.
+  </Accordion>
+  <Accordion title="Provider 'claude' is not active">
+    You used the `claude:` prefix but no `claude-api-key` entry registered models.
+  </Accordion>
+  <Accordion title="CLI provider not detected">
+    The binary is not on the server's `PATH`. Check with `which gemini` as the same user, and look for `Local CLI tool not found` with `debug: true`.
+  </Accordion>
+  <Accordion title="403 from api.kimi.com/coding">
+    That endpoint only accepts recognized coding-agent clients. Set a `User-Agent` header on the provider entry.
+  </Accordion>
+  <Accordion title="Unknown provider for model X">
+    `X` is not registered. Check spelling against `/v1/models`; remember aliases are case-sensitive in config but matched case-insensitively at request time.
+  </Accordion>
+</AccordionGroup>
 
-## Next Steps
+## Next steps
 
-<Card title="Docker Deployment" icon="docker" href="/guides/docker-deployment">
-  Deploy switchAILocal with Docker for production use
-</Card>
-
-<Card title="Management Dashboard" icon="gauge" href="/guides/guides/management-dashboard">
-  Use the web UI to configure providers visually
-</Card>
+<CardGroup cols={2}>
+  <Card title="Virtual Models" icon="layer-group" href="/advanced/virtual-models">
+    One stable name over several providers
+  </Card>
+  <Card title="Auto-Routing" icon="wand-magic-sparkles" href="/guides/auto-routing-setup">
+    Let `model: auto` choose
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/guides/docker-deployment">
+    Run switchAILocal in a container
+  </Card>
+  <Card title="Management Dashboard" icon="gauge" href="/guides/management-dashboard">
+    Configure providers in the web UI
+  </Card>
+</CardGroup>

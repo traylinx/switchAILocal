@@ -1,0 +1,113 @@
+---
+title: 'Audio'
+description: 'POST /v1/audio/speech, POST /v1/audio/transcriptions, and POST /v1/audio/translations'
+---
+
+The audio routes follow the OpenAI audio API. They are served only under `/v1`, not under `/openai/v1`.
+
+**Auth:** client API key on all three routes.
+
+Like images, audio requests are handled by OpenAI-compatible providers (`openai-compatibility` entries and `switchai-api-key`). Two upstreams get special adapters: MiniMax for speech, and Alibaba for transcription.
+
+---
+
+## POST /v1/audio/speech
+
+Text-to-speech. The response body is raw audio bytes.
+
+### Request (JSON)
+
+<ParamField body="model" type="string">
+  TTS model or alias (for example `ail-speech`). Defaults to `intelligence.matrix.speech`; with neither, the request fails with `400`.
+</ParamField>
+
+<ParamField body="input" type="string" required>
+  Text to speak. MiniMax upstreams also accept `text`.
+</ParamField>
+
+<ParamField body="voice" type="string" required>
+  Voice name for the upstream. MiniMax needs a MiniMax voice ID such as `English_expressive_narrator`. OpenAI voice names are **not** mapped.
+</ParamField>
+
+<ParamField body="response_format" type="string" default="mp3">
+  Sets the response `Content-Type`: `mp3` gives `audio/mpeg`, and `opus`, `aac`, `flac`, `wav`, `pcm` give `audio/<format>`. The gateway also looks at `audio_setting.format`, then `format`.
+</ParamField>
+
+<ParamField body="speed" type="number">Forwarded (MiniMax: `voice_setting.speed`).</ParamField>
+
+**Generic OpenAI-compatible upstreams:** the body is forwarded unchanged to `<base-url>/audio/speech`.
+
+**MiniMax upstreams** (provider name contains `minimax`): the request is translated to MiniMax's native `/t2a_v2` API, and the hex or URL audio it returns is turned back into raw bytes. These extra fields are accepted:
+
+| Field | Meaning |
+|---|---|
+| `voice_setting` (object) | Used as-is; replaces `voice` / `speed` / `vol` / `pitch` |
+| `vol`, `pitch` | Folded into `voice_setting` |
+| `audio_setting` (object) | Used as-is |
+| `audio_sample_rate` or `sample_rate`, `bitrate`, `channel` | Folded into `audio_setting` |
+| `pronunciation_dict`, `timbre_weights`, `voice_modify`, `stream_options`, `language_boost`, `subtitle_enable`, `subtitle_type`, `output_format` | Passed through |
+
+`"stream": true` is rejected for MiniMax (`/v1/audio/speech` is synchronous). MiniMax's own status codes are mapped to HTTP: `1002` becomes `429`, `1004`/`1008` become `401`, `2013` becomes `400`, `2061` becomes `402`, and any other code becomes `502`.
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-speech", "input": "Hello from switchAILocal",
+       "voice": "English_expressive_narrator", "response_format": "mp3"}' \
+  --output hello.mp3
+```
+
+---
+
+## POST /v1/audio/transcriptions
+
+Speech-to-text. The request must be `multipart/form-data`.
+
+| Form field | Notes |
+|---|---|
+| `model` | Read by the gateway for routing. Defaults to `intelligence.matrix.transcription`; with neither, the request fails with `400` |
+| `file` | Audio file, forwarded |
+| `language`, `prompt`, `response_format`, `temperature`, ... | Forwarded |
+
+- **Generic OpenAI-compatible upstreams** (for example a Whisper model on Groq): the multipart body is forwarded to `<base-url>/audio/transcriptions`. The `model` part is rewritten when you used an alias.
+- **Alibaba upstreams** (provider name contains `alibaba`, for example `qwen3-asr-flash`): the audio is converted into a chat-completions `input_audio` call, and the result is returned as `{"text": "...", "language": "..."}`.
+- **MiniMax upstreams** return `501`, because MiniMax has no transcription endpoint.
+
+The response is returned with `Content-Type: application/json` regardless of `response_format`.
+
+```bash
+curl http://localhost:18080/v1/audio/transcriptions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F model=whisper-large-v3 \
+  -F file=@meeting.mp3
+```
+
+```json
+{"text": "Welcome everyone to the weekly sync."}
+```
+
+---
+
+## POST /v1/audio/translations
+
+Transcribes audio and translates it into English. The request format is the same as transcriptions (multipart, `model` and `file` fields). The model defaults to `intelligence.matrix.transcription`. The body is forwarded to `<base-url>/audio/translations`, and the response is returned as `application/json`.
+
+```bash
+curl http://localhost:18080/v1/audio/translations \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F model=whisper-large-v3 \
+  -F file=@interview_de.mp3
+```
+
+---
+
+## Errors
+
+| Status | When |
+|---|---|
+| `400` | `model not specified and no '<slot>' configured in intelligence.matrix`, unknown model, or a MiniMax request missing `voice` / `input` |
+| `401` | Missing or invalid API key |
+| `402` / `429` / `502` | Mapped MiniMax TTS errors (see above) |
+| `501` | Transcription requested from a MiniMax model |
+| upstream status | Other provider errors keep their status |

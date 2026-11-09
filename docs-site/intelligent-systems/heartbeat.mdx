@@ -1,509 +1,156 @@
 ---
-title: Heartbeat & Monitoring
-description: Health checks, system monitoring, and operational commands
+title: Heartbeat Monitor
+description: Background health checks for configured providers, exposed through the management API and the hooks event bus
 icon: heart-pulse
 ---
 
-The Heartbeat system provides health checks, monitoring, and operational commands for managing switchAILocal in production environments.
+The heartbeat monitor runs in the background and probes each configured provider on a fixed interval. It records whether each one is `healthy`, `degraded` or `unavailable`. Results are available from `GET /v0/management/heartbeat/status`, and state changes are published as [hook events](/intelligent-systems/hooks).
 
-## Overview
+<Note>
+Heartbeat results are informational. In 0.6.2 they don't feed the request router. Live failover is handled by the circuit breaker and retries. See [Failover](/advanced/failover).
+</Note>
 
-The Heartbeat system includes:
-- **Health Checks**: Continuous monitoring of system health
-- **Steering Commands**: Runtime configuration management
-- **Hooks System**: Custom event handling
-- **Learning Commands**: Model performance analysis
+## When to use it
 
-<Warning>
-The Heartbeat, Steering, Hooks, and Learning commands are currently in development. This page documents the planned architecture based on the source code structure.
-</Warning>
+- You want to know that a provider key was revoked or a local server stopped before a user request fails.
+- You want a webhook or log line when a provider becomes unreachable, using the `provider_unavailable` or `health_check_failed` hook events.
 
-## CLI Commands
-
-switchAILocal provides several system management commands:
-
-```bash
-# Memory system (documented separately)
-switchAILocal memory <command>
-
-# Heartbeat monitoring
-switchAILocal heartbeat <command>
-
-# Steering (runtime configuration)
-switchAILocal steering <command>
-
-# Hooks system
-switchAILocal hooks <command>
-
-# Learning system
-switchAILocal learning <command>
-```
-
-## Health Monitoring
-
-### Streaming Configuration
-
-Configure heartbeat intervals for streaming requests in `config.yaml`:
+## Minimal working config
 
 ```yaml config.yaml
-streaming:
-  # SSE heartbeat interval (seconds)
-  keepalive-seconds: 15
-  
-  # Number of retries before first byte
-  bootstrap-retries: 2
-```
-
-**Purpose:**
-- **keepalive-seconds**: Send SSE heartbeat comments to prevent connection timeouts
-- **bootstrap-retries**: Retry authentication/connection before streaming starts
-
-### Monitoring Endpoints
-
-Use the management API for health checks:
-
-<Tabs>
-  <Tab title="Metrics">
-    Get comprehensive system metrics:
-    
-    ```bash
-    curl http://localhost:18080/management/metrics
-    ```
-    
-    **Example Response:**
-    ```json
-    {
-      "uptime_seconds": 86400,
-      "requests_total": 15234,
-      "requests_success": 14987,
-      "requests_failed": 247,
-      "avg_latency_ms": 234,
-      "intelligence": {
-        "routing_decisions": 12456,
-        "cache_hit_rate": 0.35,
-        "semantic_tier_usage": 0.30
-      },
-      "superbrain": {
-        "healing_attempts": 142,
-        "healing_success_rate": 0.90
-      },
-      "memory": {
-        "total_decisions": 15234,
-        "disk_usage_bytes": 47431680
-      }
-    }
-    ```
-  </Tab>
-  <Tab title="Health Check">
-    Simple health check endpoint:
-    
-    ```bash
-    curl http://localhost:18080/health
-    ```
-    
-    **Response:**
-    ```json
-    {
-      "status": "healthy",
-      "timestamp": "2026-03-09T14:23:45Z",
-      "version": "v2.5.0"
-    }
-    ```
-  </Tab>
-  <Tab title="Provider Status">
-    Check provider availability:
-    
-    ```bash
-    curl http://localhost:18080/management/providers
-    ```
-    
-    **Response:**
-    ```json
-    {
-      "providers": [
-        {
-          "name": "geminicli",
-          "status": "available",
-          "models": 15,
-          "last_check": "2026-03-09T14:23:45Z"
-        },
-        {
-          "name": "claudecli",
-          "status": "available",
-          "models": 8,
-          "last_check": "2026-03-09T14:23:45Z"
-        },
-        {
-          "name": "ollama",
-          "status": "available",
-          "models": 12,
-          "last_check": "2026-03-09T14:23:45Z"
-        }
-      ]
-    }
-    ```
-  </Tab>
-</Tabs>
-
-## Steering Commands
-
-Steering allows runtime configuration changes without restarting:
-
-### Reload Configuration
-
-```bash
-# Reload config.yaml without restart
-curl -X POST http://localhost:18080/v0/management/steering/reload \
-  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
-```
-
-**Use cases:**
-- Update intelligence matrix
-- Add/remove API keys
-- Adjust Superbrain settings
-- Modify routing strategies
-
-<Warning>
-Some configuration changes (like `port` or `tls`) require a full restart.
-</Warning>
-
-### Dynamic Matrix Updates
-
-Update the intelligence matrix at runtime:
-
-<Steps>
-  <Step title="Edit config.yaml">
-    ```yaml config.yaml
-    intelligence:
-      matrix:
-        coding: "switchai-chat"      # Updated
-        reasoning: "gemini-2.5-pro"  # Updated
-        creative: "switchai-chat"
-    ```
-  </Step>
-  <Step title="Reload configuration">
-    ```bash
-    curl -X POST http://localhost:18080/v0/management/steering/reload \
-      -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
-    ```
-  </Step>
-  <Step title="Verify changes">
-    ```bash
-    curl http://localhost:18080/management/metrics | jq '.intelligence.matrix'
-    ```
-  </Step>
-</Steps>
-
-## Hooks System
-
-Hooks allow custom event handling for routing decisions, failures, and other events.
-
-### Hook Types
-
-<Tabs>
-  <Tab title="Pre-Request">
-    Execute before routing decisions:
-    
-    ```lua plugins/hooks/pre-request.lua
-    function on_pre_request(request)
-      -- Modify request before routing
-      if request.user_id == "special_user" then
-        request.priority = "high"
-      end
-      return request
-    end
-    ```
-  </Tab>
-  <Tab title="Post-Request">
-    Execute after request completion:
-    
-    ```lua plugins/hooks/post-request.lua
-    function on_post_request(request, response)
-      -- Log or process response
-      if response.latency_ms > 5000 then
-        log_slow_request(request, response)
-      end
-    end
-    ```
-  </Tab>
-  <Tab title="On-Error">
-    Execute when errors occur:
-    
-    ```lua plugins/hooks/on-error.lua
-    function on_error(request, error)
-      -- Custom error handling
-      if error.type == "rate_limit" then
-        notify_admin(request, error)
-      end
-    end
-    ```
-  </Tab>
-</Tabs>
-
-### Configuration
-
-```yaml config.yaml
-plugin:
+heartbeat:
   enabled: true
-  hooks:
-    enabled: true
-    directory: "plugins/hooks"
-    pre-request: true
-    post-request: true
-    on-error: true
+  interval: "5m"
+  timeout: "5s"
 ```
 
-## Learning Commands
+Restart the server. The log shows `Registered N provider health checkers` and `Heartbeat Monitor started successfully`. The first check cycle runs right away.
 
-The Learning system analyzes model performance and optimizes routing:
+## What gets checked
 
-### Performance Analysis
+Checkers are registered once at startup from your provider configuration:
+
+| Provider config | Checker name | Probe | Status rules |
+|---|---|---|---|
+| `ollama.enabled: true` | `ollama` | `GET <base-url>/api/tags` | 200 is healthy and reports `models_count`. Anything else is a failed attempt. |
+| First `gemini-api-key` entry | `gemini` | `GET https://generativelanguage.googleapis.com/v1beta/models` | See the API rules below |
+| First `claude-api-key` entry | `claude` | `GET https://api.anthropic.com/v1/models` | API rules |
+| First `switchai-api-key` entry | `switchai` | `GET <base-url>/models` | API rules |
+| Every `openai-compatibility` entry | the entry's `name` | `GET <base-url>/models` with the first key | API rules |
+| `lmstudio.enabled: true` | `lmstudio` | `GET <base-url>/models` | API rules |
+
+API rules: 401 or 403 means `degraded` ("Authentication failed"). 5xx means `unavailable`. Any other status, including 404 and 429, counts as `healthy`. Network errors and timeouts count as failed attempts. After `retry-attempts + 1` failed attempts the provider is marked `unavailable`.
+
+CLI providers (`geminicli`, `claudecli`, `codex`, `vibe`), OAuth providers, `codex-api-key` and `vertex-api-key` aren't checked.
+
+## Example request
 
 ```bash
-# Analyze model performance over time
-switchAILocal learning analyze --days 30
-
-# Compare models for specific intent
-switchAILocal learning compare --intent coding
-
-# Generate optimization recommendations
-switchAILocal learning recommend
+curl http://localhost:18080/v0/management/heartbeat/status \
+  -H "X-Management-Key: $MANAGEMENT_KEY"
 ```
 
-### Configuration
-
-```yaml config.yaml
-intelligence:
-  learning:
-    enabled: true
-    min-samples: 100          # Minimum decisions before analysis
-    confidence-threshold: 0.8 # Minimum confidence for recommendations
-    update-interval: 86400    # Analyze daily (seconds)
-```
-
-## Operational Best Practices
-
-<Steps>
-  <Step title="Monitor Metrics Regularly">
-    Set up automated monitoring:
-    ```bash
-    # Check every 5 minutes
-    */5 * * * * curl -s http://localhost:18080/management/metrics | \
-      jq -r '.requests_failed' | \
-      (read v; [ "$v" -gt 100 ] && alert_team)
-    ```
-  </Step>
-  <Step title="Configure Health Checks">
-    Use the health endpoint for load balancer health checks:
-    ```nginx nginx.conf
-    upstream switchailocal {
-      server localhost:18080;
-      
-      health_check interval=10s
-                   uri=/health
-                   match=ok_status;
+```json
+{
+  "enabled": true,
+  "running": true,
+  "providers": {
+    "ollama": {
+      "provider": "ollama",
+      "status": "healthy",
+      "last_check": "2026-11-08T10:20:00Z",
+      "response_time": 4120000,
+      "models_count": 7,
+      "quota_used": 0,
+      "quota_limit": 0
+    },
+    "groq": {
+      "provider": "groq",
+      "status": "degraded",
+      "last_check": "2026-11-08T10:20:00Z",
+      "response_time": 183000000,
+      "models_count": 0,
+      "quota_used": 0,
+      "quota_limit": 0,
+      "error_message": "Authentication failed"
     }
-    ```
-  </Step>
-  <Step title="Enable Audit Logging">
-    Track all management operations:
-    ```yaml config.yaml
-    remote-management:
-      allow-remote: false
-      secret-key: "your-management-key"
-    
-    superbrain:
-      security:
-        audit_log_enabled: true
-        audit_log_path: "./logs/audit.log"
-    ```
-  </Step>
-  <Step title="Set Up Alerts">
-    Monitor critical metrics:
-    - Request failure rate > 5%
-    - Average latency > 5000ms
-    - Disk usage > 90%
-    - Superbrain healing success rate < 80%
-  </Step>
-  <Step title="Regular Backups">
-    Back up configuration and memory data:
-    ```bash
-    # Daily backup script
-    #!/bin/bash
-    DATE=$(date +%Y%m%d)
-    cp config.yaml "backups/config-${DATE}.yaml"
-    switchAILocal memory export --output "backups/memory-${DATE}.tar.gz"
-    ```
-  </Step>
-</Steps>
-
-## Monitoring Stack Integration
-
-### Prometheus
-
-Export metrics to Prometheus:
-
-```yaml docker-compose.yml
-services:
-  switchailocal:
-    image: switchailocal:latest
-    ports:
-      - "18080:18080"
-    environment:
-      - PROMETHEUS_ENABLED=true
-      - PROMETHEUS_PORT=9090
+  },
+  "stats": {
+    "start_time": "2026-11-08T10:00:00Z",
+    "total_checks": 12,
+    "successful_checks": 12,
+    "failed_checks": 0,
+    "providers_monitored": 2,
+    "healthy_providers": 1,
+    "degraded_providers": 1,
+    "unavailable_providers": 0
+  }
+}
 ```
 
-### Grafana Dashboard
+`response_time` is a Go duration in nanoseconds. When `heartbeat.enabled` is false, the endpoint returns `{"enabled": false, "message": "Heartbeat monitor is disabled"}`.
 
-Key metrics to monitor:
+## Configuration reference
 
-<Tabs>
-  <Tab title="Request Metrics">
-    - Requests per second
-    - Success rate
-    - Average latency (p50, p95, p99)
-    - Error rate by type
-  </Tab>
-  <Tab title="Intelligence Metrics">
-    - Routing tier distribution
-    - Cache hit rate
-    - Semantic tier usage
-    - Average confidence scores
-  </Tab>
-  <Tab title="Superbrain Metrics">
-    - Healing attempts
-    - Healing success rate
-    - Silence detections
-    - Fallback routing count
-  </Tab>
-  <Tab title="System Metrics">
-    - Memory usage
-    - Disk usage
-    - CPU usage
-    - Open connections
-  </Tab>
-</Tabs>
+| Key | Default | Validation and notes |
+|---|---|---|
+| `heartbeat.enabled` | `false` | Opt-in |
+| `heartbeat.interval` | `5m` | Minimum `30s`. Shorter or invalid values reset to `5m`. |
+| `heartbeat.timeout` | `5s` | Minimum `1s`. Per-check context deadline. Each HTTP probe also has a fixed 5 s client timeout. |
+| `heartbeat.retry-attempts` | `2` | Clamped to 0–5 |
+| `heartbeat.retry-delay` | `1s` | Minimum `100ms` |
+| `heartbeat.max-concurrent-checks` | `10` | Clamped to 1–50 |
+| `heartbeat.quota-warning-threshold` | `0.80` | See the note below |
+| `heartbeat.quota-critical-threshold` | `0.95` | Raised above the warning threshold if needed |
+| `heartbeat.auto-discovery` | `true` | Reported in the start event only. No discovery runs from heartbeat in 0.6.2. |
+| `heartbeat.providers.<name>.*` | — | Accepted and validated, but per-provider overrides aren't applied in 0.6.2 |
+
+<Note>
+Quota thresholds only fire when a checker reports `quota_used` and `quota_limit`. None of the built-in checkers fill these fields, so `quota_warning` and `quota_exceeded` events don't occur in 0.6.2.
+</Note>
+
+## Events
+
+The monitor publishes these events on the internal event bus. [Hooks](/intelligent-systems/hooks) can subscribe to them.
+
+| Heartbeat event | Hook event | When |
+|---|---|---|
+| Provider status changes to unavailable | `provider_unavailable` | All attempts failed or the probe returned 5xx |
+| A single probe attempt fails | `health_check_failed` | Network error, timeout, or an unexpected Ollama status, once per attempt |
+| Quota thresholds crossed | `quota_warning`, `quota_exceeded` | Not emitted in 0.6.2 (see above) |
+
+Changes to `healthy` or `degraded` aren't forwarded to hooks.
+
+## Related settings that are not the heartbeat monitor
+
+- `streaming.keepalive-seconds` (default 15) sends SSE `: keep-alive` comments on streaming responses. It is unrelated to provider health.
+- `GET /health` is a liveness probe for switchAILocal itself and always returns `{"status": "ok"}`.
+- `GET /v0/management/metrics` returns [Superbrain](/intelligent-systems/superbrain) counters, not heartbeat data.
 
 ## Troubleshooting
 
-<Accordion title="High latency on health checks">
-**Symptom:** Health check endpoint taking > 1s to respond
+<AccordionGroup>
+  <Accordion title="The status endpoint returns an empty providers map">
+    The first cycle may still be running. Wait a few seconds. If it stays empty, check `Registered 0 provider health checkers` in the log. Only the provider types in the table above get checkers.
+  </Accordion>
+  <Accordion title="A provider shows degraded with 'Authentication failed'">
+    The `/models` probe returned 401 or 403. Check the key in `config.yaml`. For `openai-compatibility` entries only the first `api-key-entries` key is probed.
+  </Accordion>
+  <Accordion title="A provider that rejects requests still shows healthy">
+    The probe only checks that `/models` doesn't return 401, 403 or 5xx. A 404 or 429 still counts as healthy. To confirm a provider really works, send it a small chat completion.
+  </Accordion>
+  <Accordion title="My interval setting is ignored">
+    Values below `30s` reset to `5m`. Use a Go duration string such as `"2m"`.
+  </Accordion>
+</AccordionGroup>
 
-**Possible causes:**
-1. System under heavy load
-2. Database/disk I/O bottleneck
-3. Network connectivity issues
-
-**Solutions:**
-- Reduce concurrent request limit
-- Increase server resources
-- Enable request queuing
-</Accordion>
-
-<Accordion title="Steering reload fails">
-**Error:** `Failed to reload configuration`
-
-**Check:**
-1. Management key is correct
-2. config.yaml syntax is valid
-3. File permissions allow reading config.yaml
-
-**Debug:**
-```bash
-# Validate YAML syntax
-yamlint config.yaml
-
-# Check file permissions
-ls -la config.yaml
-```
-</Accordion>
-
-<Accordion title="Streaming requests timing out">
-**Symptom:** Streaming requests disconnect after 15-30 seconds
-
-**Solution:**
-Increase keepalive interval:
-```yaml config.yaml
-streaming:
-  keepalive-seconds: 30  # Increase from 15
-```
-</Accordion>
-
-## Emergency Procedures
-
-### Service Degradation
-
-If performance degrades:
-
-<Steps>
-  <Step title="Check metrics">
-    ```bash
-    curl http://localhost:18080/management/metrics
-    ```
-  </Step>
-  <Step title="Identify bottleneck">
-    - High latency? Scale horizontally
-    - High error rate? Check provider status
-    - High memory? Reduce retention period
-  </Step>
-  <Step title="Apply quick fixes">
-    ```yaml config.yaml
-    # Disable expensive features temporarily
-    intelligence:
-      cascade:
-        enabled: false  # Disable cascading
-      semantic-cache:
-        max-size: 5000  # Reduce cache size
-    
-    superbrain:
-      mode: "observe"   # Disable healing
-    ```
-  </Step>
-  <Step title="Reload configuration">
-    ```bash
-    curl -X POST http://localhost:18080/v0/management/steering/reload \
-      -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
-    ```
-  </Step>
-</Steps>
-
-### Complete Outage
-
-If switchAILocal stops responding:
-
-<Steps>
-  <Step title="Check process status">
-    ```bash
-    ps aux | grep switchAILocal
-    ```
-  </Step>
-  <Step title="Review logs">
-    ```bash
-    tail -100 logs/switchailocal.log
-    ```
-  </Step>
-  <Step title="Restart service">
-    ```bash
-    systemctl restart switchailocal
-    # or
-    docker restart switchailocal
-    ```
-  </Step>
-  <Step title="Verify health">
-    ```bash
-    curl http://localhost:18080/health
-    ```
-  </Step>
-</Steps>
-
-## Next Steps
+## Related
 
 <CardGroup cols={2}>
-  <Card title="Configuration Guide" icon="gear" href="/configuration/overview">
-    Learn about all configuration options
+  <Card title="Hooks & Events" icon="bolt" href="/intelligent-systems/hooks">
+    Turn heartbeat events into webhooks and log lines
   </Card>
-  <Card title="Management API" icon="code" href="/api-reference/management">
-    Explore management endpoints
+  <Card title="Failover" icon="shuffle" href="/advanced/failover">
+    Request-time failover with the circuit breaker
   </Card>
 </CardGroup>

@@ -1,492 +1,162 @@
 ---
-title: 'Routing Strategies'
-description: 'How switchAILocal routes requests and selects credentials'
+title: 'Routing'
+description: 'How a model name becomes a provider, a credential, and an upstream call'
 icon: 'route'
 ---
 
 ## Overview
 
-Routing in switchAILocal determines which credential and provider handle each incoming request. The system supports multiple routing strategies, intelligent fallback, and per-model quota management.
+Routing happens in two stages:
 
-## Routing Configuration
+1. **Model resolution** turns the `model` field of the request into an ordered list of provider IDs plus the model name to send upstream (`sdk/api/handlers/handlers.go`, `getRequestDetailsWithOperation`).
+2. **Credential selection** picks one credential of the first provider, executes the call, and moves on to the next credential or provider if it fails (`sdk/switchailocal/auth/conductor.go`).
 
-Configure routing behavior in `config.yaml`:
+## Stage 1: model resolution
 
-```yaml
+The first matching rule wins:
+
+| # | Rule | Example `model` | Result |
+|---|------|-----------------|--------|
+| 1 | **Explicit provider prefix** (`provider:model`, recognized prefixes only) | `ollama:llama3.2`, `geminicli:gemini-2.5-pro` | Provider `ollama`, model `llama3.2`. `provider:` with nothing after it sends `auto` to that provider. The Lua `on_request` hook still runs and may rewrite model or provider. |
+| 2 | **Lua `on_request` hook** (if the plugin system is enabled) | `auto`, `cortex` | A plugin such as `cortex-router` may set `model` and/or `provider`. If it sets a provider, resolution stops here. |
+| 3 | **Virtual model** | `ail-compound` | One member is chosen by capability and weight; see [Virtual Models](/advanced/virtual-models). |
+| 4 | **Auto-routing** for `auto`, `auto:<intent>`, `cortex` or an empty model | `auto:coding` | The [auto-routing engine](/guides/auto-routing-setup) scores candidates. If it is disabled or fails, the newest available model in the registry is used. |
+| 5 | **Registry lookup** | `deepseek-pro`, `team-a/gemini-2.5-pro` | Every provider that has registered this model ID (alias, upstream name, or `prefix/model`). |
+
+If nothing matches, the request fails with `400 unknown provider for model <name>`.
+
+### Recognized colon prefixes
+
+`switchai`, `gemini`, `geminicli`, `claude`, `claudecli`, `codex`, `ollama`, `vibecli`, `openai`, `openai-compat`, `opencode` (`internal/util/provider.go`).
+
+- A prefix pin fails fast: an unknown prefix cannot occur (it is treated as a model name), and an API provider with no registered models returns `503 Provider '<id>' is not active`. Local providers (`geminicli`, `claudecli`, `vibecli`, `ollama`, `opencode`) are always accepted.
+- Anything else with a colon, such as `groq:gpt-oss-20b` or `minimax:MiniMax-M3`, is **not** a prefix. It works only if some credential registered that exact string, which is why `openai-compatibility` examples use colon-shaped **aliases**.
+- Slash-style IDs (`team-a/model`) come from the `prefix:` option on a credential; see [Providers](/concepts/providers#how-models-become-routable).
+
+### Model name suffixes
+
+Before resolution, the model name is normalized:
+
+- `name(<number>)` sets a thinking budget, `name(high|medium|low)` sets a reasoning effort, and the suffix is removed. Example: `gemini-2.5-pro(8192)`.
+- A trailing `-vision` is stripped if the name with the suffix is not itself a registered or virtual model (some editors append it to enable image upload).
+
+## Stage 2: credential selection
+
+For each provider in the list, the auth manager:
+
+1. Collects that provider's credentials that are not disabled and that have registered the requested model. Local credentials (Ollama, LM Studio, OpenCode, detected CLIs) skip the model check.
+2. Drops credentials that are cooling down for this model.
+3. Lets the **selector** pick one.
+4. Executes the call. On failure it marks the credential (see [Cooldowns](#quota-cooldowns)) and tries the next credential, then the next provider.
+
+### Selector strategy
+
+```yaml config.yaml
 routing:
-  # Primary strategy: "round-robin" or "fill-first"
-  strategy: "round-robin"
-  
-  # Optional: Priority list for auto model resolution
-  # auto-model-priority:
-  #   - "ollama:gpt-oss:120b-cloud"
-  #   - "switchai-chat"
-  #   - "gemini-2.5-flash"
+  strategy: "round-robin"   # default; "fill-first" (aliases: "fillfirst", "ff")
 ```
 
-## Routing Strategies
+| Strategy | Behaviour | Use it when |
+|----------|-----------|-------------|
+| `round-robin` | Rotates through available credentials. One cursor per `provider:model` pair. | You want to spread load across keys or accounts. |
+| `fill-first` | Always picks the first available credential; moves on only while it is cooling down. | You want to use up one subscription before touching the next (rolling message caps). |
 
-The routing strategy determines how multiple credentials for the same provider are selected.
+Example: three OpenAI-compatible keys sharing load.
 
-### Round-Robin
-
-Distributes requests evenly across all available credentials.
-
-<Accordion title="How Round-Robin Works">
-The **RoundRobinSelector** (`sdk/switchailocal/auth/selector.go`) maintains per-model cursors:
-
-```go
-type RoundRobinSelector struct {
-    mu      sync.Mutex
-    cursors map[string]int  // "provider:model" -> cursor
-}
-
-func (s *RoundRobinSelector) Pick(..., auths []*Auth) (*Auth, error) {
-    key := provider + ":" + model
-    s.mu.Lock()
-    index := s.cursors[key]
-    s.cursors[key] = index + 1
-    s.mu.Unlock()
-    return available[index % len(available)], nil
-}
-```
-
-Behavior:
-1. First request to `gpt-4` uses credential A
-2. Second request to `gpt-4` uses credential B  
-3. Third request to `gpt-4` uses credential C
-4. Fourth request to `gpt-4` wraps back to credential A
-</Accordion>
-
-**Use case**: Distribute load evenly, maximize quota utilization
-
-**Example**:
-```yaml
-routing:
-  strategy: "round-robin"
-
-codex-api-key:
-  - api-key: "sk-proj-A..."
-  - api-key: "sk-proj-B..."
-  - api-key: "sk-proj-C..."
-```
-
-<Note>
-Round-robin is tracked per model. Requests to `gpt-4` and `gpt-3.5-turbo` maintain independent cursors.
-</Note>
-
-### Fill-First
-
-Uses the first available credential until it's exhausted or in cooldown, then moves to the next.
-
-<Accordion title="How Fill-First Works">
-The **FillFirstSelector** always picks the first available credential:
-
-```go
-type FillFirstSelector struct{}
-
-func (s *FillFirstSelector) Pick(..., auths []*Auth) (*Auth, error) {
-    available, err := getAvailableAuths(auths, provider, model, now)
-    if err != nil {
-        return nil, err
-    }
-    // Always return first (auths are sorted by ID for consistency)
-    return available[0], nil
-}
-```
-
-Behavior:
-1. All requests use credential A
-2. When A hits quota → switch to credential B
-3. When B hits quota → switch to credential C
-4. When A recovers → switch back to A
-</Accordion>
-
-**Use case**: Stagger subscription caps, optimize for rolling time windows
-
-**Example**:
-```yaml
-routing:
-  strategy: "fill-first"
-
-claude-api-key:
-  - api-key: "sk-ant-primary..."
-  - api-key: "sk-ant-backup..."
-```
-
-<Tip>
-Fill-first works well with providers that have daily/monthly quotas rather than per-minute rate limits.
-</Tip>
-
-## Credential Selection Process
-
-The Auth Manager follows a multi-step process to select credentials:
-
-```mermaid
-flowchart TD
-    A[Request Arrives] --> B{Match Provider}
-    B -->|Found| C[Filter by Model Support]
-    C --> D[Filter by Status]
-    D --> E{Available?}
-    E -->|Yes| F[Apply Selector Strategy]
-    E -->|No| G{All in Cooldown?}
-    G -->|Yes| H[Return Cooldown Error]
-    G -->|No| I[Return No Auth Error]
-    F --> J[Execute Request]
-    J --> K{Success?}
-    K -->|Yes| L[Mark Success]
-    K -->|No| M[Mark Failure]
-    M --> N{Retryable?}
-    N -->|Yes| C
-    N -->|No| O[Return Error]
-```
-
-### 1. Provider Matching
-
-```go
-func (m *Manager) Execute(ctx, providers []string, req Request, opts) {
-    // Normalize and rotate provider list
-    normalized := m.normalizeProviders(providers)
-    rotated := m.rotateProviders(req.Model, normalized)
-}
-```
-
-Provider names are normalized (lowercased, deduplicated).
-
-### 2. Model Support Filtering
-
-```go
-for _, candidate := range m.auths {
-    if candidate.Provider != provider || candidate.Disabled {
-        continue
-    }
-    // Check model registry
-    if !registryRef.ClientSupportsModel(candidate.ID, modelKey) {
-        continue
-    }
-    candidates = append(candidates, candidate)
-}
-```
-
-Credentials are filtered based on model support from the registry.
-
-### 3. Status Filtering
-
-```go
-func getAvailableAuths(auths, provider, model, now) ([]*Auth, error) {
-    available, cooldownCount, earliest := collectAvailable(auths, model, now)
-    
-    if len(available) == 0 {
-        if cooldownCount == len(auths) && !earliest.IsZero() {
-            resetIn := earliest.Sub(now)
-            return nil, newModelCooldownError(model, provider, resetIn)
-        }
-        return nil, &Error{Code: "auth_unavailable"}
-    }
-    return available, nil
-}
-```
-
-Checks:
-- Not disabled (`auth.Disabled == false`)
-- Not unavailable (`auth.Unavailable == false`)
-- Past retry time (`auth.NextRetryAfter < now`)
-- Model-specific state (if tracked)
-
-### 4. Strategy Application
-
-The selected strategy picks one credential from the available pool:
-
-```go
-auth, err := m.selector.Pick(ctx, provider, model, opts, candidates)
-```
-
-## Multi-Provider Routing
-
-You can specify multiple providers for the same model:
-
-```yaml
+```yaml config.yaml
 routing:
   strategy: "round-robin"
-
-# Same model available from multiple providers
-codex-api-key:
-  - api-key: "sk-proj-openai..."
-    models:
-      - name: "gpt-4o"
 
 openai-compatibility:
-  - name: "openrouter"
-    prefix: "or"
-    api-key-entries:
-      - api-key: "sk-or-v1..."
-    # Also provides gpt-4o
-```
-
-When both providers support `gpt-4o`:
-1. Manager tries OpenAI provider first
-2. If OpenAI is in cooldown → tries OpenRouter
-3. Rotates starting provider on next request
-
-<Note>
-Per-model provider rotation ensures even distribution when multiple providers offer the same model.
-</Note>
-
-## Intelligent Routing (Cortex Phase 2)
-
-When Intelligence is enabled, routing becomes content-aware:
-
-```yaml
-intelligence:
-  enabled: true
-  router-model: "ollama:gpt-oss:20b-cloud"
-  
-  matrix:
-    coding: "switchai-chat"
-    reasoning: "switchai-reasoner"
-    fast: "switchai-fast"
-    secure: "ollama:llama3.2"
-    vision: "ollama:qwen3-vl:235b-instruct-cloud"
-  
-  semantic-tier:
-    enabled: true
-    confidence-threshold: 0.85
-```
-
-### Classification Flow
-
-```mermaid
-flowchart LR
-    A[Request] --> B{Semantic Cache Hit?}
-    B -->|Yes| C[Use Cached Intent]
-    B -->|No| D[Embed Request]
-    D --> E{Semantic Match?}
-    E -->|High Confidence| F[Use Matched Intent]
-    E -->|Low Confidence| G[LLM Classification]
-    G --> H[Cache Result]
-    C --> I[Map to Model]
-    F --> I
-    H --> I
-    I --> J[Route to Provider]
-```
-
-<Accordion title="Intent Classification">
-The Intelligence Service uses the router model to classify requests:
-
-```go
-type Classification struct {
-    Intent     string   // "coding", "reasoning", "fast", etc.
-    Confidence float64  // 0.0 to 1.0
-    Model      string   // Resolved model from matrix
-}
-
-func (s *Service) Classify(ctx, req) (*Classification, error) {
-    // 1. Check semantic cache
-    // 2. Try semantic matching with embeddings
-    // 3. Fall back to LLM classification
-    // 4. Apply confidence thresholds
-}
-```
-
-Intent mapping:
-- **coding**: Code generation, debugging, refactoring
-- **reasoning**: Complex problem-solving, math, logic  
-- **fast**: Simple queries, casual conversation
-- **secure**: Privacy-sensitive, runs locally only
-- **vision**: Image analysis, OCR, visual tasks
-</Accordion>
-
-## Quota Management
-
-Quota tracking prevents retry storms when providers hit rate limits.
-
-### Quota States
-
-Each credential tracks quota status:
-
-```go
-type QuotaState struct {
-    Exceeded      bool      // Currently over quota
-    Reason        string    // "quota", "rate_limit", etc.
-    NextRecoverAt time.Time // When quota resets
-    BackoffLevel  int       // Exponential backoff level
-}
-```
-
-### Backoff Schedule
-
-Exponential backoff prevents hammering rate-limited providers:
-
-```go
-func nextQuotaCooldown(prevLevel int) (time.Duration, int) {
-    cooldown := quotaBackoffBase * time.Duration(1<<prevLevel)
-    // Level 0: 1 second
-    // Level 1: 2 seconds
-    // Level 2: 4 seconds
-    // Level 3: 8 seconds
-    // ...
-    // Max: 30 minutes
-    if cooldown >= quotaBackoffMax {
-        return quotaBackoffMax, prevLevel
-    }
-    return cooldown, prevLevel + 1
-}
-```
-
-<Tip>
-Set `quota-exceeded.switch-project: true` to automatically switch to another credential when quota is hit.
-</Tip>
-
-### Model-Level Quotas
-
-Quotas are tracked per-model for fine-grained control:
-
-```yaml
-# API key exhausted gpt-4 quota but gpt-3.5-turbo still works
-type Auth struct {
-    ModelStates map[string]*ModelState
-}
-
-type ModelState struct {
-    Quota QuotaState  // Per-model quota tracking
-}
-```
-
-Behavior:
-```bash
-# Request 1: gpt-4 with key-A → Success
-# Request 2: gpt-4 with key-A → 429 Too Many Requests
-# Request 3: gpt-4 with key-A → Skipped (in cooldown)
-# Request 4: gpt-4 with key-B → Success (different key)
-# Request 5: gpt-3.5-turbo with key-A → Success (different model)
-```
-
-## Retry Logic
-
-Configurable retry behavior for transient failures:
-
-```yaml
-request-retry: 3  # Retry up to 3 times
-
-streaming:
-  bootstrap-retries: 2  # Retries before first byte
-```
-
-<Accordion title="Retry Decision Logic">
-```go
-func (m *Manager) shouldRetryAfterError(err error, attempt, maxAttempts int, 
-                                        providers []string, model string, 
-                                        maxWait time.Duration) (time.Duration, bool) {
-    // No retry on last attempt
-    if attempt >= maxAttempts-1 {
-        return 0, false
-    }
-    
-    // Check if any credential will recover soon
-    wait, found := m.closestCooldownWait(providers, model)
-    if !found || wait > maxWait {
-        return 0, false
-    }
-    
-    return wait, true
-}
-```
-
-Retry conditions:
-- Not the final attempt
-- At least one credential will recover within `maxWait`
-- Error is retryable (408, 429, 500, 502, 503, 504)
-</Accordion>
-
-## Fallback Chains
-
-Automatic fallback when quota is exceeded:
-
-```yaml
-quota-exceeded:
-  switch-project: true       # Try next credential
-  switch-preview-model: true # Try preview/alternative models
-```
-
-Fallback order:
-1. Try next credential for same model
-2. Try preview model with same credential  
-3. Try preview model with next credential
-4. Return cooldown error
-
-## Load Balancing
-
-Distribute requests across providers:
-
-```yaml
-openai-compatibility:
-  # Multiple providers for same models
   - name: "groq"
-    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
     api-key-entries:
-      - api-key: "gsk-A..."
-      - api-key: "gsk-B..."
-  
-  - name: "openrouter"  
-    prefix: "or"
-    api-key-entries:
-      - api-key: "sk-or-v1-A..."
-      - api-key: "sk-or-v1-B..."
+      - api-key: "gsk_key_one"
+      - api-key: "gsk_key_two"
+      - api-key: "gsk_key_three"
+    models:
+      - name: "openai/gpt-oss-20b"
+        alias: "gpt-oss-20b"
 ```
 
-With `round-robin` strategy:
-- Request 1 → groq key-A
-- Request 2 → groq key-B
-- Request 3 → openrouter key-A  
-- Request 4 → openrouter key-B
-- Request 5 → groq key-A (rotation)
+Changing `routing.strategy` is picked up on config reload.
 
-## Custom Selectors
+### Multiple providers for the same model
 
-Implement custom routing logic:
+When several providers registered the same model ID, the list from stage 1 contains all of them. The starting provider rotates per model on every request, so traffic alternates between providers; the others act as fallbacks within the same request.
 
-```go
-type MyCustomSelector struct {
-    // Your state
-}
+### Circuit breaker
 
-func (s *MyCustomSelector) Pick(ctx context.Context, 
-                                provider, model string,
-                                opts executor.Options,
-                                auths []*Auth) (*Auth, error) {
-    // Filter by metadata
-    for _, auth := range auths {
-        if region, ok := auth.Metadata["region"].(string); ok {
-            if region == "us-west" {
-                return auth, nil
-            }
-        }
-    }
-    // Fallback to first
-    return auths[0], nil
-}
+Before execution, providers whose circuit breaker is open are skipped. If all are open the request fails with `503 all downstream providers (...) are currently overloaded or open`. The breaker is off unless `performance.circuit-breaker.enabled: true`; when enabled the code defaults are 5 consecutive failures and a 30 s reset timeout (the example config uses 3 and `5m`). Failures (5xx and 429) are only recorded for requests resolved by the auto-routing engine, so in practice the breaker opens only from `auto` traffic. See [Failover](/advanced/failover).
 
-// Register
-service.CoreManager().SetSelector(&MyCustomSelector{})
+### Retries
+
+```yaml config.yaml
+request-retry: 3          # extra passes over the provider list
+max-retry-interval: 30    # seconds; 0 disables waiting for cooldowns
 ```
+
+After every provider and credential has failed, the manager may wait for the credential whose cooldown ends soonest and try again, up to `request-retry` extra passes. It only waits if that cooldown ends within `max-retry-interval` seconds. With the default `max-retry-interval: 0`, no waiting retries happen.
+
+For streaming, failures before the first byte are retried up to `streaming.bootstrap-retries` times on 401, 402, 403, 408, 429 and 5xx. The code default is `0` (off); the example config sets `2`.
+
+### Quota cooldowns
+
+A failed call puts the credential in cooldown **for that model only**; it keeps serving other models. A success clears the state.
+
+| Upstream status | Cooldown for that credential + model |
+|-----------------|--------------------------------------|
+| 429 | Upstream retry hint if present, otherwise exponential backoff: 1 s, 2 s, 4 s, ... up to 30 min |
+| 401, 402 | 30 minutes |
+| 403 | 3 seconds (treated as a transient WAF/bot block) |
+| 404 | 12 hours |
+| 408, 500, 502, 503, 504 | 1 minute |
+| other | none |
+
+Set `disable-cooling: true` to turn off the 429 backoff (the other cooldowns still apply).
 
 <Note>
-Custom selectors receive only available credentials (already filtered by status and cooldown).
+`quota-exceeded.switch-project` and `quota-exceeded.switch-preview-model` are accepted and editable through the Management API, but no routing code reads them in this release.
 </Note>
 
-## Next Steps
+### Response headers
+
+Auto-routed requests add `X-Auto-Routed: true`, `X-Selected-Model` and `X-Selected-Provider`. Virtual-model requests return the public model name in the body; the chosen member is only visible in the logs.
+
+## Model visibility
+
+`GET /v1/models` lists exposed virtual models and registered models, minus anything marked `visibility: private` / `expose: false`. If any listed ID starts with `ail-`, only `ail-*` IDs are returned. Filter by modality with `?modality=text|image|audio|embedding|vision`. A request with a `User-Agent` starting with `claude-cli` gets the Anthropic-style model list instead.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="400 unknown provider for model X">
+    No credential registered `X`. Check `GET /v1/models`, the `models:` lists in `config.yaml`, and `excluded-models`. Remember that `something:X` is only a prefix pin for the recognized prefixes.
+  </Accordion>
+  <Accordion title="503 Provider 'gemini' is not active">
+    You pinned an API provider with no registered models. Add `models:` to its config block.
+  </Accordion>
+  <Accordion title="Requests always hit the same key with round-robin">
+    The cursor is per provider and model; different models rotate independently. Keys that are cooling down are skipped, so with one healthy key every request lands on it.
+  </Accordion>
+  <Accordion title="model_cooldown errors">
+    Every credential for that provider and model is cooling down after 429s. Wait, add credentials, or set `max-retry-interval` so the server waits instead of failing.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Authentication" href="/concepts/authentication" icon="key">
-    Learn about credential lifecycle and refresh
+  <Card title="Virtual Models" href="/advanced/virtual-models" icon="layer-group">
+    Weighted, capability-aware pools behind one name
+  </Card>
+  <Card title="Auto-Routing" href="/guides/auto-routing-setup" icon="wand-magic-sparkles">
+    Let `model: auto` pick a model
+  </Card>
+  <Card title="Failover" href="/advanced/failover" icon="shield-halved">
+    Circuit breakers, timeouts and stream watchdogs
   </Card>
   <Card title="Providers" href="/concepts/providers" icon="plug">
-    Configure provider-specific settings
-  </Card>
-  <Card title="Intelligence" href="/features/intelligence" icon="brain">
-    Enable semantic routing and classification
-  </Card>
-  <Card title="Configuration" href="/configuration/routing" icon="gear">
-    Complete routing configuration reference
+    Provider IDs and how models get registered
   </Card>
 </CardGroup>

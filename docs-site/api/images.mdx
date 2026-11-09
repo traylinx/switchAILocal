@@ -1,0 +1,101 @@
+---
+title: 'Images'
+description: 'POST /v1/images/generations, POST /v1/images/edits, and the strict /openai/v1 image routes'
+---
+
+Image generation and editing are proxied to OpenAI-compatible upstreams. The gateway picks the provider from `model`, rewrites `model` to the upstream name, and forwards the body unchanged.
+
+**Auth:** client API key on all four routes.
+
+| Route | Request body | Response shape |
+|---|---|---|
+| `POST /v1/images/generations` | JSON or `multipart/form-data` | Upstream JSON, unchanged |
+| `POST /v1/images/edits` | JSON (image URLs) or `multipart/form-data` (file upload) | Upstream JSON, unchanged |
+| `POST /openai/v1/images/generations` | Same as `/v1` | Normalized to OpenAI `data[]` |
+| `POST /openai/v1/images/edits` | Same as `/v1` | Normalized to OpenAI `data[]` |
+
+## Request
+
+<ParamField body="model" type="string">
+  Image model ID or alias (for example `ail-image`). For multipart requests the gateway reads the `model` form field. When omitted, `intelligence.matrix.image_gen` is used; with neither, the request fails with `400`.
+</ParamField>
+
+<ParamField body="prompt" type="string" required>
+  Forwarded to the provider.
+</ParamField>
+
+<ParamField body="n, size, quality, response_format, image, mask, ..." type="mixed">
+  Forwarded unchanged. Which fields work depends on the upstream API.
+</ParamField>
+
+**Content type:**
+
+- For `/images/generations`, a request with no `Content-Type` is sent upstream as `application/json`.
+- For `/images/edits`, the `Content-Type` is forwarded exactly as received. For multipart bodies the `model` field is rewritten in place when an alias maps to a different upstream name.
+
+## Which providers can serve images
+
+Only providers handled by the generic OpenAI-compatible executor: `openai-compatibility` entries and `switchai-api-key`.
+
+- Generations go to `<base-url>/images/generations`. For MiniMax upstreams (provider name containing `minimax`) they go to `<base-url>/image_generation` instead.
+- Edits go to `<base-url>/images/edits`.
+
+CLI providers, Ollama, and the native Gemini and Claude executors have no image route.
+
+## Response
+
+On `/v1`, the upstream body is returned unchanged with `200 application/json`. Existing clients that depend on a provider's native shape (for example MiniMax's `{"data":{"image_urls":[...]}}`) keep working.
+
+### Strict OpenAI response shape
+
+The `/openai/v1` routes rewrite a non-array `data` object into OpenAI's `data[]` array, so strict clients can read `data[0].url` or `data[0].b64_json`. These keys are recognized:
+
+| Upstream key (inside `data`) | Becomes |
+|---|---|
+| `image_urls`, `imageUrls`, `urls` (arrays) | one `{"url": ...}` per entry |
+| `b64_jsons`, `base64_images`, `base64Images` (arrays) | one `{"b64_json": ...}` per entry |
+| `image_url` / `imageUrl` / `url` with optional `b64_json` / `base64` / `image_base64` / `imageBase64` | one entry |
+| `images[]` (strings or objects with `url` / `b64_json`) | one entry each |
+| `revised_prompt` / `revisedPrompt` | copied to each entry |
+
+A response whose `data` is already an array, or that cannot be parsed, is returned unchanged.
+
+```json
+{"data": [{"url": "https://example.com/generated.png"}]}
+```
+
+## Examples
+
+<CodeGroup>
+```bash Generate
+curl http://localhost:18080/openai/v1/images/generations \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-image", "prompt": "a lighthouse at dusk, watercolor", "n": 1}'
+```
+
+```bash Edit (multipart)
+curl http://localhost:18080/v1/images/edits \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F model=ail-image \
+  -F prompt="add a red umbrella" \
+  -F image=@photo.png
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:18080/openai/v1", api_key="YOUR_API_KEY")
+img = client.images.generate(model="ail-image", prompt="a lighthouse at dusk")
+print(img.data[0].url)
+```
+</CodeGroup>
+
+## Errors
+
+| Status | When |
+|---|---|
+| `400` | `model not specified and no 'image_gen' configured in intelligence.matrix`, `unknown provider for model <id>`, or the multipart `model` field could not be rewritten |
+| `401` | Missing or invalid API key |
+| `422` | A virtual model has no member that supports image output |
+| upstream status | Provider errors keep their status |

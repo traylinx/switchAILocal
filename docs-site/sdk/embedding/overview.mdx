@@ -1,200 +1,159 @@
 ---
-title: Embedding SDK Overview
-description: Local embedding generation for semantic search and intelligent routing
+title: Local Embedding Engine
+description: The on-device MiniLM embedding engine behind semantic routing, semantic cache and skill matching
 icon: brain
 ---
 
 ## Overview
 
-The switchAILocal embedding SDK provides ONNX-based local embedding generation using the MiniLM model. This enables advanced features like semantic caching, intelligent routing, and skill matching without requiring external API calls.
+switchAILocal ships an optional ONNX-based embedding engine (`internal/intelligence/embedding`) that turns text into 384-dimensional vectors on your machine. It is used **internally** by the Cortex intelligence features:
 
-## Key Features
+- **Semantic tier**: match a prompt to an intent (coding, reasoning, ...) by vector similarity instead of asking a router LLM
+- **Semantic cache**: reuse a previous routing decision for a near-identical prompt
+- **Skill matching**: pick a skill from `intelligence.skills.directory` and augment the prompt
 
-- **Local Processing**: All embeddings computed on-device using ONNX Runtime
-- **384-Dimensional Vectors**: Standard MiniLM-L6-v2 model output
-- **Fast Inference**: Optimized for real-time semantic matching (&lt;20ms)
-- **No External Dependencies**: Fully offline after model download
-- **Thread-Safe**: Concurrent embedding generation support
+<Warning>
+The local engine is **not** what serves `POST /v1/embeddings`. That endpoint is routed to a provider like any other request (Ollama, an `openai-compatibility` entry, a virtual model). See [Using embeddings](/sdk/embedding/usage).
+</Warning>
 
-## Architecture
+**Enable it when** you use `model: "auto"` / `"cortex"` routing through the Cortex Router plugin and want faster, deterministic intent matching or caching. You do not need it for normal requests.
+
+## How it works
 
 ```mermaid
 graph LR
-    A[Text Input] --> B[Tokenizer]
-    B --> C[ONNX Runtime]
-    C --> D[Mean Pooling]
-    D --> E[L2 Normalization]
-    E --> F[384D Vector]
+    A[Text] --> B[Lower-case + WordPiece tokenizer]
+    B --> C[ONNX Runtime: MiniLM]
+    C --> D[Mean pooling]
+    D --> E[L2 normalisation]
+    E --> F[384-dim vector]
 ```
 
-## When to Use Embeddings
+- Input is lower-cased, split on whitespace and punctuation, and tokenised with the model's `vocab.txt`; it is truncated to **256 tokens**.
+- The ONNX graph must accept `input_ids`, `attention_mask`, `token_type_ids` and return `last_hidden_state`.
+- Vectors are mean-pooled and L2-normalised, so cosine similarity is a dot product.
 
-### Semantic Tier (Phase 2)
-
-Match user queries to intents using embedding similarity instead of LLM classification:
-
-```yaml
-intelligence:
-  embedding:
-    enabled: true
-    model: "all-MiniLM-L6-v2"
-  semantic-tier:
-    enabled: true
-    confidence-threshold: 0.85
-```
-
-**Benefits:**
-- 10-20x faster than LLM classification
-- Deterministic results
-- No API costs
-
-### Semantic Caching
-
-Cache responses based on semantic similarity:
-
-```yaml
-intelligence:
-  semantic-cache:
-    enabled: true
-    similarity-threshold: 0.95
-    max-size: 10000
-```
-
-**Use Cases:**
-- Deduplicating similar queries
-- Reducing API costs
-- Faster response times for common questions
-
-### Skill Matching
-
-Match queries to domain-specific skills:
-
-```yaml
-intelligence:
-  skill-matching:
-    enabled: true
-    confidence-threshold: 0.80
-```
-
-**Example Skills:**
-- Language experts (Go, Python, TypeScript)
-- Infrastructure (Docker, Kubernetes)
-- Security, Testing, Debugging
-
-## Model Details
-
-### all-MiniLM-L6-v2
-
-| Property | Value |
-|----------|-------|
-| **Dimensions** | 384 |
-| **Max Sequence Length** | 256 tokens |
-| **Model Size** | ~23 MB (ONNX) |
-| **Vocabulary Size** | ~30,000 tokens |
-| **Performance** | ~5-10ms per embedding |
-
-### Download the Model
-
-```bash
-./scripts/download-embedding-model.sh
-```
-
-This downloads:
-- `model.onnx` - The ONNX model file
-- `vocab.txt` - The tokenizer vocabulary
-
-Files are stored in `~/.switchailocal/models/`.
-
-## Quick Start
+## Setup
 
 <Steps>
-  <Step title="Download Model">
+  <Step title="Install ONNX Runtime">
+    The engine loads the ONNX Runtime shared library at startup. It is looked up in this order:
+
+    1. `ONNXRUNTIME_LIB_PATH` environment variable
+    2. macOS: `/usr/local/lib/libonnxruntime.dylib`, `/opt/homebrew/lib/libonnxruntime.dylib`
+    3. Linux: `/usr/local/lib/libonnxruntime.so`, `/usr/lib/libonnxruntime.so`, `/usr/lib/x86_64-linux-gnu/libonnxruntime.so`
+    4. Windows: `C:\Program Files\onnxruntime\lib\onnxruntime.dll`
+    5. `~/.switchailocal/lib/` (same file name)
+
+    On macOS, `brew install onnxruntime` places it under `/opt/homebrew/lib`.
+  </Step>
+
+  <Step title="Download the model">
+    From the repository root:
+
     ```bash
     ./scripts/download-embedding-model.sh
     ```
+
+    This downloads `model.onnx` and `vocab.txt` for `all-MiniLM-L6-v2` from Hugging Face into `~/.switchailocal/models/all-MiniLM-L6-v2/`.
   </Step>
-  
-  <Step title="Enable in Config">
-    ```yaml
+
+  <Step title="Enable in config.yaml">
+    ```yaml config.yaml
     intelligence:
-      enabled: true
+      enabled: true              # master switch; nothing below starts without it
       embedding:
         enabled: true
-        model: "all-MiniLM-L6-v2"
+        model: "all-MiniLM-L6-v2"  # folder name under ~/.switchailocal/models/
+      semantic-tier:
+        enabled: true
+        confidence-threshold: 0.85
+      semantic-cache:
+        enabled: true
+        similarity-threshold: 0.95
+        max-size: 10000
+      skills:
+        enabled: true
+        directory: "plugins/cortex-router/skills"
+      skill-matching:
+        enabled: true
+        confidence-threshold: 0.80
     ```
   </Step>
-  
-  <Step title="Start Server">
-    ```bash
-    ./ail.sh start
-    ```
-  </Step>
-  
-  <Step title="Verify">
-    Check logs for:
-    ```
-    INFO Embedding engine initialized with model: model.onnx
+
+  <Step title="Restart and verify">
+    Intelligence settings are read at startup. Look for:
+
+    ```text
+    Embedding engine initialized with model: all-MiniLM-L6-v2
+    Semantic tier initialized with N intents
+    Semantic cache initialized (threshold: 0.95, max size: 10000)
     ```
   </Step>
 </Steps>
 
-## Configuration Options
+To route requests through these features, also enable the Cortex Router Lua plugin; see [Cortex Router](/intelligent-systems/cortex-router).
 
-```yaml
-intelligence:
-  embedding:
-    enabled: true
-    model: "all-MiniLM-L6-v2"  # Model name
-    model-path: "~/.switchailocal/models/model.onnx"  # Override path
-    vocab-path: "~/.switchailocal/models/vocab.txt"   # Override vocab
-    shared-library: ""  # ONNX Runtime library (auto-detected)
-```
+## Configuration reference
 
-## Performance Characteristics
+| Key | Default | Notes |
+|-----|---------|-------|
+| `intelligence.enabled` | `false` | Master switch for every intelligence feature |
+| `intelligence.embedding.enabled` | `false` | Load the engine |
+| `intelligence.embedding.model` | `all-MiniLM-L6-v2` | Directory name under `~/.switchailocal/models/` containing `model.onnx` and `vocab.txt` |
+| `intelligence.semantic-tier.confidence-threshold` | `0.85` | Minimum similarity to accept an intent match |
+| `intelligence.semantic-cache.similarity-threshold` | `0.95` | Minimum similarity for a cache hit |
+| `intelligence.semantic-cache.max-size` | `10000` | Entries before LRU eviction |
+| `intelligence.skill-matching.confidence-threshold` | `0.80` | Minimum similarity to attach a skill |
+| `intelligence.skills.directory` | `plugins/cortex-router/skills` | Skill folders (`SKILL.md`) |
 
-### Latency
+There are no `model-path`, `vocab-path` or `shared-library` keys: model files always come from `~/.switchailocal/models/<model>/` and the runtime library from the lookup list above.
 
-| Operation | Typical Latency |
-|-----------|----------------|
-| Single embedding | 5-10ms |
-| Batch (10 texts) | 30-50ms |
-| Cosine similarity | &lt;1ms |
+## Defaults and limits
 
-### Memory Usage
+| Property | Value |
+|----------|-------|
+| Output dimension | 384 (fixed in code) |
+| Max input length | 256 tokens (longer input is truncated) |
+| Batch processing | Sequential (one inference per text) |
+| Thread safety | Safe for concurrent `Embed` calls |
+| Network use | None after the model files are downloaded |
 
-- **Model Loading**: ~50 MB
-- **Per Request**: ~1-2 MB (temporary)
-- **Cached Embeddings**: 384 floats × 4 bytes = 1.5 KB per vector
+Because the dimension is fixed at 384, only models with a 384-wide hidden state and a BERT WordPiece vocabulary work as drop-in replacements. See [Custom embedding models](/sdk/embedding/custom-providers).
 
-### Accuracy
+## Troubleshooting
 
-- **Semantic Similarity**: 0.0 (unrelated) to 1.0 (identical)
-- **Typical Intent Match**: >0.85 for correct matches
-- **Typical Skill Match**: >0.80 for relevant skills
-
-## Comparison with Alternatives
-
-| Feature | switchAILocal Embedding | OpenAI Embedding API | SentenceTransformers |
-|---------|------------------------|----------------------|----------------------|
-| **Cost** | Free (local) | $0.0001/1K tokens | Free (local) |
-| **Latency** | 5-10ms | 50-200ms (network) | 10-20ms |
-| **Privacy** | 100% local | Data sent to API | 100% local |
-| **Dimensions** | 384 | 1536 (ada-002) | Varies |
-| **Dependencies** | ONNX Runtime only | Internet required | Python + PyTorch |
+<AccordionGroup>
+  <Accordion title="Embedding model not found: all-MiniLM-L6-v2">
+    `~/.switchailocal/models/all-MiniLM-L6-v2/model.onnx` is missing. Run `./scripts/download-embedding-model.sh`, or make sure `intelligence.embedding.model` matches the folder name.
+  </Accordion>
+  <Accordion title="Failed to initialize embedding engine: failed to initialize ONNX runtime">
+    The ONNX Runtime library was not found or does not match your CPU architecture. Set `ONNXRUNTIME_LIB_PATH` to the full path of `libonnxruntime.dylib` / `.so` / `.dll`.
+  </Accordion>
+  <Accordion title="Embedding engine not available, semantic tier will be disabled">
+    The engine failed to load (see the warning just before it), or `intelligence.embedding.enabled` is `false`. Semantic tier and semantic cache both depend on the engine.
+  </Accordion>
+  <Accordion title="Failed to initialize semantic tier: failed to read intents file">
+    The semantic tier loads intents from `<parent of intelligence.skills.directory>/internal/intelligence/semantic/intents.yaml`. With the default skills directory that is `plugins/cortex-router/internal/intelligence/semantic/intents.yaml`. Copy `internal/intelligence/semantic/intents.yaml` from the source tree to that location (or adjust `skills.directory`) and restart.
+  </Accordion>
+  <Accordion title="Nothing happens even though everything loaded">
+    The engine only influences requests that go through the Cortex Router plugin (`model: "auto"` or `"cortex"` with `plugin.enabled: true` and `cortex-router` in `enabled-plugins`). Explicit model names bypass it.
+  </Accordion>
+</AccordionGroup>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Usage Guide" icon="code" href="/sdk/embedding/usage">
-    Learn how to use the embedding SDK
+  <Card title="Using embeddings" icon="code" href="/sdk/embedding/usage">
+    `/v1/embeddings` for your application, and the engine API
   </Card>
-  <Card title="Custom Providers" icon="plug" href="/sdk/embedding/custom-providers">
-    Integrate custom embedding models
+  <Card title="Custom embedding models" icon="plug" href="/sdk/embedding/custom-providers">
+    Swap the local model or use provider embeddings
   </Card>
-  <Card title="Semantic Tier" icon="brain" href="/features/intelligent-routing">
-    Configure semantic intent matching
+  <Card title="Cortex Router" icon="brain" href="/intelligent-systems/cortex-router">
+    How semantic tier and cache fit into routing
   </Card>
-  <Card title="Semantic Cache" icon="database" href="/features/semantic-cache">
-    Enable semantic caching
+  <Card title="Intelligent routing examples" icon="route" href="/examples/intelligent-routing">
+    End-to-end configuration
   </Card>
 </CardGroup>
