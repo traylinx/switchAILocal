@@ -1,504 +1,262 @@
 ---
 title: Multi-Provider Patterns
-description: Advanced patterns for using multiple AI providers with intelligent failover
+description: Credential rotation, cross-provider failover, weighted pools and client-side routing patterns
 icon: diagram-project
 ---
 
 ## Overview
 
-One of switchAILocal's most powerful features is seamless multi-provider support. This guide demonstrates advanced patterns for leveraging multiple providers simultaneously.
+switchAILocal can spread and fail over traffic at three levels. Pick the lowest level that solves your problem; each one is configured in `config.yaml` and needs no client changes.
 
-## Tiered Failover Strategy
+| Level | You configure | switchAILocal does |
+|-------|---------------|--------------------|
+| Credentials of one provider | Several keys or logins for the same provider | Rotates (`round-robin` / `fill-first`), parks failing keys in cooldown, tries the next key |
+| Providers that share a model ID | The same alias on several providers | Rotates the starting provider, fails over on retryable errors |
+| Virtual model | A named pool of `provider` + `model` members | Weighted selection by request capability, optional one-shot fallback |
 
-Prioritize free/cheap providers, fall back to premium ones:
+The last sections show patterns that stay in your client code (tiered waterfall, privacy routing, A/B tests). Details on cooldowns and error classes are in [Failover](/advanced/failover).
 
-### Configuration
+## 1. Several keys for one provider
 
-```yaml
-# config.yaml
-ollama:
-  enabled: true
-  base-url: "http://localhost:11434"
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "YOUR_GEMINI_KEY_1"
+  - api-key: "YOUR_GEMINI_KEY_2"
 
-gemini:
-  api-key: "your-gemini-api-key"
-
-switchai:
-  api-key: "your-switchai-api-key"
+openai-compatibility:
+  - name: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "YOUR_GROQ_KEY_1"
+      - api-key: "YOUR_GROQ_KEY_2"
+    models:
+      - name: "llama-3.3-70b-versatile"
+        alias: "llama-70b"
 
 routing:
-  strategy: "fill-first"  # Try providers in order
-  fallback-enabled: true
+  strategy: "round-robin"   # or "fill-first": use the first key until it cools down
 ```
-
-### Usage Pattern
 
 ```python
 from openai import OpenAI
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="sk-test-123")
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-# Tier 1: Try local Ollama first (free, private)
-try:
-    completion = client.chat.completions.create(
-        model="ollama:llama3.2",
-        messages=[{"role": "user", "content": "Explain recursion"}],
-        timeout=5,  # Fast timeout for local
-    )
-    print("✅ Used Ollama (local, free)")
-except Exception as e:
-    print(f"❌ Ollama failed: {e}")
-    
-    # Tier 2: Fall back to Gemini Flash (cheap, fast)
-    try:
-        completion = client.chat.completions.create(
-            model="switchai:switchai-fast",
-            messages=[{"role": "user", "content": "Explain recursion"}],
-        )
-        print("✅ Used switchAI Fast (cheap)")
-    except Exception as e:
-        print(f"❌ switchAI Fast failed: {e}")
-        
-        # Tier 3: Last resort - premium model
-        completion = client.chat.completions.create(
-            model="switchai:switchai-reasoner",
-            messages=[{"role": "user", "content": "Explain recursion"}],
-        )
-        print("✅ Used switchAI Reasoner (premium)")
-
-print(completion.choices[0].message.content)
+for i in range(4):
+    client.chat.completions.create(model="llama-70b", messages=[{"role": "user", "content": f"ping {i}"}])
 ```
 
-## Provider Pool with Round-Robin
+Requests alternate between the two Groq keys. A key that returns 429 is skipped until its `Retry-After` (or exponential backoff) expires; within one request the other key is tried immediately. `routing.strategy` is hot-reloaded.
 
-Balance load across multiple providers:
+## 2. One model ID, several providers
+
+If two providers register the same model ID, both serve it:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "deepseek"
+    base-url: "https://api.deepseek.com/v1"
+    api-key-entries:
+      - api-key: "YOUR_DEEPSEEK_KEY"
+    models:
+      - name: "deepseek-chat"
+        alias: "fast"
+  - name: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "YOUR_GROQ_KEY"
+    models:
+      - name: "llama-3.3-70b-versatile"
+        alias: "fast"
+```
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Authorization: Bearer sk-test-123" -H "Content-Type: application/json" \
+  -d '{"model": "fast", "messages": [{"role": "user", "content": "One-line summary of TCP"}]}'
+```
+
+- The starting provider rotates per request.
+- On 5xx, 408, 429, 401/403, 402, timeouts or a pre-first-byte stream stall, the next provider is tried. Other 400/404/422 errors are returned unchanged.
+- An explicit prefix (`ollama:llama3.2`) pins a request to one provider, so no failover happens.
+
+## 3. Weighted pool with a virtual model
+
+Use a [virtual model](/advanced/virtual-models) when you want a stable public name, explicit traffic shares, and capability-aware routing (for example only some members support tools or images):
+
+```yaml config.yaml
+virtual-models:
+  team-chat:
+    expose: true
+    fallback: true                # one retry on another member for 402/408/429/5xx
+    members:
+      - id: groq-llama
+        provider: groq
+        model: llama-3.3-70b-versatile
+        weight: 3
+        capabilities:
+          operations: [chat, chat_text_tools]
+          input: [text]
+          tools: true
+      - id: local-llama
+        provider: ollama
+        model: llama3.2
+        weight: 1
+        capabilities:
+          operations: [chat]
+          input: [text]
+```
 
 ```python
-from openai import OpenAI
-import itertools
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-# Define provider pool
-providers = itertools.cycle([
-    "geminicli:gemini-2.5-pro",
-    "switchai:switchai-fast",
-    "ollama:llama3.2",
-])
-
-# Make requests using round-robin
-for i in range(6):
-    model = next(providers)
-    print(f"Request {i+1} -> {model}")
-    
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": f"Say 'Hello from request {i+1}'"}],
-    )
-    
-    print(f"Response: {completion.choices[0].message.content}\n")
+resp = client.chat.completions.create(model="team-chat", messages=[{"role": "user", "content": "Hi"}])
+print(resp.model)  # always "team-chat"
 ```
 
-**Output:**
-```
-Request 1 -> geminicli:gemini-2.5-pro
-Response: Hello from request 1
+Plain chat goes 3:1 between Groq and Ollama; requests with `tools` only go to `groq-llama`. If no member fits, the request fails with `422 no_eligible_backend`.
 
-Request 2 -> switchai:switchai-fast
-Response: Hello from request 2
+## 4. Let switchAILocal choose: auto-routing
 
-Request 3 -> ollama:llama3.2
-Response: Hello from request 3
-...
-```
+`model: "auto"` (or `auto:coding`, `auto:fast`, ...) scores the available models on availability, quota, latency and success rate and returns a winner plus fallbacks. The response carries `X-Auto-Routed`, `X-Selected-Model` and `X-Selected-Provider` headers. See [Intelligent routing](/examples/intelligent-routing).
 
-## Cost Optimization Pattern
+## Client-side patterns
 
-Route based on task complexity:
+These patterns are application logic. They are useful when the decision depends on your own business rules.
+
+### Tiered waterfall (local first, then cloud)
 
 ```python
-from openai import OpenAI
+from openai import APIStatusError, APIConnectionError
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
+TIERS = ["ollama:llama3.2", "fast", "sonnet"]   # local, cheap cloud alias, premium alias
 
-def get_optimal_model(task_type: str, content_length: int) -> str:
-    """Select the most cost-effective model for the task."""
-    
-    # Simple queries -> fast, cheap model
-    if task_type == "simple" or content_length < 100:
-        return "switchai:switchai-fast"
-    
-    # Code generation -> coding-optimized model
-    elif task_type == "coding":
-        return "geminicli:gemini-2.5-pro"
-    
-    # Complex reasoning -> premium model
-    elif task_type == "reasoning" or content_length > 1000:
-        return "switchai:switchai-reasoner"
-    
-    # Default: balanced model
-    else:
-        return "switchai:switchai-chat"
-
-# Example usage
-tasks = [
-    {"type": "simple", "content": "What is 2+2?"},
-    {"type": "coding", "content": "Write a binary search algorithm in Python"},
-    {"type": "reasoning", "content": "Analyze the ethical implications of AI in healthcare"},
-]
-
-for task in tasks:
-    model = get_optimal_model(task["type"], len(task["content"]))
-    print(f"\nTask: {task['type']}")
-    print(f"Model: {model}")
-    
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": task["content"]}],
-    )
-    
-    print(f"Response: {completion.choices[0].message.content[:100]}...")
+def ask(prompt: str) -> str:
+    last = None
+    for model in TIERS:
+        try:
+            r = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=30,
+            )
+            return r.choices[0].message.content
+        except (APIStatusError, APIConnectionError) as e:
+            last = e
+    raise last
 ```
 
-## Privacy-Aware Routing
+<Tip>
+If you always want the same order, a virtual model with `fallback: true` or a shared alias (pattern 2) does this server-side with less code. A client-side waterfall is still useful when tiers differ in cost and you want strict priority instead of rotation.
+</Tip>
 
-Keep sensitive data local:
+### Privacy-aware routing
+
+Keep sensitive prompts on the local machine:
 
 ```python
-from openai import OpenAI
 import re
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-def contains_sensitive_data(text: str) -> bool:
-    """Detect if text contains sensitive information."""
-    patterns = [
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
-        r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
-        r'\b\d{16}\b',  # Credit card
-        r'\b(password|secret|api[_-]?key)\b',  # Keywords
-    ]
-    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
-
-def route_securely(content: str) -> str:
-    """Route to local model if content is sensitive."""
-    if contains_sensitive_data(content):
-        print("🔒 Sensitive data detected -> using local model")
-        return "ollama:llama3.2"
-    else:
-        print("✅ No sensitive data -> using cloud model")
-        return "switchai:switchai-fast"
-
-# Example usage
-queries = [
-    "What is machine learning?",
-    "My email is john.doe@example.com and I need help",
-    "Explain quantum computing",
+SENSITIVE = [
+    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),                       # US SSN
+    re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b"),                  # e-mail
+    re.compile(r"(?i)\b(password|api[_-]?key|secret)\b"),
 ]
 
-for query in queries:
-    model = route_securely(query)
-    print(f"Query: {query[:50]}...")
-    print(f"Model: {model}\n")
-    
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": query}],
-    )
+def route(prompt: str) -> str:
+    return "ollama:llama3.2" if any(p.search(prompt) for p in SENSITIVE) else "team-chat"
+
+prompt = "My e-mail is jane@example.com, draft a reply to my landlord"
+client.chat.completions.create(model=route(prompt), messages=[{"role": "user", "content": prompt}])
 ```
 
-## A/B Testing Pattern
+The Cortex Router plugin has a similar built-in rule: with `model: "auto"` it sends prompts containing an e-mail address to the `secure` slot of `intelligence.matrix`. For redaction instead of rerouting, see the Lua privacy-firewall example in the repository (`examples/middleware/privacy-firewall`) and [Lua plugins](/advanced/lua-plugins).
 
-Compare responses from multiple providers:
+### A/B comparison
 
 ```python
-from openai import OpenAI
 import time
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
+def compare(models, prompt, runs=3):
+    for model in models:
+        times = []
+        for _ in range(runs):
+            t = time.perf_counter()
+            client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], max_tokens=200)
+            times.append(time.perf_counter() - t)
+        print(f"{model:24s} avg {sum(times)/len(times):.2f}s")
 
-def ab_test_providers(prompt: str, providers: list) -> dict:
-    """Test the same prompt across multiple providers."""
-    results = {}
-    
-    for provider in providers:
-        start = time.time()
-        
-        try:
-            completion = client.chat.completions.create(
-                model=provider,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            
-            elapsed = (time.time() - start) * 1000
-            results[provider] = {
-                "success": True,
-                "response": completion.choices[0].message.content,
-                "latency_ms": elapsed,
-                "tokens": completion.usage.total_tokens if completion.usage else 0,
-            }
-        except Exception as e:
-            results[provider] = {
-                "success": False,
-                "error": str(e),
-            }
-    
-    return results
-
-# Run A/B test
-prompt = "Explain the concept of recursion in programming"
-providers = [
-    "geminicli:gemini-2.5-pro",
-    "ollama:llama3.2",
-    "switchai:switchai-fast",
-]
-
-results = ab_test_providers(prompt, providers)
-
-# Display results
-for provider, result in results.items():
-    print(f"\n{'='*60}")
-    print(f"Provider: {provider}")
-    
-    if result["success"]:
-        print(f"✅ Success")
-        print(f"Latency: {result['latency_ms']:.0f}ms")
-        print(f"Tokens: {result['tokens']}")
-        print(f"Response: {result['response'][:150]}...")
-    else:
-        print(f"❌ Failed: {result['error']}")
+compare(["ollama:llama3.2", "llama-70b", "sonnet"], "Explain recursion in two sentences.")
 ```
 
-## Multi-Provider Consensus
+For production traffic splits use weights in a virtual model instead.
 
-Get answers from multiple providers and choose the best:
+### Consensus across providers
 
 ```python
-from openai import OpenAI
 from collections import Counter
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-def get_consensus(prompt: str, providers: list) -> dict:
-    """Get responses from multiple providers and find consensus."""
-    responses = []
-    
-    for provider in providers:
-        try:
-            completion = client.chat.completions.create(
-                model=provider,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,  # Low temp for consistency
-            )
-            responses.append(completion.choices[0].message.content)
-        except Exception as e:
-            print(f"⚠️  {provider} failed: {e}")
-    
-    # Simple consensus: most common response
-    if responses:
-        response_counts = Counter(responses)
-        consensus_response = response_counts.most_common(1)[0][0]
-        confidence = response_counts.most_common(1)[0][1] / len(responses)
-        
-        return {
-            "consensus": consensus_response,
-            "confidence": confidence,
-            "total_responses": len(responses),
-            "all_responses": responses,
-        }
-    
-    return None
-
-# Example: Get consensus on a factual question
-prompt = "What is the capital of France?"
-providers = [
-    "geminicli:gemini-2.5-pro",
-    "ollama:llama3.2",
-    "switchai:switchai-fast",
-]
-
-result = get_consensus(prompt, providers)
-
-if result:
-    print(f"Consensus: {result['consensus']}")
-    print(f"Confidence: {result['confidence']:.1%}")
-    print(f"Responses: {result['total_responses']}")
+def consensus(question: str, models=("ollama:llama3.2", "llama-70b", "sonnet")) -> str:
+    answers = []
+    for m in models:
+        r = client.chat.completions.create(
+            model=m,
+            messages=[{"role": "user", "content": question + " Answer with one word."}],
+            temperature=0,
+        )
+        answers.append(r.choices[0].message.content.strip().lower())
+    return Counter(answers).most_common(1)[0][0]
 ```
 
-## Geographic Distribution
+## Checking provider health
 
-Route to providers based on user location:
+```bash
+# Providers with registered models, their type (api/cli), mode (local/online) and model counts
+curl "http://localhost:18080/v1/providers?filter=active" -H "Authorization: Bearer sk-test-123"
 
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
-
-def get_regional_model(region: str) -> str:
-    """Select provider based on geographic region."""
-    regional_routing = {
-        "us-east": "openai:gpt-4",
-        "us-west": "openai:gpt-4",
-        "eu": "gemini:gemini-2.5-pro",
-        "asia": "claude:claude-3-5-sonnet",
-        "local": "ollama:llama3.2",
-    }
-    return regional_routing.get(region, "switchai:switchai-fast")
-
-# Example usage
-users = [
-    {"id": "user1", "region": "us-east"},
-    {"id": "user2", "region": "eu"},
-    {"id": "user3", "region": "local"},
-]
-
-for user in users:
-    model = get_regional_model(user["region"])
-    print(f"User: {user['id']} (Region: {user['region']}) -> {model}")
-    
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": "Hello!"}],
-    )
+# Background health checks (requires heartbeat.enabled and a management key)
+curl http://localhost:18080/v0/management/heartbeat/status -H "Authorization: Bearer YOUR_MANAGEMENT_KEY"
 ```
 
-## Provider Health Monitoring
+See [Heartbeat](/intelligent-systems/heartbeat) for proactive monitoring.
 
-Monitor provider availability and automatically failover:
+## Defaults and limits
 
-```python
-from openai import OpenAI
-import time
-from datetime import datetime
+| Behaviour | Default |
+|-----------|---------|
+| Credential selection | `round-robin` |
+| Cooldown-wait retry rounds | off until `max-retry-interval` > 0 (`request-retry` sets the round count) |
+| Circuit breaker | per provider; see `performance.circuit-breaker` |
+| Virtual-model fallback | off; at most one extra member when `fallback: true` |
+| Streams | failover only before the first chunk is sent |
 
-client = OpenAI(
-    base_url="http://localhost:18080/v1",
-    api_key="sk-test-123",
-)
+## Troubleshooting
 
-class ProviderHealthMonitor:
-    def __init__(self, providers: list):
-        self.providers = providers
-        self.health = {p: {"status": "unknown", "last_check": None} for p in providers}
-    
-    def check_health(self, provider: str) -> bool:
-        """Check if a provider is healthy."""
-        try:
-            start = time.time()
-            completion = client.chat.completions.create(
-                model=provider,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=10,
-                timeout=5,
-            )
-            latency = (time.time() - start) * 1000
-            
-            self.health[provider] = {
-                "status": "healthy",
-                "latency_ms": latency,
-                "last_check": datetime.now(),
-            }
-            return True
-        except Exception as e:
-            self.health[provider] = {
-                "status": "unhealthy",
-                "error": str(e),
-                "last_check": datetime.now(),
-            }
-            return False
-    
-    def get_healthy_provider(self) -> str:
-        """Get the first healthy provider."""
-        for provider in self.providers:
-            if self.check_health(provider):
-                return provider
-        raise Exception("No healthy providers available")
-    
-    def get_status_report(self) -> dict:
-        """Get health status of all providers."""
-        return self.health
-
-# Initialize monitor
-providers = [
-    "ollama:llama3.2",
-    "geminicli:gemini-2.5-pro",
-    "switchai:switchai-fast",
-]
-
-monitor = ProviderHealthMonitor(providers)
-
-# Use the first healthy provider
-try:
-    healthy_provider = monitor.get_healthy_provider()
-    print(f"✅ Using healthy provider: {healthy_provider}")
-    
-    completion = client.chat.completions.create(
-        model=healthy_provider,
-        messages=[{"role": "user", "content": "Hello!"}],
-    )
-except Exception as e:
-    print(f"❌ All providers unhealthy: {e}")
-
-# Display health report
-print("\nProvider Health Report:")
-for provider, status in monitor.get_status_report().items():
-    print(f"  {provider}: {status['status']}")
-    if status['status'] == 'healthy':
-        print(f"    Latency: {status['latency_ms']:.0f}ms")
-```
-
-## Best Practices
-
-<Tip>
-**Implement Timeouts** - Set appropriate timeouts for each provider tier to enable fast failover.
-</Tip>
-
-<Tip>
-**Cache Provider Status** - Monitor provider health periodically rather than on every request.
-</Tip>
-
-<Tip>
-**Log Provider Usage** - Track which providers are being used to optimize your configuration.
-</Tip>
-
-<Warning>
-**Avoid Cascading Failures** - Implement circuit breakers to prevent overwhelming failing providers.
-</Warning>
+<AccordionGroup>
+  <Accordion title="Traffic never reaches the second key">
+    With `fill-first`, the second key is only used while the first is cooling down. Switch to `round-robin` for even spread.
+  </Accordion>
+  <Accordion title="No failover between two providers">
+    Both must register the **same** model ID. Check that the alias strings match exactly, and that you did not use a provider prefix in the request.
+  </Accordion>
+  <Accordion title="429 model_cooldown">
+    All credentials for that model are cooling down. Add credentials, add another provider with the same alias, or wait for `Retry-After`.
+  </Accordion>
+  <Accordion title="422 no_eligible_backend from a virtual model">
+    No member declares the capability this request needs (tools, images, tool history). See [Virtual models](/advanced/virtual-models).
+  </Accordion>
+</AccordionGroup>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Basic Usage" icon="rocket" href="/examples/basic-usage">
-    Learn the fundamentals
+  <Card title="Failover" icon="shield" href="/advanced/failover">
+    Cooldowns, error classes, circuit breaker
   </Card>
-  <Card title="Intelligent Routing" icon="brain" href="/examples/intelligent-routing">
-    Use Cortex Router for automatic routing
+  <Card title="Virtual models" icon="layer-group" href="/advanced/virtual-models">
+    Pools and capabilities
   </Card>
-  <Card title="Streaming" icon="stream" href="/examples/streaming">
-    Real-time streaming responses
+  <Card title="Intelligent routing" icon="brain" href="/examples/intelligent-routing">
+    auto and Cortex
   </Card>
-  <Card title="Configuration" icon="gear" href="/configuration">
-    Configure provider settings
+  <Card title="Provider setup" icon="plug" href="/guides/setup-providers">
+    Configure providers
   </Card>
 </CardGroup>

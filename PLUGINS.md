@@ -1,265 +1,69 @@
-# Lua Plugin System Manual
+# Lua Plugin System
 
-The Lua Plugin System allows you to intercept and modify requests and responses in real-time. This is the foundation of the **Cortex Router** intelligent routing engine.
+switchAILocal can run sandboxed Lua plugins on every request. A plugin can rewrite the model, pin a provider, or edit the JSON body before routing (`on_request`), and observe successful non-streaming responses (`on_response`). The bundled **Cortex Router** plugin uses this to implement `model: "auto"`.
 
-## Overview
+Full manual: [docs-site/advanced/lua-plugins.mdx](docs-site/advanced/lua-plugins.mdx) (published as "Lua Plugin System" in the docs site).
 
-The plugin system enables:
-- **Request/Response Interception**: Modify requests before they reach providers
-- **Intelligent Routing**: Route requests to optimal models based on content analysis
-- **Skill-Based Augmentation**: Enhance prompts with domain-specific expertise
-- **Multi-Tier Routing**: Reflex → Semantic → Cognitive routing with verification
-
-## Quick Start
-
-### 1. Enable Plugins
-
-Plugins are **explicitly enabled** in `config.yaml`:
+## Enable
 
 ```yaml
 plugin:
   enabled: true
-  plugin-dir: "./plugins"
-  enabled-plugins:
-    - "cortex-router"  # The intelligent routing plugin
+  plugin-dir: "./plugins"   # no default; set it explicitly
+  enabled-plugins:          # only listed plugins are loaded
+    - "cortex-router"
 ```
 
-### 2. Enable Intelligence Services (Optional)
+Plugins are loaded once at startup; restart after changing them. In the Docker image the bundled plugins are at `/app/plugins`.
 
-For Phase 2 features (semantic matching, skill matching, cascading):
-
-```yaml
-intelligence:
-  enabled: true
-  
-  # Phase 2 features
-  discovery:
-    enabled: true
-  embedding:
-    enabled: true
-  semantic-tier:
-    enabled: true
-  skill-matching:
-    enabled: true
-```
-
-See [CORTEX_ROUTER_PHASE2.md](docs/CORTEX_ROUTER_PHASE2.md) for full configuration options.
-
-## Plugin Structure
-
-Plugins are now **folder-based** with a standardized structure:
+## Layout
 
 ```
 plugins/
-└── my-plugin/
-    ├── schema.lua      # Plugin metadata
-    ├── handler.lua     # Plugin logic
-    └── skills/         # Optional: Domain-specific skills
-        └── my-skill/
-            └── SKILL.md
+└── my-plugin/          # lower-case slug, must equal schema.name
+    ├── schema.lua      # returns { name = "my-plugin", display_name = "...", version = "..." }
+    └── handler.lua     # returns a table with on_request / on_response methods
 ```
 
-### schema.lua (Metadata)
-
-Defines the plugin's identity:
-
 ```lua
-return {
-    name = "my-plugin",              -- Must match folder name
-    display_name = "My Plugin",      -- Human-readable name
-    version = "1.0.0",
-    description = "What this plugin does"
-}
-```
-
-### handler.lua (Logic)
-
-Implements the plugin hooks:
-
-```lua
-local Schema = require("schema")
-
+-- handler.lua
 local Plugin = {}
 
 function Plugin:on_request(req)
-    -- Modify request before it's sent
-    -- req.model, req.body, req.metadata
-    return req  -- or nil to skip
+    -- req.model, req.provider (only for "provider:model" requests),
+    -- req.body (JSON string), req.metadata, req.api_key (when known)
+    if req.provider and req.provider ~= "" then return nil end
+    if #req.body > 200000 then
+        req.model = "deepseek-v4-pro"
+        return req          -- model / provider / body / metadata are read back
+    end
+    return nil              -- nil = unchanged
 end
 
 function Plugin:on_response(res)
-    -- Process response after it's received
-    -- res.body, res.model, res.metadata
-    return res  -- or nil to skip
+    -- observation only: return value is ignored, not called for streams
+    switchai.log("served " .. tostring(res.model) .. " via " .. tostring(res.provider))
 end
 
 return Plugin
 ```
 
-## The Cortex Router Plugin
+## Host API (summary)
 
-The **cortex-router** plugin implements intelligent multi-tier routing:
+- Core: `switchai.log`, `switchai.classify` (returns raw router-model text), `switchai.json_decode`, `switchai.json_encode`, `switchai.json_inject`, `switchai.get_cache` / `switchai.set_cache`, `switchai.config` (`router_model`, `router_fallback`, `skills_path`, `matrix`), `switchai.scan_skills`, `switchai.exec`, `switchai.mcp_call`.
+- Intelligence (needs `intelligence.enabled: true`): `get_available_models`, `get_dynamic_matrix`, `is_model_available`, `get_skills`, `embed`, `cosine_similarity`, `semantic_match_intent`, `match_skill`, `cache_lookup`, `cache_store`, `cache_metrics`, `parse_confidence`, `verify_intent`, `evaluate_response`, `get_cascade_metrics`, `get_intelligence_metrics`, `record_feedback`.
 
-### Routing Tiers
+## Sandbox
 
-1. **Cache Tier** (<1ms): Semantic cache lookup
-2. **Reflex Tier** (<1ms): Fast pattern matching (PII, code, images)
-3. **Semantic Tier** (<20ms): Embedding-based intent matching
-4. **Cognitive Tier** (200-500ms): LLM classification with confidence
-5. **Verification**: Cross-validates results
-6. **Cascade**: Quality-based model escalation
+- Libraries: base, `table`, `string`, `math`, `package`. No `io`, no `os.execute`; `os` only has `date` and `time`. `dofile` / `loadfile` are removed.
+- `switchai.exec` allowlist: `ls`, `cat`, `echo`, `date`, `git` (read-only subcommands: `status`, `diff`, `log`, `show`, `branch`, `ls-files`, `grep`), `whoami`, `pwd`, `grep`. 5 s timeout, 8 KB output cap.
+- `switchai.mcp_call` launchers: `uvx`, `npx`, `node`, `python3`. 30 s timeout.
+- Plugins see request bodies and provider API keys. Only enable plugins you have read.
 
-### Skills System
+## Bundled plugins
 
-The Cortex Router includes 21 pre-built skills for domain-specific routing:
-
-- `go-expert`, `python-expert`, `typescript-expert` - Language-specific expertise
-- `security-expert`, `devops-expert`, `docker-expert` - Infrastructure skills
-- `frontend-expert`, `vision-expert`, `testing-expert` - Development skills
-- And more...
-
-See [CORTEX_ROUTER_PHASE2.md](docs/CORTEX_ROUTER_PHASE2.md) for the complete list.
-
-## The Cortex Answer Schema Plugin
-
-The **cortex-answer-schema** plugin (unrelated to the Cortex Router — the name
-refers to the [Cortex](https://github.com/traylinx/cortex) grounded-answer product)
-is a tightly-scoped compatibility shim. It fires only on requests that carry a
-Cortex answer/grounding marker and injects the classification vocabulary the Cortex
-prompt omits, corrects the abstention shape, and sets `Reasoning: low` so a small
-model's generate + verify chain fits inside Cortex's 10-second read-lease.
-
-It is inert for all other traffic and should be removed once the Cortex prompt
-carries its own vocabulary. See
-[Cortex Answer Schema](docs-site/advanced/cortex-answer-schema.mdx) and
-[plugins/cortex-answer-schema/README.md](plugins/cortex-answer-schema/README.md).
-
-## The `switchai` Host API
-
-Plugins access host functionality through the `switchai` bridge:
-
-### Core Functions (Phase 1)
-
-```lua
--- Logging
-switchai.log(message)
-
--- LLM Classification
-local json, err = switchai.classify(prompt)
-
--- Configuration
-local router_model = switchai.config.router_model
-local matrix = switchai.config.matrix
-
--- Cache
-switchai.set_cache(key, value)
-local value = switchai.get_cache(key)
-
--- Prompt Injection
-local new_body = switchai.json_inject(req.body, system_prompt)
-```
-
-### Intelligence Functions (Phase 2)
-
-```lua
--- Model Discovery
-local models, err = switchai.get_available_models()
-local available = switchai.is_model_available("openai:gpt-4")
-
--- Dynamic Matrix
-local matrix, err = switchai.get_dynamic_matrix()
-
--- Embedding
-local embedding, err = switchai.embed(text)
-local similarity = switchai.cosine_similarity(vec_a, vec_b)
-
--- Semantic Matching
-local result, err = switchai.semantic_match_intent(query)
--- Returns: {intent, confidence, latency_ms}
-
--- Skill Matching
-local result, err = switchai.match_skill(query)
--- Returns: {skill: {id, name, system_prompt}, confidence}
-
--- Semantic Cache
-local cached, err = switchai.cache_lookup(query)
-switchai.cache_store(query, decision, metadata)
-
--- Confidence Scoring
-local decision, err = switchai.parse_confidence(json_response)
--- Returns: {intent, complexity, confidence}
-
--- Verification
-local match = switchai.verify_intent(intent1, intent2)
-
--- Cascade Evaluation
-local eval, err = switchai.evaluate_response(response, current_tier)
--- Returns: {should_cascade, next_tier, quality_score, reason, signals}
-
--- Feedback
-switchai.record_feedback({
-    query = "...",
-    intent = "coding",
-    selected_model = "...",
-    success = true
-})
-```
-
-## Creating Custom Plugins
-
-### 1. Create Plugin Directory
-
-```bash
-mkdir -p plugins/my-plugin
-```
-
-### 2. Create schema.lua
-
-```lua
-return {
-    name = "my-plugin",
-    display_name = "My Custom Plugin",
-    version = "1.0.0",
-    description = "Custom routing logic"
-}
-```
-
-### 3. Create handler.lua
-
-```lua
-local Schema = require("schema")
-
-local Plugin = {}
-
-function Plugin:on_request(req)
-    switchai.log("Processing request for: " .. req.model)
-    
-    -- Your custom logic here
-    
-    return req
-end
-
-return Plugin
-```
-
-### 4. Enable in config.yaml
-
-```yaml
-plugin:
-  enabled: true
-  enabled-plugins:
-    - "my-plugin"
-```
-
-## Security & Isolation
-
-- **Sandboxed Execution**: Plugins run in a restricted Lua environment
-- **No Direct I/O**: Cannot access network or filesystem directly
-- **Allowlisted Commands**: Only safe commands available via `switchai.exec()`
-- **Timeout Protection**: Execution bound by request context timeout
-- **No Dangerous Globals**: `dofile`, `loadfile`, `os.execute` are disabled
-
-## Documentation
-
-- [CORTEX_ROUTER_PHASE2.md](docs/CORTEX_ROUTER_PHASE2.md) - Full Phase 2 feature guide
-- [CORTEX_ROUTER_QA_REPORT.md](docs/CORTEX_ROUTER_QA_REPORT.md) - QA findings and status
+| Plugin | Purpose |
+|---|---|
+| `cortex-router` | Routes `auto` / `cortex` requests (tiered classification, or `intelligence.matrix.auto` when set). 21 skills in `plugins/cortex-router/skills/`. See [docs-site/intelligent-systems/cortex-router.mdx](docs-site/intelligent-systems/cortex-router.mdx). |
+| `cortex-answer-schema` | Narrow compatibility shim for one answer-schema prompt format; inert for other traffic. See [docs-site/advanced/cortex-answer-schema.mdx](docs-site/advanced/cortex-answer-schema.mdx) and [plugins/cortex-answer-schema/README.md](plugins/cortex-answer-schema/README.md). |
+| `minimax-mcp` | Replaces image content with a text description for MiniMax models. |

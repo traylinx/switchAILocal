@@ -1,0 +1,80 @@
+---
+title: 'Responses'
+description: 'POST /v1/responses (OpenAI Responses API format)'
+---
+
+## POST /v1/responses
+
+Accepts the OpenAI **Responses API** request format and answers in the same format. This lets clients built on `client.responses.create(...)`, such as the Codex CLI, use any routed provider. The request is translated into the provider's native format and the reply is translated back.
+
+**Auth:** client API key. Not available under `/openai/v1`.
+
+### Request
+
+The gateway itself reads:
+
+<ParamField body="model" type="string" required>
+  Routing works the same as for [chat completions](/api/provider-prefixes): prefixes, aliases, virtual models, and `auto`.
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  `true` returns Responses-style SSE events.
+</ParamField>
+
+Everything else (`input`, `instructions`, `tools`, `reasoning`, `max_output_tokens`, ...) goes through the request translator for the selected provider. Fields a provider cannot express are dropped. The gateway does not store responses: `previous_response_id`, background mode, and `GET /v1/responses/{id}` are not supported (that route does not exist).
+
+### Response (non-streaming)
+
+A Responses-format object, as produced by the translator for the selected provider:
+
+```json
+{
+  "id": "resp_abc123",
+  "object": "response",
+  "status": "completed",
+  "model": "gemini-2.5-pro",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_abc123_0",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hello!"}]
+    }
+  ],
+  "usage": {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11}
+}
+```
+
+### Streaming
+
+`text/event-stream` with `event:` / `data:` pairs (`response.created`, `response.output_text.delta`, `response.completed`, ...), forwarded as the translator emits them.
+
+- If the provider fails before the first event, you get a JSON error with the real status.
+- If it fails mid-stream, the gateway writes `event: error` with a `data:` line holding an OpenAI-style error object, then closes the stream.
+
+### Example
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:18080/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "geminicli:gemini-2.5-pro", "input": "Write a haiku about routers."}'
+```
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:18080/v1", api_key="YOUR_API_KEY")
+resp = client.responses.create(model="geminicli:gemini-2.5-pro", input="Write a haiku about routers.")
+print(resp.output_text)
+```
+</CodeGroup>
+
+### Errors
+
+Same as [chat completions](/api/chat-completions#errors). Error bodies use the OpenAI envelope `{"error":{"message","type","code"}}`.
+
+<Note>
+Responses-shaped bodies sent to `/v1/chat/completions` (with `input` or `instructions` and no `messages`) are converted to chat format automatically. In that case the reply comes back in chat-completions format.
+</Note>

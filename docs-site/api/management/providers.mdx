@@ -1,577 +1,189 @@
 ---
-title: 'Provider Management'
-description: 'Manage AI provider credentials, test connectivity, and discover models'
+title: 'Providers & Credentials'
+description: 'Management endpoints for client keys, provider keys, OpenAI-compatible providers, auth files, and OAuth logins'
 ---
 
-## Overview
+All paths are relative to `/v0/management` and need the [management key](/api/management/overview#authentication).
 
-The Provider Management API allows you to configure, test, and manage AI provider credentials programmatically.
+<Warning>
+GET on any key list returns the keys in clear text. Keep the Management API local.
+</Warning>
 
-## Test Provider
+## Client API keys
 
-```
-POST /v0/management/providers/test
-```
+`/api-keys` manages the top-level `api-keys` list that clients use to call `/v1/*` (see [Authentication](/api/authentication)).
 
-Test connectivity and authentication for a provider:
-
-```bash
-curl -X POST http://localhost:18080/v0/management/providers/test \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "geminicli",
-    "model": "gemini-2.5-pro"
-  }'
-```
-
-**Request Body**:
-<ParamField body="provider" type="string" required>
-  Provider ID (e.g., `geminicli`, `ollama`, `claude`)
-</ParamField>
-
-<ParamField body="model" type="string">
-  Optional model to test with
-</ParamField>
-
-**Response**:
-```json
-{
-  "success": true,
-  "provider": "geminicli",
-  "model": "gemini-2.5-pro",
-  "message": "Provider test successful",
-  "latency_ms": 250
-}
-```
-
-**Error Response**:
-```json
-{
-  "success": false,
-  "provider": "geminicli",
-  "error": "CLI not authenticated",
-  "details": "Run 'gemini auth login' to authenticate"
-}
-```
-
-## Discover Models
-
-```
-POST /v0/management/providers/discover-models
-```
-
-Trigger model discovery for a specific provider:
+| Method | Body / query | Effect |
+|---|---|---|
+| GET | none | `{"api-keys": ["..."]}` |
+| PUT | `["key1","key2"]` or `{"items":["key1","key2"]}` | Replace the list. A bare `[]` clears it, which **makes the gateway accept every request**. `{"items":[]}` returns `400` |
+| PATCH | `{"index": 0, "value": "new"}` | Replace by position |
+| PATCH | `{"old": "a", "new": "b"}` | Replace the first exact match, or append `b` if there is none |
+| DELETE | `?index=0` or `?value=<key>` | Remove by position, or every match |
 
 ```bash
-curl -X POST http://localhost:18080/v0/management/providers/discover-models \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "ollama"
-  }'
+curl -X PATCH http://localhost:18080/v0/management/api-keys \
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY" -H "Content-Type: application/json" \
+  -d '{"old": "", "new": "sk-new-client-key"}'
 ```
 
-**Response**:
-```json
-{
-  "success": true,
-  "provider": "ollama",
-  "models_found": 5,
-  "models": [
-    "ollama:llama3.2",
-    "ollama:mistral",
-    "ollama:codellama"
-  ]
-}
-```
+## Provider key lists
 
-### URL safety for connectivity probes
+Four lists share one pattern: `/gemini-api-key`, `/claude-api-key`, `/codex-api-key`, `/switchai-api-key`. They map to the config keys of the same name.
 
-The `providers/test` and `providers/discover-models` probes accept only
-absolute `http://` or `https://` URLs with a host. URL userinfo and fragments
-are rejected. This applies independently to base, models, and proxy URLs.
+**Entry fields:** `api-key`, `prefix`, `base-url`, `proxy-url`, `models-url`, `headers` (map), `excluded-models` (string list), and `models`:
 
-Loopback, RFC-1918, link-local, and other reachable network ranges are
-intentionally allowed because local and LAN providers are a supported product
-shape. These endpoints are therefore restricted by the management-auth
-boundary, not by an IP blocklist. Probe redirects remain enabled up to ten
-requests; every redirect target is revalidated against the same scheme, host,
-and userinfo rules. The probe endpoints accept only HTTP(S) proxies even when a
-separately configured runtime transport supports another proxy scheme.
+- claude and switchai: `[{name, alias}]`.
+- gemini and codex: `[{name, alias, expose, visibility, context_length, capabilities, native_tools}]`.
 
-## Gemini API Keys
+| Method | Body / query | Effect |
+|---|---|---|
+| GET | none | `{"<list-name>": [ ...entries ]}` |
+| PUT | `[ ...entries ]` or `{"items":[...]}` | Replace the list. A bare `[]` clears it |
+| PATCH | `{"index": 0, "value": {...}}` or `{"match": "<api-key>", "value": {...}}` | Merge the given fields into one entry. `index` wins if valid. `404 {"error":"item not found"}` when nothing matches |
+| DELETE | `?api-key=<key>` or `?index=0` | Remove one entry. Neither parameter returns `400` |
 
-### List Keys
+Per-list details:
 
-```
-GET /v0/management/gemini-api-key
-```
-
-```bash
-curl http://localhost:18080/v0/management/gemini-api-key \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
-```json
-{
-  "keys": [
-    {
-      "name": "Production",
-      "key": "***abc123"  // Masked
-    },
-    {
-      "name": "Development",
-      "key": "***def456"
-    }
-  ]
-}
-```
-
-### Add Key
-
-```
-PUT /v0/management/gemini-api-key
-```
+- **gemini:** PUT drops entries without `api-key` and removes duplicates. PATCH with `"api-key": ""` deletes the entry. DELETE returns `404` when nothing matched.
+- **claude:** PUT drops `models` entries that have neither `name` nor `alias`.
+- **codex:** PUT drops entries without `base-url`. PATCH with `"base-url": ""` deletes the entry.
+- **switchai:** PUT fills in the default `base-url` when it is empty.
 
 ```bash
 curl -X PUT http://localhost:18080/v0/management/gemini-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "keys": [
-      {"name": "Production", "key": "your-gemini-api-key"},
-      {"name": "Development", "key": "your-dev-key"}
-    ]
-  }'
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY" -H "Content-Type: application/json" \
+  -d '[{"api-key": "YOUR_GEMINI_KEY", "prefix": "team-a"}]'
 ```
 
-### Update Single Key
+## OpenAI compatibility
 
-```
-PATCH /v0/management/gemini-api-key
-```
+`/openai-compatibility` manages `openai-compatibility` providers (Groq, OpenRouter, MiniMax, LM-Studio-style servers, ...).
 
-```bash
-curl -X PATCH http://localhost:18080/v0/management/gemini-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Production",
-    "key": "new-gemini-api-key"
-  }'
-```
+**Entry fields:** `name`, `prefix`, `base-url`, `models-url`, `api-key-entries` (`[{api-key, proxy-url}]`), `models` (`[{name, alias, expose, visibility, context_length, capabilities, native_tools}]`), `headers`, `excluded-models`.
 
-### Delete Key
-
-```
-DELETE /v0/management/gemini-api-key
-```
-
-```bash
-curl -X DELETE http://localhost:18080/v0/management/gemini-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Development"}'
-```
-
-## Claude API Keys
-
-Same endpoints as Gemini, using `/claude-api-key`:
-
-```bash
-# List
-curl http://localhost:18080/v0/management/claude-api-key \
-  -H "X-Management-Key: your-secret-key"
-
-# Add/Update
-curl -X PUT http://localhost:18080/v0/management/claude-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"keys": [{"name": "Production", "key": "sk-ant-..."}]}'
-
-# Delete
-curl -X DELETE http://localhost:18080/v0/management/claude-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"name": "Production"}'
-```
-
-## switchAI API Keys
-
-Same endpoints as Gemini, using `/switchai-api-key`:
-
-```bash
-# List
-curl http://localhost:18080/v0/management/switchai-api-key \
-  -H "X-Management-Key: your-secret-key"
-
-# Add/Update
-curl -X PUT http://localhost:18080/v0/management/switchai-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"keys": [{"name": "Production", "key": "sal_..."}]}'
-```
-
-## Codex API Keys
-
-Same endpoints as Gemini, using `/codex-api-key`:
-
-```bash
-# List
-curl http://localhost:18080/v0/management/codex-api-key \
-  -H "X-Management-Key: your-secret-key"
-
-# Add/Update
-curl -X PUT http://localhost:18080/v0/management/codex-api-key \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"keys": [{"name": "Production", "key": "codex_..."}]}'
-```
-
-## OpenAI Compatibility
-
-Manage OpenAI-compatible provider configurations:
-
-### List Configurations
-
-```
-GET /v0/management/openai-compatibility
-```
-
-```bash
-curl http://localhost:18080/v0/management/openai-compatibility \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
-```json
-{
-  "providers": [
-    {
-      "name": "openrouter",
-      "base_url": "https://openrouter.ai/api/v1",
-      "api_key": "***abc123"
-    }
-  ]
-}
-```
-
-### Add Provider
-
-```
-PUT /v0/management/openai-compatibility
-```
+| Method | Body / query | Effect |
+|---|---|---|
+| GET | none | `{"openai-compatibility": [...]}` |
+| PUT | `[...]` or `{"items":[...]}` | Replace. Entries without `base-url` are dropped |
+| PATCH | `{"index": 0, "value": {...}}` or `{"name": "groq", "value": {...}}` | Merge fields into one entry. Matches on `name`, not `match`. `"base-url": ""` deletes the entry. `404` when nothing matches |
+| DELETE | `?name=groq` or `?index=0` | Remove one entry |
 
 ```bash
 curl -X PUT http://localhost:18080/v0/management/openai-compatibility \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "providers": [
-      {
-        "name": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_key": "your-openrouter-key"
-      }
-    ]
-  }'
+  -H "Authorization: Bearer YOUR_MANAGEMENT_KEY" -H "Content-Type: application/json" \
+  -d '[{"name": "groq", "base-url": "https://api.groq.com/openai/v1",
+        "api-key-entries": [{"api-key": "YOUR_GROQ_KEY"}],
+        "models": [{"name": "openai/gpt-oss-20b", "alias": "groq:gpt-oss-20b"}]}]'
 ```
 
-### Delete Provider
+## OAuth excluded models
 
-```
-DELETE /v0/management/openai-compatibility
-```
+`/oauth-excluded-models` is a map from provider to model IDs to hide for OAuth / file-based credentials.
 
-```bash
-curl -X DELETE http://localhost:18080/v0/management/openai-compatibility \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"name": "openrouter"}'
-```
+| Method | Body / query | Effect |
+|---|---|---|
+| GET | none | `{"oauth-excluded-models": {"gemini": ["gemini-1.5-pro"]}}` (provider keys lowercased) |
+| PUT | `{"gemini": [...]}` or `{"items": {...}}` | Replace the map |
+| PATCH | `{"provider": "gemini", "models": ["..."]}` | Set one provider. An empty `models` removes it (`404` if absent) |
+| DELETE | `?provider=gemini` | Remove one provider. `400` when the parameter is missing, `404` when the provider is unknown |
 
-## OAuth Management
+## Testing providers
 
-### Request OAuth URL
+### POST /providers/test
 
-Generate OAuth authorization URLs for CLI providers:
+Checks a provider configuration **without saving it**. Body:
 
-#### Anthropic
-
-```
-GET /v0/management/anthropic-auth-url
-```
-
-```bash
-curl http://localhost:18080/v0/management/anthropic-auth-url \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
 ```json
-{
-  "auth_url": "https://console.anthropic.com/oauth/authorize?...",
-  "state": "random-state-token"
-}
+{"provider_id": "groq", "category": "cloud", "config": {"api-key": "...", "base-url": "https://api.groq.com/openai/v1", "models-url": "https://api.groq.com/openai/v1/models", "proxy-url": ""}}
 ```
 
-#### Gemini CLI
+The `category` is matched by substring, case-insensitively:
 
-```
-GET /v0/management/gemini-cli-auth-url
-```
+| Category contains | What happens |
+|---|---|
+| `cli` | Checks that the binary is on `PATH`. Accepted `provider_id`: `claude-cli`/`claudecli`, `gemini-cli`/`geminicli`, `vibe-cli`/`vibecli`, `codex-cli`/`codex`, `opencode-cli`/`opencode`. Returns `{"status":"success"\|"error","message"}`. An unknown ID returns `400 unknown_cli` |
+| `cloud` | Requires `config.api-key` (except for `ollama`/`lmstudio`). GETs `base-url` (10 s timeout) and `models-url` with a Bearer key. Returns `{"status","message","tests":{"apiKey","baseUrl","proxy","modelsUrl"}}`, where each test is `{passed, message, latency?}` |
+| `local` | GETs `config.base-url`, or the configured Ollama / LM Studio / OpenCode URL, with a 3 s timeout. Any 2xx–4xx counts as reachable |
 
-```bash
-curl http://localhost:18080/v0/management/gemini-cli-auth-url \
-  -H "X-Management-Key: your-secret-key"
-```
+Other categories return `400 invalid_category`. URLs must be `http`/`https`, with a host and without credentials or fragments; otherwise `400 invalid_url`.
 
-#### Codex
+### POST /providers/discover-models
 
-```
-GET /v0/management/codex-auth-url
-```
+Lists a provider's models **without saving anything**. The body uses camelCase:
 
-### OAuth Callback
-
-```
-POST /v0/management/oauth-callback
-```
-
-Handle OAuth callback (used internally):
-
-```bash
-curl -X POST http://localhost:18080/v0/management/oauth-callback \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{
-    "provider": "anthropic",
-    "code": "auth-code",
-    "state": "random-state-token"
-  }'
-```
-
-### Get Auth Status
-
-```
-GET /v0/management/get-auth-status
-```
-
-Check authentication status for all providers:
-
-```bash
-curl http://localhost:18080/v0/management/get-auth-status \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
 ```json
-{
-  "providers": [
-    {
-      "id": "geminicli",
-      "name": "Gemini CLI",
-      "authenticated": true,
-      "method": "cli"
-    },
-    {
-      "id": "claudecli",
-      "name": "Claude CLI",
-      "authenticated": false,
-      "method": "cli"
-    },
-    {
-      "id": "gemini",
-      "name": "Gemini API",
-      "authenticated": true,
-      "method": "api_key",
-      "key_count": 2
-    }
-  ]
-}
+{"baseUrl": "http://localhost:11434", "modelsUrl": "", "apiKey": "", "proxyUrl": "", "headers": {}}
 ```
 
-## Auth Files
+- When `modelsUrl` is empty, it is derived as `baseUrl + /models`, or `baseUrl + /api/tags` for Ollama (URL contains `ollama` or uses port 11434).
+- Both OpenAI (`{data:[{id}]}`) and Ollama (`{models:[{name}]}`) responses are understood.
+- Returns `{"success": true, "models": [{"id": "llama3.2"}]}`.
+- Errors: `400 missing_url` / `invalid_url` / `invalid_proxy`; upstream `4xx`/`5xx` passed through as `provider_error`; `502 upstream_error` / `parse_error` (unknown format or empty list).
 
-### List Auth Files
+## Auth files
 
-```
-GET /v0/management/auth-files
-```
+OAuth and credential files live in `auth-dir` (default `~/.switchailocal`).
 
-List all authentication files:
+| Route | Notes |
+|---|---|
+| `GET /auth-files` | `{"files":[{"id","auth_index","name","type","provider","label","status","status_message","disabled","unavailable","runtime_only","source","size","email","account_type","account","created_at","modtime","updated_at","last_refresh","path"}]}`, sorted by name. Optional fields are omitted when unknown |
+| `GET /auth-files/models?name=<file>` | Models registered for that credential: `{"models":[{"id","display_name","type","owned_by"}]}` |
+| `GET /auth-files/download?name=<file>.json` | Downloads the file. `400` if the name is invalid or does not end in `.json`, `404` if missing |
+| `POST /auth-files` | Upload either as multipart field `file` (name must end in `.json`) or as a raw JSON body with `?name=<file>.json`. The JSON's `type` sets the provider. Returns `{"status":"ok"}` |
+| `DELETE /auth-files?name=<file>.json` | Deletes one file. Returns `{"status":"ok"}` |
+| `DELETE /auth-files?all=true` | Deletes every `.json` file in `auth-dir`. Returns `{"status":"ok","deleted":N}` |
+| `POST /vertex/import` | Multipart field `file` = Google service-account JSON, optional `location` (form or query, default `us-central1`). Saves `vertex-<project>.json` and returns `{"status":"ok","auth-file","project_id","email","location"}` |
 
-```bash
-curl http://localhost:18080/v0/management/auth-files \
-  -H "X-Management-Key: your-secret-key"
-```
+Upload, list, and delete return `503` when the credential manager is unavailable.
 
-**Response**:
-```json
-{
-  "files": [
-    {
-      "name": "gemini-production.json",
-      "provider": "gemini",
-      "type": "service_account",
-      "created": "2026-03-09T10:00:00Z"
-    }
-  ]
-}
-```
+## OAuth login flows
 
-### Get Auth File Models
+Logins for subscription-based providers run in three steps.
 
-```
-GET /v0/management/auth-files/models
-```
+**1. Start a login** with one of these GET routes. Each returns `{"status":"ok","url":"<authorize URL>","state":"<state>"}`:
 
-Get models available from an auth file:
+| Route | Provider |
+|---|---|
+| `/anthropic-auth-url` | Claude (Anthropic OAuth) |
+| `/codex-auth-url` | OpenAI Codex |
+| `/gemini-cli-auth-url` | Gemini CLI / Code Assist. Optional `?project_id=` (empty = auto, `ALL` = every project) |
+| `/antigravity-auth-url` | Antigravity |
+| `/iflow-auth-url` | iFlow |
+| `/qwen-auth-url` | Qwen (device-code flow; `url` is the verification page) |
 
-```bash
-curl "http://localhost:18080/v0/management/auth-files/models?file=gemini-production.json" \
-  -H "X-Management-Key: your-secret-key"
-```
+**2. Finish the browser step** in one of two ways:
 
-### Upload Auth File
+- Add `?is_webui=true` to the start request. The gateway briefly listens on the provider's fixed local callback port and redirects the browser to `/{anthropic,codex,google,iflow,antigravity}/callback` on the main port, which records the result.
+- Without `is_webui`, paste the final redirect URL into:
 
-```
-POST /v0/management/auth-files
-```
+  ```bash
+  curl -X POST http://localhost:18080/v0/management/oauth-callback \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_KEY" -H "Content-Type: application/json" \
+    -d '{"provider": "anthropic", "redirect_url": "http://localhost:54545/callback?code=...&state=..."}'
+  ```
 
-Upload a service account JSON:
+  `provider` accepts `anthropic`/`claude`, `codex`/`openai`, `gemini`/`google`, `iflow`/`i-flow`, `antigravity`/`anti-gravity`, `qwen`. You can send `code`, `state`, and `error` directly instead of `redirect_url`.
 
-```bash
-curl -X POST http://localhost:18080/v0/management/auth-files \
-  -H "X-Management-Key: your-secret-key" \
-  -F "file=@service-account.json" \
-  -F "provider=gemini"
-```
+  Errors are shaped `{"status":"error","error":...}`:
 
-### Download Auth File
+  | Status | Cause |
+  |---|---|
+  | `400` | Bad provider, URL, or state |
+  | `404` | Unknown or expired state |
+  | `409` | The flow is no longer pending |
 
-```
-GET /v0/management/auth-files/download
-```
+**3. Poll** `GET /get-auth-status?state=<state>`:
 
-```bash
-curl "http://localhost:18080/v0/management/auth-files/download?file=gemini-production.json" \
-  -H "X-Management-Key: your-secret-key" \
-  -O
-```
+| Response | Meaning |
+|---|---|
+| `{"status":"wait"}` | Still pending |
+| `{"status":"error","error":"..."}` | Login failed |
+| `{"status":"ok"}` | Completed. Unknown or expired states also return `ok` |
 
-### Delete Auth File
+Logins wait up to 5 minutes for the callback, and sessions expire after 10 minutes.
 
-```
-DELETE /v0/management/auth-files
-```
+**iFlow cookie login:** `POST /iflow-auth-url` with `{"cookie": "..."}` logs in directly.
 
-```bash
-curl -X DELETE http://localhost:18080/v0/management/auth-files \
-  -H "X-Management-Key: your-secret-key" \
-  -d '{"file": "gemini-production.json"}'
-```
-
-## Vertex AI Import
-
-```
-POST /v0/management/vertex/import
-```
-
-Import Vertex AI credentials:
-
-```bash
-curl -X POST http://localhost:18080/v0/management/vertex/import \
-  -H "X-Management-Key: your-secret-key" \
-  -F "file=@vertex-credentials.json" \
-  -F "project_id=my-project"
-```
-
-## Python Examples
-
-```python
-import requests
-
-class ProviderManager:
-    def __init__(self, base_url, secret_key):
-        self.base_url = base_url
-        self.headers = {"X-Management-Key": secret_key}
-    
-    def test_provider(self, provider, model=None):
-        """Test provider connectivity"""
-        data = {"provider": provider}
-        if model:
-            data["model"] = model
-        
-        response = requests.post(
-            f"{self.base_url}/v0/management/providers/test",
-            headers=self.headers,
-            json=data
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def add_gemini_key(self, name, key):
-        """Add Gemini API key"""
-        response = requests.put(
-            f"{self.base_url}/v0/management/gemini-api-key",
-            headers=self.headers,
-            json={"keys": [{"name": name, "key": key}]}
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def get_auth_status(self):
-        """Get authentication status for all providers"""
-        response = requests.get(
-            f"{self.base_url}/v0/management/get-auth-status",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def discover_models(self, provider):
-        """Discover models for a provider"""
-        response = requests.post(
-            f"{self.base_url}/v0/management/providers/discover-models",
-            headers=self.headers,
-            json={"provider": provider}
-        )
-        response.raise_for_status()
-        return response.json()
-
-# Usage
-manager = ProviderManager(
-    "http://localhost:18080",
-    "your-secret-key"
-)
-
-# Test Gemini CLI
-result = manager.test_provider("geminicli", "gemini-2.5-pro")
-if result["success"]:
-    print(f"Provider healthy (latency: {result['latency_ms']}ms)")
-else:
-    print(f"Provider error: {result['error']}")
-
-# Add API key
-manager.add_gemini_key("Production", "your-api-key")
-
-# Check auth status
-status = manager.get_auth_status()
-for provider in status["providers"]:
-    print(f"{provider['name']}: {provider['authenticated']}")
-
-# Discover Ollama models
-models = manager.discover_models("ollama")
-print(f"Found {models['models_found']} models")
-```
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Configuration" icon="gear" href="/api/management/config">
-    Manage server configuration
-  </Card>
-  <Card title="Provider Setup" icon="book" href="/guides/setup-providers">
-    Guide to setting up providers
-  </Card>
-  <Card title="Authentication" icon="key" href="/api/authentication">
-    Learn about API authentication
-  </Card>
-</CardGroup>
+- Success: `{"status":"ok","saved_path","email","expired","type"}`.
+- `409` when that account already has a credential file.

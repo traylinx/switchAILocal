@@ -1,427 +1,566 @@
 ---
 title: Go SDK
-description: Embed switchAILocal directly in your Go applications for full control
+description: Embed the switchAILocal gateway in your own Go program and extend it with custom providers
 icon: golang
 ---
 
 ## Overview
 
-The switchAILocal Go SDK allows you to embed the entire proxy server directly into your Go applications. This provides maximum flexibility and control over the AI gateway without requiring a separate server process.
+The Go SDK lets you run the switchAILocal HTTP gateway **inside your own Go process** instead of starting the `switchAILocal` binary. You get the same OpenAI/Claude/Gemini-compatible endpoints, the same `config.yaml`, hot reload, credential rotation, virtual models and auto-routing, plus hooks to add your own middleware, routes, credential checks and provider executors.
+
+**Use it when** you ship a Go application that needs a built-in AI gateway, or you need a provider that switchAILocal does not support out of the box.
+
+**Do not use it when** you only want to *call* switchAILocal from Go. For that, run the server and point any OpenAI-compatible Go client at `http://localhost:18080/v1` (see [Python](/sdk/python) and [Node.js](/sdk/nodejs) for the client pattern).
+
+## What the SDK wires and what it does not
+
+`Builder.Build()` + `Service.Run()` (`sdk/switchailocal/builder.go`, `service_lifecycle.go`) start:
+
+- the HTTP server with all `/v1`, `/v1beta`, `/openai/v1` and management routes
+- providers from `config.yaml` (API keys, `openai-compatibility`, Ollama, LM Studio, OpenCode) and OAuth token files in `auth-dir`
+- the file watcher (config and `auth-dir` hot reload), credential auto-refresh (every 15 minutes)
+- Lua plugins, the intelligence (Cortex) service, model discovery, auto-routing and virtual models
+
+The following are wired by the `switchAILocal` binary (`internal/cmd/run.go`), **not** by the SDK:
+
+- auto-discovery of local CLI binaries on `PATH` (`gemini`, `claude`, `codex`, `vibe`). In an embedded server `claudecli:` and `vibecli:` have no backend, and `geminicli:` / `codex:` only work through OAuth token files in `auth-dir` (created with `switchAILocal --login` / `--codex-login`) or, for Codex, `codex-api-key`; not through the installed CLIs
+- the background coordinator for [Memory](/intelligent-systems/memory), [Heartbeat](/intelligent-systems/heartbeat), steering and hooks
+- the `--login` style OAuth flows (run the binary once to create token files, then point `auth-dir` at them)
 
 ## Installation
 
 ```bash
-go get github.com/traylinx/switchAILocal/sdk/switchailocal
+go get github.com/traylinx/switchAILocal@v0.6.2
 ```
 
-## Quick Start
+The module path is `github.com/traylinx/switchAILocal`. Only packages under `sdk/` are importable from other modules; anything under `internal/` is not.
 
-### Minimal Embed
+| Package | Purpose |
+|---------|---------|
+| `sdk/switchailocal` | `Builder`, `Service`, `Hooks`, `GlobalModelRegistry()` |
+| `sdk/config` | `Config` type alias, `LoadConfig`, `LoadConfigOptional` |
+| `sdk/api` | `ServerOption` helpers (middleware, routes, request logger) |
+| `sdk/access` | Client authentication providers (`RegisterProvider`, `Provider`) |
+| `sdk/switchailocal/auth` | Core credential manager, `ProviderExecutor`, `Auth`, selectors |
+| `sdk/switchailocal/executor` | `Request`, `Options`, `Response`, `StreamChunk` |
+| `sdk/switchailocal/usage` | Usage plugin interface |
+| `sdk/translator`, `sdk/translator/builtin` | Request/response format translators |
+| `sdk/auth` | Token store (`NewFileTokenStore`, `GetTokenStore`) and OAuth authenticators |
 
-The simplest way to embed switchAILocal:
+## Minimal embed
 
-```go
+```go main.go
 package main
 
 import (
-    "context"
-    "errors"
-    "log"
+	"context"
+	"errors"
+	"log"
+	"os/signal"
+	"syscall"
 
-    "github.com/traylinx/switchAILocal/sdk/config"
-    "github.com/traylinx/switchAILocal/sdk/switchailocal"
+	"github.com/traylinx/switchAILocal/sdk/config"
+	"github.com/traylinx/switchAILocal/sdk/switchailocal"
 )
 
 func main() {
-    // Load configuration
-    cfg, err := config.LoadConfig("config.yaml")
-    if err != nil {
-        log.Fatal(err)
-    }
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    // Build the service
-    svc, err := switchailocal.NewBuilder().
-        WithConfig(cfg).
-        WithConfigPath("config.yaml").
-        Build()
-    if err != nil {
-        log.Fatal(err)
-    }
+	svc, err := switchailocal.NewBuilder().
+		WithConfig(cfg).
+		WithConfigPath("config.yaml"). // required; watched for hot reload
+		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    // Run the service
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
+	// Run blocks until ctx is cancelled, then shuts down (30s timeout).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-    if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-        log.Fatal(err)
-    }
+	if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
 }
 ```
 
-## Advanced Configuration
+A minimal `config.yaml` with no client keys and one local provider:
 
-### Adding Middleware
-
-```go
-import (
-    "github.com/gin-gonic/gin"
-    "github.com/traylinx/switchAILocal/sdk/api"
-)
-
-svc, err := switchailocal.NewBuilder().
-    WithConfig(cfg).
-    WithConfigPath("config.yaml").
-    WithServerOptions(
-        api.WithMiddleware(func(c *gin.Context) {
-            // Add custom headers
-            c.Header("X-Custom-Header", "MyApp")
-            c.Next()
-        }),
-    ).
-    Build()
+```yaml config.yaml
+port: 18080
+auth-dir: "~/.switchailocal"
+ollama:
+  enabled: true
+  base-url: "http://localhost:11434"
+  auto-discover: true
 ```
 
-### Custom Routes
+Test it:
 
-```go
-import (
-    "github.com/traylinx/switchAILocal/sdk/api/handlers"
-)
-
-svc, err := switchailocal.NewBuilder().
-    WithConfig(cfg).
-    WithConfigPath("config.yaml").
-    WithServerOptions(
-        api.WithRouterConfigurator(func(e *gin.Engine, h *handlers.BaseAPIHandler, cfg *config.Config) {
-            // Add custom health check endpoint
-            e.GET("/healthz", func(c *gin.Context) {
-                c.JSON(200, gin.H{"status": "ok"})
-            })
-        }),
-    ).
-    Build()
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama:llama3.2", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-### Lifecycle Hooks
+## Client API keys (`api-keys`)
 
-```go
-hooks := switchailocal.Hooks{
-    OnBeforeStart: func(cfg *config.Config) {
-        log.Printf("Starting switchAILocal on port %d", cfg.Port)
-    },
-    OnAfterStart: func(s *switchailocal.Service) {
-        log.Println("switchAILocal is ready")
-    },
-}
+<Warning>
+If `config.yaml` sets `api-keys`, `Build()` needs an access provider registered for type `config-api-key`. The binary registers one from an internal package that external modules cannot import, so an embedded server fails with `access: provider type "config-api-key" is not registered` unless you register your own.
+</Warning>
 
-svc, err := switchailocal.NewBuilder().
-    WithConfig(cfg).
-    WithConfigPath("config.yaml").
-    WithHooks(hooks).
-    Build()
-```
+Register a provider before calling `Build()`:
 
-### Custom Request Logger
-
-```go
-import (
-    "path/filepath"
-    "github.com/traylinx/switchAILocal/sdk/logging"
-)
-
-svc, err := switchailocal.NewBuilder().
-    WithConfig(cfg).
-    WithConfigPath("config.yaml").
-    WithServerOptions(
-        api.WithRequestLoggerFactory(func(cfg *config.Config, cfgPath string) logging.RequestLogger {
-            return logging.NewFileRequestLogger(true, "logs", filepath.Dir(cfgPath))
-        }),
-    ).
-    Build()
-```
-
-## Creating Custom Providers
-
-Extend switchAILocal with your own provider implementations.
-
-### Implement the Executor Interface
-
-```go
-package myprov
+```go access.go
+package main
 
 import (
-    "context"
-    "net/http"
+	"context"
+	"net/http"
+	"strings"
 
-    coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
-    clipexec "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	sdkaccess "github.com/traylinx/switchAILocal/sdk/access"
+	"github.com/traylinx/switchAILocal/sdk/config"
 )
 
-type Executor struct{}
+type keyProvider struct{ keys map[string]struct{} }
 
-func (Executor) Identifier() string {
-    return "myprov"
+func (p *keyProvider) Identifier() string { return config.DefaultAccessProviderName }
+
+func (p *keyProvider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.Result, error) {
+	key := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if key == "" {
+		key = r.Header.Get("X-Api-Key") // Anthropic-style clients
+	}
+	if key == "" {
+		return nil, sdkaccess.ErrNoCredentials // -> 401 "Missing API key"
+	}
+	if _, ok := p.keys[key]; !ok {
+		return nil, sdkaccess.ErrInvalidCredential // -> 401 "Invalid API key"
+	}
+	return &sdkaccess.Result{Provider: p.Identifier(), Principal: key}, nil
 }
-
-// PrepareRequest injects credentials into HTTP requests
-func (Executor) PrepareRequest(req *http.Request, a *coreauth.Auth) error {
-    if a != nil && a.Attributes != nil {
-        if apiKey := a.Attributes["api_key"]; apiKey != "" {
-            req.Header.Set("Authorization", "Bearer "+apiKey)
-        }
-    }
-    return nil
-}
-
-// Execute performs the API call
-func (Executor) Execute(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (clipexec.Response, error) {
-    // Build HTTP request using req.Payload (already translated)
-    // Make the API call to your provider
-    // Return the response payload
-    return clipexec.Response{Payload: []byte(`{"ok":true}`)}, nil
-}
-
-// ExecuteStream handles streaming responses
-func (Executor) ExecuteStream(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (<-chan clipexec.StreamChunk, error) {
-    ch := make(chan clipexec.StreamChunk, 1)
-    go func() {
-        defer close(ch)
-        ch <- clipexec.StreamChunk{Payload: []byte("data: {\"done\":true}\\n\\n")}
-    }()
-    return ch, nil
-}
-
-// Refresh refreshes authentication tokens
-func (Executor) Refresh(ctx context.Context, a *coreauth.Auth) (*coreauth.Auth, error) {
-    return a, nil
-}
-```
-
-### Register Your Executor
-
-```go
-import (
-    "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
-)
-
-func main() {
-    cfg, _ := config.LoadConfig("config.yaml")
-
-    // Create core auth manager
-    core := auth.NewManager(
-        auth.NewFileStore(cfg.AuthDir),
-        nil,
-        nil,
-    )
-
-    // Register your custom executor
-    core.RegisterExecutor(myprov.Executor{})
-
-    svc, err := switchailocal.NewBuilder().
-        WithConfig(cfg).
-        WithConfigPath("config.yaml").
-        WithCoreAuthManager(core).
-        Build()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    ctx := context.Background()
-    svc.Run(ctx)
-}
-```
-
-## Request/Response Translation
-
-Register translators to convert between different API formats.
-
-```go
-package myprov
-
-import (
-    "context"
-    sdktr "github.com/traylinx/switchAILocal/sdk/translator"
-)
-
-const (
-    FOpenAI = sdktr.Format("openai.chat")
-    FMyProv = sdktr.Format("myprov.chat")
-)
 
 func init() {
-    sdktr.Register(FOpenAI, FMyProv,
-        // Request transform
-        func(model string, raw []byte, stream bool) []byte {
-            return convertOpenAIToMyProv(model, raw, stream)
-        },
-        // Response transform
-        sdktr.ResponseTransform{
-            Stream: func(ctx context.Context, model string, originalReq, translatedReq, raw []byte, param *any) []string {
-                return convertStreamMyProvToOpenAI(model, originalReq, translatedReq, raw)
-            },
-            NonStream: func(ctx context.Context, model string, originalReq, translatedReq, raw []byte, param *any) string {
-                return convertMyProvToOpenAI(model, originalReq, translatedReq, raw)
-            },
-        },
-    )
-}
-
-func convertOpenAIToMyProv(model string, raw []byte, stream bool) []byte {
-    // Convert OpenAI format to your provider's format
-    return raw
-}
-
-func convertStreamMyProvToOpenAI(model string, originalReq, translatedReq, raw []byte) []string {
-    // Convert streaming response chunks
-    return []string{string(raw)}
-}
-
-func convertMyProvToOpenAI(model string, originalReq, translatedReq, raw []byte) string {
-    // Convert non-streaming response
-    return string(raw)
+	sdkaccess.RegisterProvider(config.AccessProviderTypeConfigAPIKey,
+		func(cfg *config.AccessProvider, _ *config.SDKConfig) (sdkaccess.Provider, error) {
+			keys := make(map[string]struct{}, len(cfg.APIKeys))
+			for _, k := range cfg.APIKeys {
+				keys[k] = struct{}{}
+			}
+			return &keyProvider{keys: keys}, nil
+		})
 }
 ```
 
-## Register Custom Models
+If no `api-keys` are configured, no access provider is built and every request is accepted. Only do that when the server listens on `127.0.0.1`.
 
-Make your models appear in `/v1/models`:
+## Builder reference
+
+All methods return `*Builder` for chaining (`sdk/switchailocal/builder.go`).
+
+| Method | Purpose |
+|--------|---------|
+| `WithConfig(*config.Config)` | **Required.** Loaded configuration |
+| `WithConfigPath(string)` | **Required.** Path of the config file, watched for changes |
+| `WithHooks(Hooks)` | Lifecycle callbacks (see below) |
+| `WithServerOptions(...api.ServerOption)` | HTTP server customisation |
+| `WithLocalManagementPassword(string)` | Password accepted only from localhost management calls |
+| `WithCoreAuthManager(*auth.Manager)` | Supply your own credential manager (to pre-register custom executors) |
+| `WithRequestAccessManager(*access.Manager)` | Replace the client-authentication manager |
+| `WithAuthManager(*sdkauth.Manager)` | Replace the OAuth login manager |
+| `WithTokenClientProvider`, `WithAPIKeyClientProvider`, `WithWatcherFactory` | Advanced overrides of loading and reload behaviour |
+
+`Build()` fails if the config or config path is missing. When you do not pass a core manager, it creates one with the file token store in `auth-dir` and the selector from `routing.strategy` (`round-robin` default, or `fill-first`).
+
+`*Service` methods: `Run(ctx)`, `Shutdown(ctx)` (idempotent; `Run` also calls it on exit), `CoreManager()`, `RegisterUsagePlugin(usage.Plugin)`, `GetIntelligenceService()`.
+
+### Lifecycle hooks
 
 ```go
-import (
-    "github.com/traylinx/switchAILocal/sdk/switchailocal"
-)
-
 hooks := switchailocal.Hooks{
-    OnAfterStart: func(s *switchailocal.Service) {
-        models := []*switchailocal.ModelInfo{
-            {
-                ID:          "myprov-pro-1",
-                Object:      "model",
-                Type:        "myprov",
-                DisplayName: "MyProv Pro 1",
-            },
-        }
-
-        // Register models for each auth of this provider
-        for _, a := range core.List() {
-            if a.Provider == "myprov" {
-                switchailocal.GlobalModelRegistry().RegisterClient(
-                    a.ID,
-                    "myprov",
-                    models,
-                )
-            }
-        }
-    },
+	// Runs after the server is constructed, right before it starts listening.
+	OnBeforeStart: func(cfg *config.Config) {
+		log.Printf("starting on port %d", cfg.Port)
+	},
+	// Runs ~100ms after the listener goroutine starts.
+	OnAfterStart: func(s *switchailocal.Service) {
+		log.Println("switchAILocal is ready")
+	},
 }
+
+svc, err := switchailocal.NewBuilder().
+	WithConfig(cfg).
+	WithConfigPath("config.yaml").
+	WithHooks(hooks).
+	Build()
 ```
 
-## Programmatic Execution
+### Server options
 
-Execute requests directly without the HTTP server:
+`sdk/api/options.go` exposes:
+
+| Option | Purpose |
+|--------|---------|
+| `api.WithMiddleware(...gin.HandlerFunc)` | Extra Gin middleware |
+| `api.WithEngineConfigurator(func(*gin.Engine))` | Mutate the engine before middleware is installed |
+| `api.WithRouterConfigurator(func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config))` | Add routes after the defaults are registered |
+| `api.WithLocalManagementPassword(string)` | Same as the builder method |
+| `api.WithKeepAliveEndpoint(time.Duration, func())` | Enable `GET /keep-alive`; callback fires after the idle timeout |
+| `api.WithRequestLoggerFactory(func(*config.Config, string) logging.RequestLogger)` | Custom request logger |
 
 ```go
 import (
-    "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
-    "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	"path/filepath"
+
+	"github.com/gin-gonic/gin"
+	"github.com/traylinx/switchAILocal/sdk/api"
+	"github.com/traylinx/switchAILocal/sdk/api/handlers"
+	"github.com/traylinx/switchAILocal/sdk/config"
+	"github.com/traylinx/switchAILocal/sdk/logging"
 )
 
-func main() {
-    core := auth.NewManager(
-        auth.NewFileStore("./auths"),
-        nil,
-        nil,
-    )
+svc, err := switchailocal.NewBuilder().
+	WithConfig(cfg).
+	WithConfigPath("config.yaml").
+	WithServerOptions(
+		api.WithMiddleware(func(c *gin.Context) {
+			c.Header("X-Embedded-By", "my-app")
+			c.Next()
+		}),
+		api.WithRouterConfigurator(func(e *gin.Engine, _ *handlers.BaseAPIHandler, _ *config.Config) {
+			e.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+		}),
+		api.WithRequestLoggerFactory(func(cfg *config.Config, cfgPath string) logging.RequestLogger {
+			return logging.NewFileRequestLogger(true, "logs", filepath.Dir(cfgPath))
+		}),
+	).
+	Build()
+```
 
-    // Register executors
-    core.RegisterExecutor(myprov.Executor{})
+<Note>
+The server already serves `GET /health`. Routes added through `WithRouterConfigurator` are not behind the `/v1` API-key middleware unless you add your own check.
+</Note>
 
-    ctx := context.Background()
+## Custom providers
 
-    // Non-streaming execution
-    resp, err := core.Execute(
-        ctx,
-        []string{"gemini"},  // Provider preferences
-        executor.Request{Payload: []byte(`{"messages":[...]}`)},
-        executor.Options{},
-    )
+A provider is an executor registered on the core credential manager plus at least one credential (`Auth`) for it plus model IDs in the model registry. A request for a model is routed to the providers that registered that model ID, then to an `Auth` of that provider, then to the executor whose `Identifier()` matches the provider.
 
-    // Streaming execution
-    chunks, err := core.ExecuteStream(
-        ctx,
-        []string{"gemini"},
-        executor.Request{Payload: []byte(`{"messages":[...]}`)},
-        executor.Options{},
-    )
-    for ch := range chunks {
-        // Process chunk
-    }
+### 1. Implement `ProviderExecutor`
+
+The interface (`sdk/switchailocal/auth/conductor.go:30`) has five methods. All must be implemented:
+
+```go
+type ProviderExecutor interface {
+	Identifier() string
+	Execute(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (executor.Response, error)
+	ExecuteStream(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (<-chan executor.StreamChunk, error)
+	Refresh(ctx context.Context, auth *Auth) (*Auth, error)
+	CountTokens(ctx context.Context, auth *Auth, req executor.Request, opts executor.Options) (executor.Response, error)
 }
 ```
 
-## Graceful Shutdown
+What the executor receives and must return:
+
+- `req.Payload` is the client body **in the client's format**. `opts.SourceFormat` tells you which: `openai` (`/v1/chat/completions`), `openai-response` (`/v1/responses`), `claude` (`/v1/messages`), `gemini` (`/v1beta`). Constants live in `sdk/translator` (`FormatOpenAI`, `FormatClaude`, ...).
+- `req.Model` is the model ID after routing (alias resolved, prefix stripped).
+- The conductor does **not** translate for you. Translate the request into your upstream format and translate the response back to `opts.SourceFormat`, for example with the built-in translators.
+- `Response.Payload` must be a complete JSON body in the client's format. Each `StreamChunk.Payload` must be one bare JSON chunk; the handler adds the `data: ` prefix and blank line itself.
+- Return errors that implement `StatusCode() int` so 401/429/5xx are classified correctly for cooldown and retries.
+
+```go myprov/executor.go
+package myprov
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+
+	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+	"github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	sdktr "github.com/traylinx/switchAILocal/sdk/translator"
+	_ "github.com/traylinx/switchAILocal/sdk/translator/builtin" // registers built-in translators
+)
+
+const ProviderKey = "myprov"
+
+// statusErr lets the conductor read the upstream HTTP status.
+type statusErr struct {
+	code int
+	msg  string
+}
+
+func (e statusErr) Error() string   { return e.msg }
+func (e statusErr) StatusCode() int { return e.code }
+
+// Executor talks to an OpenAI-compatible upstream.
+type Executor struct{ BaseURL string }
+
+func (Executor) Identifier() string { return ProviderKey }
+
+func (e Executor) Execute(ctx context.Context, a *coreauth.Auth, req executor.Request, opts executor.Options) (executor.Response, error) {
+	// Client format -> upstream (OpenAI) format. No-op when the client already speaks OpenAI.
+	body := sdktr.TranslateRequest(opts.SourceFormat, sdktr.FormatOpenAI, req.Model, req.Payload, false)
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, e.BaseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return executor.Response{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := a.Attributes["api_key"]; key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return executor.Response{}, statusErr{code: http.StatusBadGateway, msg: err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return executor.Response{}, statusErr{code: resp.StatusCode, msg: fmt.Sprintf("upstream: %s", raw)}
+	}
+
+	// Upstream (OpenAI) response -> client format.
+	var param any
+	out := sdktr.TranslateNonStream(ctx, opts.SourceFormat, sdktr.FormatOpenAI, req.Model, opts.OriginalRequest, body, raw, &param)
+	return executor.Response{Payload: []byte(out)}, nil
+}
+
+// ExecuteStream: simplest correct implementation is a single buffered chunk.
+// Replace with real SSE parsing for token streaming.
+func (e Executor) ExecuteStream(ctx context.Context, a *coreauth.Auth, req executor.Request, opts executor.Options) (<-chan executor.StreamChunk, error) {
+	resp, err := e.Execute(ctx, a, req, opts)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan executor.StreamChunk, 1)
+	ch <- executor.StreamChunk{Payload: resp.Payload}
+	close(ch)
+	return ch, nil
+}
+
+func (Executor) Refresh(_ context.Context, a *coreauth.Auth) (*coreauth.Auth, error) { return a, nil }
+
+func (Executor) CountTokens(context.Context, *coreauth.Auth, executor.Request, executor.Options) (executor.Response, error) {
+	return executor.Response{}, statusErr{code: http.StatusNotImplemented, msg: "count tokens not supported"}
+}
+```
+
+<Note>
+The buffered `ExecuteStream` above returns a full `chat.completion` object as one chunk. Clients that strictly expect `chat.completion.chunk` objects need a real streaming implementation.
+</Note>
+
+### 2. Register executor, credential and models
+
+```go main.go
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"os/signal"
+	"syscall"
+
+	sdkauth "github.com/traylinx/switchAILocal/sdk/auth"
+	"github.com/traylinx/switchAILocal/sdk/config"
+	"github.com/traylinx/switchAILocal/sdk/switchailocal"
+	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+
+	"example.com/myapp/myprov"
+)
+
+func main() {
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	store := sdkauth.NewFileTokenStore()
+	store.SetBaseDir(cfg.AuthDir)
+
+	core := coreauth.NewManager(store, &coreauth.RoundRobinSelector{}, nil)
+	core.RegisterExecutor(myprov.Executor{BaseURL: "https://api.example.com/v1"})
+
+	hooks := switchailocal.Hooks{
+		OnAfterStart: func(s *switchailocal.Service) {
+			// Register after Run() has loaded the token store; Load() replaces
+			// in-memory credentials, so registering earlier would be lost.
+			a, err := s.CoreManager().Register(context.Background(), &coreauth.Auth{
+				ID:         "myprov-1",
+				Provider:   myprov.ProviderKey,
+				Status:     coreauth.StatusActive,
+				Attributes: map[string]string{"api_key": "YOUR_UPSTREAM_KEY", "runtime_only": "true"},
+			})
+			if err != nil {
+				log.Printf("register auth: %v", err)
+				return
+			}
+			switchailocal.GlobalModelRegistry().RegisterClient(a.ID, myprov.ProviderKey, []*switchailocal.ModelInfo{
+				{ID: "myprov-large", Object: "model", OwnedBy: "myprov", Type: myprov.ProviderKey, DisplayName: "MyProv Large"},
+			})
+		},
+	}
+
+	svc, err := switchailocal.NewBuilder().
+		WithConfig(cfg).
+		WithConfigPath("config.yaml").
+		WithCoreAuthManager(core).
+		WithHooks(hooks).
+		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
+}
+```
+
+```bash
+curl http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "myprov-large", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Notes:
+
+- `Attributes["runtime_only"] = "true"` keeps the key out of the token store on disk. Without it (and with `Metadata` set) the credential is persisted as a JSON file in `auth-dir`.
+- Use a lower-case provider key: the conductor lower-cases provider names before looking up executors and credentials.
+- `RegisterExecutor` replaces any executor with the same identifier. Do not reuse built-in IDs (`gemini`, `claude`, `codex`, `ollama`, ...) unless you intend to override them.
+- You can also add the provider to a [virtual model](/advanced/virtual-models) pool: members reference `provider: myprov` and `model: myprov-large`.
+
+### Custom translators
+
+Register your own format pair when the upstream does not speak a built-in format. `Register(from, to, ...)` takes the **client** format as `from` and your **upstream** format as `to`; the response transform converts upstream output back to the client format. Look them up with the same `(client, upstream)` order:
+
+```go
+const fMyProv = sdktr.Format("myprov")
+
+func init() {
+	sdktr.Register(sdktr.FormatOpenAI, fMyProv,
+		func(model string, raw []byte, stream bool) []byte { return toMyProv(model, raw) },
+		sdktr.ResponseTransform{
+			NonStream: func(ctx context.Context, model string, origReq, translatedReq, raw []byte, param *any) string {
+				return toOpenAIResponse(raw)
+			},
+			Stream: func(ctx context.Context, model string, origReq, translatedReq, raw []byte, param *any) []string {
+				return []string{toOpenAIChunk(raw)}
+			},
+		})
+}
+
+// In Execute:
+//   body := sdktr.TranslateRequest(opts.SourceFormat, fMyProv, req.Model, req.Payload, false)
+//   out  := sdktr.TranslateNonStream(ctx, opts.SourceFormat, fMyProv, req.Model, opts.OriginalRequest, body, raw, &param)
+```
+
+If no translator is registered for a pair, `TranslateRequest` and `TranslateNonStream` return the payload unchanged.
+
+## Programmatic execution (no HTTP)
+
+The core manager can run requests directly. This only works with executors you register yourself; the built-in executors live in `internal/` and are not constructible from another module.
 
 ```go
 import (
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
+	"context"
+
+	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+	"github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	sdktr "github.com/traylinx/switchAILocal/sdk/translator"
 )
 
-func main() {
-    svc, err := switchailocal.NewBuilder().
-        WithConfig(cfg).
-        WithConfigPath("config.yaml").
-        Build()
-    if err != nil {
-        log.Fatal(err)
-    }
+core := coreauth.NewManager(nil, nil, nil) // nil store: in-memory only
+core.RegisterExecutor(myprov.Executor{BaseURL: "https://api.example.com/v1"})
+_, _ = core.Register(ctx, &coreauth.Auth{
+	ID: "myprov-1", Provider: "myprov", Status: coreauth.StatusActive,
+	Attributes: map[string]string{"api_key": "YOUR_UPSTREAM_KEY"},
+})
 
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
-
-    // Handle shutdown signals
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-    go func() {
-        <-sigChan
-        log.Println("Shutting down...")
-        
-        // Give service 10 seconds to shut down gracefully
-        shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-        defer shutdownCancel()
-        
-        if err := svc.Shutdown(shutdownCtx); err != nil {
-            log.Printf("Shutdown error: %v", err)
-        }
-        cancel()
-    }()
-
-    if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-        log.Fatal(err)
-    }
-}
+// Model left empty: skips the model-registry check for the credential.
+resp, err := core.Execute(ctx, []string{"myprov"},
+	executor.Request{Payload: []byte(`{"model":"myprov-large","messages":[{"role":"user","content":"hi"}]}`)},
+	executor.Options{SourceFormat: sdktr.FormatOpenAI},
+)
 ```
 
-## Complete Example
+If `Request.Model` is set, each candidate credential must have that model registered in `GlobalModelRegistry()` under its `ID`, otherwise the call fails with `auth_not_found`. A bare manager makes one attempt per credential; call `core.SetRetryConfig(retries, maxWait)` to retry after cooldowns (the embedded server does this from `request-retry` and `max-retry-interval`).
 
-See the [custom provider example](https://github.com/traylinx/switchAILocal/tree/main/examples/advanced) for a full working implementation.
+## Usage plugins
+
+Receive one record per upstream call (provider, model, auth ID, token counts, failure flag):
+
+```go
+import "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
+
+type logUsage struct{}
+
+func (logUsage) HandleUsage(ctx context.Context, r usage.Record) {
+	log.Printf("%s/%s in=%d out=%d failed=%v", r.Provider, r.Model, r.Detail.InputTokens, r.Detail.OutputTokens, r.Failed)
+}
+
+svc.RegisterUsagePlugin(logUsage{})
+```
+
+Records are published by built-in executors; a custom executor only produces records if it calls `usage.PublishRecord` itself.
+
+## Defaults and limits
+
+| Item | Value |
+|------|-------|
+| Shutdown timeout inside `Run` | 30 s |
+| Credential auto-refresh interval | 15 min |
+| Credential selector | `round-robin` unless `routing.strategy: fill-first` |
+| Core manager retries | `request-retry` from config (applied by `Run`), 0 for a bare `NewManager` |
+| Importable packages | `sdk/...` only |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Build fails: provider type 'config-api-key' is not registered">
+    `api-keys` is set in `config.yaml`. Register an access provider for `config.AccessProviderTypeConfigAPIKey` before `Build()` (see [Client API keys](#client-api-keys-api-keys)), or remove `api-keys` for a localhost-only server.
+  </Accordion>
+  <Accordion title="Build fails: configuration path is required">
+    Call `WithConfigPath`. The path is used by the file watcher even if you built `Config` in code.
+  </Accordion>
+  <Accordion title="executor not registered for provider 'x'">
+    The model ID is registered under provider `x` but no executor returns `Identifier() == "x"`. Register it on the manager you pass to `WithCoreAuthManager`.
+  </Accordion>
+  <Accordion title="no active credentials found for provider">
+    No `Auth` with that `Provider` exists, or it is disabled, or the requested model is not registered for that auth ID. Register credentials in `OnAfterStart` (after the token store has loaded) and call `RegisterClient` with the same auth ID.
+  </Accordion>
+  <Accordion title="geminicli: / claudecli: return errors in an embedded server">
+    Local CLI binary discovery is done by the `switchAILocal` binary, not by the SDK. `geminicli:` still works with OAuth token files in `auth-dir`; for `claudecli:` and `vibecli:` use the binary or register your own executor.
+  </Accordion>
+  <Accordion title="Streaming responses contain 'data: data:'">
+    Your executor's `StreamChunk.Payload` already includes the SSE prefix. Send bare JSON; the handler frames it.
+  </Accordion>
+</AccordionGroup>
+
+A complete runnable example lives in [`examples/advanced`](https://github.com/traylinx/switchAILocal/tree/main/examples/advanced) in the repository (it imports an internal package, so it only builds inside the switchAILocal module).
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Python SDK" icon="python" href="/sdk/python">
-    Use switchAILocal with Python
+  <Card title="Python" icon="python" href="/sdk/python">
+    Call switchAILocal from Python
   </Card>
-  <Card title="Node.js SDK" icon="node-js" href="/sdk/nodejs">
-    Use switchAILocal with Node.js
+  <Card title="Node.js" icon="node-js" href="/sdk/nodejs">
+    Call switchAILocal from Node.js
+  </Card>
+  <Card title="Virtual models" icon="layer-group" href="/advanced/virtual-models">
+    Put custom providers behind a stable model name
   </Card>
   <Card title="Examples" icon="code" href="/examples/basic-usage">
-    See more usage examples
-  </Card>
-  <Card title="API Reference" icon="book" href="/api-reference">
-    Complete API documentation
+    Request examples
   </Card>
 </CardGroup>

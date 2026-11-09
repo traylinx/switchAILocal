@@ -1,196 +1,208 @@
 ---
 title: 'Provider Configuration'
-description: 'Configure API keys and settings for cloud and local AI providers'
+description: 'API keys, OpenAI-compatible services, local servers, aliases and virtual models'
 icon: 'plug'
 ---
 
-## Overview
+Providers come from three places:
 
-switchAILocal supports multiple AI providers, each with its own configuration format. Providers are organized into:
+| Source | Configured by | Example prefix |
+| ------ | ------------- | -------------- |
+| CLI tools on `PATH` | nothing (auto-detected at startup) | `geminicli:`, `claudecli:`, `codex:`, `vibecli:` |
+| Credential files in `auth-dir` | [Login commands](/cli/login) or the management panel | depends on provider |
+| `config.yaml` | the keys on this page | `gemini:`, `claude:`, `codex:`, `switchai:`, `ollama:`, `opencode:` |
 
-- **Cloud Providers**: OpenAI, Anthropic, Google Gemini, Traylinx SwitchAI
-- **Local Providers**: Ollama, LM Studio, OpenCode
-- **Compatible Providers**: OpenRouter, Groq, Together AI, and others via OpenAI compatibility
+Several entries for the same provider are load-balanced according to
+`routing.strategy` ([Server](/configuration/server#credential-selection)).
 
-## Traylinx SwitchAI Cloud
+## Options shared by API-key providers
 
-Unified access to 100+ cloud models through a single API.
+`gemini-api-key`, `claude-api-key`, `codex-api-key`, `switchai-api-key` and
+`vertex-api-key` are lists; each item is one credential.
 
-```yaml config.yaml
-switchai-api-key:
-  - api-key: "sk-lf-..."
-    base-url: "https://switchai.traylinx.com/v1"
-    models:
-      - name: "openai/gpt-oss-120b"
-        alias: "switchai-fast"
-      - name: "deepseek-reasoner"
-        alias: "switchai-reasoner"
-```
+| Field | Meaning |
+| ----- | ------- |
+| `api-key` | Upstream key |
+| `base-url` | Upstream endpoint (see each provider for whether it is required) |
+| `prefix` | Namespace: models are also reachable as `<prefix>/<model>`. No `/` allowed. |
+| `proxy-url` | Per-credential outbound proxy, overrides the global `proxy-url` |
+| `headers` | Extra HTTP headers sent upstream |
+| `models` | Explicit models: `name` (upstream ID) and `alias` (name clients use) |
+| `models-url` | Override the model-list endpoint used for discovery (not for `vertex-api-key`) |
+| `excluded-models` | Model IDs or wildcard patterns (`*-preview`) to hide (not for `vertex-api-key`) |
 
-<ParamField path="switchai-api-key[].api-key" type="string" required>
-  Your SwitchAI API key. Get one at [switchai.traylinx.com](https://switchai.traylinx.com)
-</ParamField>
+Prefixed IDs (`teamA/gemini-2.5-pro`) are routable but hidden from
+`/v1/models` unless `force-model-prefix: true`.
 
-<ParamField path="switchai-api-key[].base-url" type="string" default="https://switchai.traylinx.com/v1">
-  SwitchAI API endpoint
-</ParamField>
-
-<ParamField path="switchai-api-key[].prefix" type="string">
-  Optional prefix to namespace models (e.g., `"teamA/deepseek"`)
-</ParamField>
-
-<ParamField path="switchai-api-key[].models" type="array">
-  Model name mappings and aliases
-</ParamField>
-
-<ParamField path="switchai-api-key[].proxy-url" type="string">
-  Override global proxy for this credential
-</ParamField>
-
-<ParamField path="switchai-api-key[].headers" type="object">
-  Additional HTTP headers for requests
-</ParamField>
-
-## Google Gemini API
-
-Configure Google Gemini API access:
+## Google AI Studio (Gemini)
 
 ```yaml config.yaml
 gemini-api-key:
-  - api-key: "AIzaSy..."
-    prefix: "google"
-    base-url: "https://generativelanguage.googleapis.com"
-```
-
-<ParamField path="gemini-api-key[].api-key" type="string" required>
-  Google Gemini API key from [Google AI Studio](https://aistudio.google.com)
-</ParamField>
-
-<ParamField path="gemini-api-key[].prefix" type="string">
-  Namespace models (e.g., `"google/gemini-pro"`)
-</ParamField>
-
-<ParamField path="gemini-api-key[].base-url" type="string">
-  Override Gemini API endpoint (optional)
-</ParamField>
-
-<ParamField path="gemini-api-key[].models" type="array">
-  Model aliases for custom routing
-</ParamField>
-
-**Example with model exclusions:**
-
-```yaml
-gemini-api-key:
-  - api-key: "AIzaSy..."
-    prefix: "google"
+  - api-key: "your-gemini-key"
+  - api-key: "your-second-gemini-key"
+    prefix: "team-b"
     excluded-models:
-      - "*-preview"  # Exclude all preview models
-      - "gemini-1.0-*"  # Exclude Gemini 1.0 models
+      - "*-preview"
 ```
 
-## Anthropic Claude API
+| Field | Required | Default |
+| ----- | -------- | ------- |
+| `api-key` | yes; entries without it are dropped, duplicates removed | |
+| `base-url` | no | Google's Generative Language API |
 
-Configure Claude API credentials:
+Prefix: `gemini:`.
+
+## Anthropic API
 
 ```yaml config.yaml
 claude-api-key:
-  - api-key: "sk-ant-..."
+  - api-key: "sk-ant-your-key"
     models:
-      - name: "claude-3-5-sonnet-20241022"
+      - name: "claude-sonnet-4-5-20250929"
         alias: "sonnet"
 ```
 
-<ParamField path="claude-api-key[].api-key" type="string" required>
-  Anthropic API key from [Anthropic Console](https://console.anthropic.com)
-</ParamField>
+`base-url` is optional (default Anthropic API); set it for Claude-compatible
+services. Prefix: `claude:`. Clients can also call the Anthropic-format
+`/v1/messages` route.
 
-<ParamField path="claude-api-key[].base-url" type="string">
-  Override Claude API endpoint (for Claude-compatible services)
-</ParamField>
-
-<ParamField path="claude-api-key[].models" type="array">
-  Model name mappings and aliases
-</ParamField>
-
-<ParamField path="claude-api-key[].prefix" type="string">
-  Namespace models for this credential
-</ParamField>
-
-## OpenAI / Codex API
-
-Configure OpenAI and compatible services:
+## OpenAI API (`codex-api-key`)
 
 ```yaml config.yaml
 codex-api-key:
-  - api-key: "sk-..."
+  - api-key: "sk-your-openai-key"
     base-url: "https://api.openai.com/v1"
 ```
 
-<ParamField path="codex-api-key[].api-key" type="string" required>
-  OpenAI API key from [OpenAI Platform](https://platform.openai.com)
-</ParamField>
+<Warning>
+  `base-url` is required. Entries without it are dropped silently.
+</Warning>
 
-<ParamField path="codex-api-key[].base-url" type="string" required>
-  OpenAI API endpoint
-</ParamField>
+The name is historical; it serves OpenAI models in general. Prefix: `codex:`
+(shared with the Codex CLI provider).
 
-<ParamField path="codex-api-key[].models" type="array">
-  Model aliases (optional)
-</ParamField>
-
-<Note>
-  The `codex-api-key` name is historical. This provider works with all OpenAI models, not just Codex.
-</Note>
-
-## Ollama (Local)
-
-Configure local Ollama server integration:
+## Traylinx switchAI
 
 ```yaml config.yaml
-ollama:
-  enabled: true
-  base-url: "http://localhost:11434"
-  auto-discover: true
+switchai-api-key:
+  - api-key: "sk-your-switchai-key"
+    models:
+      - name: "deepseek-reasoner"
+        alias: "reasoner"
 ```
 
-<ParamField path="ollama.enabled" type="boolean" default="false">
-  Enable Ollama provider registration
-</ParamField>
+`base-url` defaults to `https://switchai.traylinx.com/v1`. Prefix: `switchai:`.
 
-<ParamField path="ollama.base-url" type="string" default="http://localhost:11434">
-  Ollama API endpoint
-</ParamField>
+## OpenAI-compatible services
 
-<ParamField path="ollama.auto-discover" type="boolean" default="true">
-  Automatically fetch available models from Ollama on startup
-</ParamField>
+Any service that speaks the OpenAI API: Groq, OpenRouter, DeepSeek, Together,
+Fireworks, a self-hosted vLLM, and so on.
 
-<ParamField path="ollama.excluded-models" type="array">
-  Model IDs to exclude from discovery
-</ParamField>
+```yaml config.yaml
+openai-compatibility:
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_your-key"
+    models:
+      - name: "openai/gpt-oss-20b"
+        alias: "gpt-oss-20b"
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    models-url: "https://openrouter.ai/api/v1/models"
+    api-key-entries:
+      - api-key: "sk-or-your-key"
+      - api-key: "sk-or-second-key"
+        proxy-url: "socks5://127.0.0.1:1080"
+```
 
-<ParamField path="ollama.models" type="array">
-  Manual model alias definitions
-</ParamField>
+| Field | Required | Meaning |
+| ----- | -------- | ------- |
+| `name` | yes | Provider ID used in logs, metrics, `performance.*.per-provider` and virtual-model `provider` fields |
+| `base-url` | yes | API root ending in `/v1` (or equivalent). Entries without it are dropped. |
+| `api-key-entries` | no | List of `{api-key, proxy-url}`; each key is a credential. Omit for keyless local servers. |
+| `models` | no | Explicit model list with aliases (see [Model options](#model-options)) |
+| `models-url` | no | Model-list endpoint; when set, models are discovered at startup using the first key |
+| `prefix` | no | Namespace (`<prefix>/<alias>`) |
+| `headers` | no | Extra headers, for example a required `User-Agent` |
+| `excluded-models` | no | IDs or patterns to hide |
+| `proxy-url` | no | Outbound proxy for this provider |
+| `kimi-history-shim` | no | Default `true`. Adds a placeholder `reasoning_content` to earlier assistant tool-call messages that lack it, which Kimi and DeepSeek thinking models require. Harmless elsewhere; set `false` to disable. |
 
-**Example with custom models:**
+<Tip>
+  A client that insists on a `vendor:model` string can be served by making that
+  string the alias, for example `alias: "groq:gpt-oss-20b"`. Only the built-in
+  prefixes (`ollama:`, `geminicli:`, ...) are parsed as prefixes; other strings
+  are matched as model names.
+</Tip>
 
-```yaml
+## Vertex-compatible services
+
+For services that use Vertex AI-style paths with a plain API key. For real
+Vertex AI with a service account, use `-vertex-import` ([Login](/cli/login#vertex-ai-service-account)).
+
+```yaml config.yaml
+vertex-api-key:
+  - api-key: "vk-your-key"
+    base-url: "https://vertex-proxy.example.com"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "flash"
+```
+
+`base-url` is required; entries without it are dropped.
+
+## Ollama
+
+```yaml config.yaml
 ollama:
   enabled: true
   base-url: "http://localhost:11434"
   auto-discover: true
   excluded-models:
-    - "llama2"  # Exclude old llama2
-  models:
-    - name: "llama3.2:latest"
-      alias: "llama"
+    - "llama2*"
 ```
 
-## OpenCode (Local)
+| Field | Default | Meaning |
+| ----- | ------- | ------- |
+| `enabled` | `false` | Register the provider |
+| `base-url` | `http://localhost:11434` | Ollama API root |
+| `auto-discover` | `false` | Load the model list from `/api/tags` at startup; without it, models are not listed but `ollama:<model>` still routes |
+| `proxy-url` | none | Outbound proxy |
+| `excluded-models` | none | IDs or patterns to hide |
 
-Integrate with local OpenCode server:
+Use `ollama:<model>` (for example `ollama:llama3.2`). From a container, set
+`base-url` to `http://host.docker.internal:11434`. The `models`, `headers` and
+`models-url` fields are accepted but not used in 0.6.2.
+
+## LM Studio
+
+<Warning>
+  In 0.6.2 the `lmstudio:` block registers the provider, but its models are not
+  discovered and `lmstudio:` is not a recognized prefix. Requests fail with
+  `unknown provider for model lmstudio:...`. Configure LM Studio as an
+  OpenAI-compatible service instead.
+</Warning>
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "lm-studio"
+    base-url: "http://localhost:1234/v1"
+    models-url: "http://localhost:1234/v1/models"
+    models:
+      - name: "qwen2.5-7b-instruct"          # the model ID LM Studio shows
+        alias: "lmstudio:qwen2.5-7b-instruct"
+```
+
+The `lmstudio:` block itself (`enabled`, default `false`; `base-url`, default
+`http://localhost:1234/v1`; `proxy-url`; `excluded-models`) is still read and
+used for heartbeat checks.
+
+## OpenCode
+
+Connects to a running OpenCode server (`opencode serve`) and exposes its agents
+as models.
 
 ```yaml config.yaml
 opencode:
@@ -199,236 +211,100 @@ opencode:
   default-agent: "build"
 ```
 
-<ParamField path="opencode.enabled" type="boolean" default="false">
-  Enable OpenCode provider integration
-</ParamField>
+| Field | Default | Meaning |
+| ----- | ------- | ------- |
+| `enabled` | `false` | Register the provider and discover agents from `<base-url>/agent` |
+| `base-url` | `http://localhost:4096` | OpenCode server |
+| `default-agent` | none | Agent used when the request does not name one |
 
-<ParamField path="opencode.base-url" type="string" default="http://localhost:4096">
-  OpenCode API endpoint
-</ParamField>
+Prefix: `opencode:`.
 
-<ParamField path="opencode.default-agent" type="string" default="build">
-  Default agent to use when no specific model is requested
-</ParamField>
+## Model options
 
-## LM Studio (Local)
+`models` items in `openai-compatibility` accept these fields. For the other
+providers, use `name` and `alias`.
 
-Configure LM Studio integration:
+| Field | Meaning |
+| ----- | ------- |
+| `name` | Upstream model ID |
+| `alias` | ID clients send. Several aliases may point at one `name`. |
+| `expose` | `false` keeps the alias routable but hides it from `/v1/models` (default `true`) |
+| `visibility` | `private` also hides it from `/v1/models` |
+| `context_length` | Context window reported by `/v1/models` |
+| `capabilities` | `operations`, `input`, `output`, `tools`, `context`, `tool_history_replay`, `agentic_safe`, ... reported by `/v1/models` |
+| `native_tools` | Provider-native tools (`type`, `description`, `params`) advertised in `/v1/models`, for example MiniMax `web_search` |
 
-```yaml config.yaml
-lmstudio:
-  enabled: false
-  base-url: "http://localhost:1234/v1"
-  auto-discover: true
+```yaml
+models:
+  - name: "deepseek-v4-pro"
+    alias: "long-context"
+    context_length: 1000000
+    capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true}
 ```
 
-<ParamField path="lmstudio.enabled" type="boolean" default="false">
-  Enable LM Studio provider registration
-</ParamField>
+## Virtual models
 
-<ParamField path="lmstudio.base-url" type="string" default="http://localhost:1234/v1">
-  LM Studio API endpoint
-</ParamField>
-
-<ParamField path="lmstudio.auto-discover" type="boolean" default="true">
-  Automatically fetch models from LM Studio on startup
-</ParamField>
-
-## OpenAI Compatibility
-
-Configure third-party providers that support OpenAI API format:
+A virtual model is one public model ID backed by a pool of concrete
+provider/model members. Requests are spread across enabled members by weight
+and filtered by the capabilities the request needs (tools, images, ...).
 
 ```yaml config.yaml
-openai-compatibility:
-  - name: "groq"
-    prefix: "groq"
-    base-url: "https://api.groq.com/openai/v1"
-    api-key-entries:
-      - api-key: "gsk_..."
-  - name: "openrouter"
-    prefix: "or"
-    base-url: "https://openrouter.ai/api/v1"
-    api-key-entries:
-      - api-key: "sk-or-v1-..."
+virtual-models:
+  my-default:
+    description: "Chat pool"
+    expose: true
+    strategy: weighted-round-robin
+    fallback: true
+    response_model: requested
+    members:
+      - id: groq-oss
+        provider: groq
+        model: openai/gpt-oss-20b
+        weight: 3
+        capabilities: {operations: [chat, chat_text_tools], input: [text], output: [text], tools: true}
+      - id: local-llama
+        provider: ollama
+        model: llama3.2
+        weight: 1
+        capabilities: {operations: [chat], input: [text], output: [text]}
 ```
 
-<ParamField path="openai-compatibility[].name" type="string" required>
-  Provider identifier (used in logs and metrics)
-</ParamField>
+| Field | Default | Meaning |
+| ----- | ------- | ------- |
+| `expose` | `false` | List the ID in `/v1/models`. An exposed pool needs at least one enabled member. |
+| `strategy` | `weighted-round-robin` | Or `round-robin` |
+| `fallback` | `false` | Try another member when one fails |
+| `response_model` | `requested` | Model name reported back to the client |
+| `members[].id` | required, unique | Member ID |
+| `members[].provider` | required | Lower-case provider ID of a configured provider |
+| `members[].model` | required | Upstream model for that provider |
+| `members[].enabled` | `true` | Include in the pool |
+| `members[].weight` | `1` | Relative share; must not be negative |
+| `members[].capabilities` | none | What the member can do; used to filter members per request |
 
-<ParamField path="openai-compatibility[].base-url" type="string" required>
-  Provider's OpenAI-compatible API endpoint
-</ParamField>
+An invalid pool stops the server at startup. More detail:
+[Virtual models](/advanced/virtual-models).
 
-<ParamField path="openai-compatibility[].prefix" type="string">
-  Namespace models (e.g., `"groq/llama-3.1-70b"`)
-</ParamField>
+## Hiding models from OAuth and CLI credentials
 
-<ParamField path="openai-compatibility[].api-key-entries" type="array">
-  List of API keys for this provider
-</ParamField>
-
-<ParamField path="openai-compatibility[].models" type="array">
-  Model name mappings and aliases
-</ParamField>
-
-**Supported providers:**
-
-- **Groq**: `https://api.groq.com/openai/v1`
-- **OpenRouter**: `https://openrouter.ai/api/v1`
-- **Together AI**: `https://api.together.xyz/v1`
-- **Fireworks AI**: `https://api.fireworks.ai/inference/v1`
-- **DeepSeek**: `https://api.deepseek.com/v1`
-- **Any OpenAI-compatible service**
-
-## Vertex AI Compatibility
-
-For third-party services using Vertex AI-style protocols with API key auth:
-
-```yaml config.yaml
-vertex-api-key:
-  - api-key: "vk-..."
-    base-url: "https://api.example.com"
-    models:
-      - name: "gemini-2.0-flash"
-        alias: "flash"
-```
-
-<ParamField path="vertex-api-key[].api-key" type="string" required>
-  API key for Vertex-compatible service
-</ParamField>
-
-<ParamField path="vertex-api-key[].base-url" type="string" required>
-  Base URL for Vertex-compatible endpoint
-</ParamField>
-
-<ParamField path="vertex-api-key[].models" type="array">
-  Model configurations with aliases
-</ParamField>
-
-<Note>
-  Vertex compatibility is for third-party services that mimic Google's Vertex AI endpoint structure but use simple API key authentication instead of OAuth.
-</Note>
-
-## Global Model Exclusions
-
-Exclude models globally for OAuth/file-backed auth entries:
+`excluded-models` applies to one config entry. To hide models from credentials
+that come from `auth-dir` files or CLI discovery, use a map keyed by provider:
 
 ```yaml config.yaml
 oauth-excluded-models:
   geminicli:
     - "*-preview"
-  ollama:
-    - "llama2"
+  claudecli:
+    - "claude-3-5-haiku-20241022"
 ```
 
-<ParamField path="oauth-excluded-models" type="object">
-  Map of provider names to excluded model patterns (supports wildcards)
-</ParamField>
-
-## Per-Provider Settings
-
-All cloud providers support these common settings:
-
-<Accordion title="Common provider settings">
-
-- **`prefix`**: Namespace models (e.g., `team-a/model-name`)
-- **`proxy-url`**: Override global proxy for this provider
-- **`models-url`**: Override model discovery endpoint
-- **`headers`**: Add custom HTTP headers
-- **`excluded-models`**: List of model patterns to exclude
-- **`models`**: Manual model name/alias mappings
-
-</Accordion>
-
-## Model Aliases
-
-Create friendly aliases for model names:
-
-```yaml
-gemini-api-key:
-  - api-key: "AIzaSy..."
-    models:
-      - name: "gemini-2.0-flash-exp"
-        alias: "flash"
-      - name: "gemini-2.0-pro-exp"
-        alias: "pro"
-```
-
-Now requests for `flash` route to `gemini-2.0-flash-exp`.
-
-## Multiple Credentials
-
-Configure multiple API keys for load balancing and failover:
-
-```yaml
-gemini-api-key:
-  - api-key: "AIzaSy...key1"
-    prefix: "team-a"
-  - api-key: "AIzaSy...key2"
-    prefix: "team-b"
-  - api-key: "AIzaSy...shared"
-    # No prefix - shared across all teams
-```
-
-With `routing.strategy: "round-robin"`, requests are distributed evenly.
-
-## Complete Example
-
-```yaml config.yaml
-# Cloud providers
-switchai-api-key:
-  - api-key: "sk-lf-..."
-    models:
-      - name: "deepseek-reasoner"
-        alias: "reasoner"
-
-gemini-api-key:
-  - api-key: "AIzaSy..."
-    prefix: "google"
-
-claude-api-key:
-  - api-key: "sk-ant-..."
-    models:
-      - name: "claude-3-5-sonnet-20241022"
-        alias: "sonnet"
-
-codex-api-key:
-  - api-key: "sk-..."
-    base-url: "https://api.openai.com/v1"
-
-# Local providers
-ollama:
-  enabled: true
-  base-url: "http://localhost:11434"
-  auto-discover: true
-
-opencode:
-  enabled: true
-  base-url: "http://localhost:4096"
-  default-agent: "build"
-
-# OpenAI-compatible providers
-openai-compatibility:
-  - name: "groq"
-    prefix: "groq"
-    base-url: "https://api.groq.com/openai/v1"
-    api-key-entries:
-      - api-key: "gsk_..."
-  - name: "openrouter"
-    prefix: "or"
-    base-url: "https://openrouter.ai/api/v1"
-    api-key-entries:
-      - api-key: "sk-or-v1-..."
-```
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Security Configuration" icon="shield" href="/configuration/security">
-    Configure API authentication and management access
+  <Card title="Security" icon="shield" href="/configuration/security">
+    Client keys and management access
   </Card>
-  <Card title="Intelligent Routing" icon="brain" href="/features/intelligent-routing">
-    Enable automatic model selection with Cortex Router
+  <Card title="Provider prefixes" icon="route" href="/api/provider-prefixes">
+    How the `model` field selects a provider
   </Card>
 </CardGroup>

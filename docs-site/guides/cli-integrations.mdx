@@ -9,8 +9,11 @@ The `switchAILocal` proxy is fully compatible with any application that supports
 ## Prerequisites
 
 - switchAILocal running locally (default: `http://localhost:18080`)
-- At least one provider configured with credentials (e.g., MiniMax, OpenRouter, etc.)
-- Know the model IDs available via `curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"`
+- At least one provider configured (see the [Provider Setup Guide](/guides/setup-providers))
+- A client key from `api-keys:` in `config.yaml` (examples use `sk-test-123`)
+- The model IDs you want, from `curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-test-123"`
+
+The examples use `ail-compound`, the virtual model from `config.example.yaml`. Replace it with any ID from `/v1/models`: a virtual model, an alias such as `deepseek-pro`, or a pinned form such as `ollama:llama3.2`.
 
 ---
 
@@ -56,7 +59,7 @@ Edit `~/.config/opencode/opencode.json`:
 | `npm` | `@ai-sdk/openai-compatible` | Required — OpenAI-compatible SDK adapter |
 | `baseURL` | `http://localhost:18080/v1` | switchAILocal OpenAI endpoint |
 | `apiKey` | Your configured API key | Must match a key in your `api-keys` config |
-| Model key | `provider:ModelName` | Must match the exact model ID from `/v1/models` |
+| Model key | e.g. `ail-compound` | Must match a model ID from `/v1/models` |
 
 <Note>
 **Reasoning Models**: switchAILocal automatically normalizes `<think>` tags (used by MiniMax, DeepSeek R1, etc.) into the OpenAI-standard `reasoning_content` field. This gives you native chain-of-thought rendering in OpenCode.
@@ -92,8 +95,8 @@ Edit `~/.claude/settings.json`:
 |----------|-------|-------|
 | `ANTHROPIC_BASE_URL` | `http://localhost:18080` | **No `/v1` suffix** — Claude Code appends `/v1/messages` automatically |
 | `ANTHROPIC_AUTH_TOKEN` | Your configured API key | Sent as `Bearer` token. Use `ANTHROPIC_API_KEY` for `x-api-key` header instead |
-| `ANTHROPIC_MODEL` | `provider:ModelName` | The model Claude Code will use for all requests |
-| `ANTHROPIC_SMALL_FAST_MODEL` | `provider:ModelName` | Model used for background/fast tasks (tab completion, etc.) |
+| `ANTHROPIC_MODEL` | e.g. `ail-compound` | The model Claude Code uses for requests |
+| `ANTHROPIC_SMALL_FAST_MODEL` | e.g. `ail-compound` | Model used for background/fast tasks |
 
 <Warning>
 **Important**: `ANTHROPIC_BASE_URL` should be `http://localhost:18080` without `/v1`. Claude Code automatically appends `/v1/messages` to the base URL. If you include `/v1`, requests will go to `/v1/v1/messages` and fail.
@@ -172,7 +175,7 @@ export SWITCHAILOCAL_API_KEY="sk-test-123"
 | `model_provider` | `switchailocal` | Points to your `[model_providers.*]` section |
 | `base_url` | `http://localhost:18080/v1` | **Include `/v1`** — Codex appends `/responses` |
 | `env_key` | `SWITCHAILOCAL_API_KEY` | Name of the env var holding your API key |
-| `model` | `provider:ModelName` | Must match the model ID from switchAILocal |
+| `model` | e.g. `ail-compound` | Must match a model ID from `/v1/models` |
 
 <Note>
 Codex CLI uses the OpenAI **Responses API** (`/v1/responses`), which switchAILocal fully supports alongside the traditional Chat Completions API.
@@ -188,14 +191,14 @@ For any generic OpenAI-compatible CLI tool, use these connection parameters:
 ```
 API Base URL:  http://localhost:18080/v1
 API Key:       sk-test-123  (or your configured key)
-Model:         provider:ModelName  (e.g., ail-compound)
+Model:         any ID from /v1/models (e.g., ail-compound)
 ```
 
 ### Anthropic-Compatible Clients
 ```
 API Base URL:  http://localhost:18080
 API Key:       sk-test-123  (via x-api-key header)
-Model:         provider:ModelName
+Model:         any ID from /v1/models
 Version:       2023-06-01  (anthropic-version header)
 ```
 
@@ -206,3 +209,70 @@ Version:       2023-06-01  (anthropic-version header)
 curl http://localhost:18080/v1/models \
   -H "Authorization: Bearer sk-test-123" | python3 -m json.tool
 ```
+
+---
+
+## Gemini-native clients
+
+Clients that speak the Gemini REST API can use the Gemini-compatible routes:
+
+```
+API Base URL:  http://localhost:18080        (routes under /v1beta/models)
+API Key:       sk-test-123  (x-goog-api-key header or ?key= query parameter)
+```
+
+```bash
+curl "http://localhost:18080/v1beta/models/ail-compound:generateContent?key=sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
+```
+
+---
+
+## Amp CLI
+
+switchAILocal can sit in front of the [Amp](https://ampcode.com) CLI. Amp's model calls are served by your own providers, and everything else (login, threads, telemetry) is proxied to the Amp control plane.
+
+```yaml config.yaml
+ampcode:
+  upstream-url: "https://ampcode.com"     # empty = no control-plane proxy, provider routes only
+  # upstream-api-key: ""                  # optional; otherwise AMP_API_KEY or ~/.local/share/amp/secrets.json
+  restrict-management-to-localhost: true  # only accept /api/* management calls from 127.0.0.1 / ::1
+  model-mappings:                         # route models Amp asks for to models you have
+    - from: "claude-opus-4.5"
+      to: "ail-compound"
+    - from: "^gpt-5.*"
+      to: "deepseek-pro"
+      regex: true
+  force-model-mappings: false             # true = apply mappings even if a local provider has the model
+```
+
+Point Amp at the gateway (for example `AMP_URL=http://localhost:18080`) and authenticate with one of your `api-keys`.
+
+How each Amp model request is resolved (`/api/provider/<provider>/v1/...`, `/v1beta/...`):
+
+1. With `force-model-mappings: true`, a matching mapping wins if its target model is routable.
+2. Otherwise, if a local provider serves the requested model, it is used.
+3. Otherwise a matching mapping is applied.
+4. Otherwise the request is forwarded to `upstream-url`, which spends Amp credits. The log line `forwarding to ampcode.com (uses amp credits)` names the model so you can add a mapping.
+
+Exact mappings are matched case-insensitively; regex mappings are tried in order after exact ones. A mapping is skipped when its target has no provider. All `ampcode` settings are hot-reloadable and editable under `/v0/management/ampcode/*`. Route details are in [Amp CLI Routes](/api/amp).
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="401 Missing API key / Invalid API key">
+    The client must send one of your `api-keys` as `Authorization: Bearer`, `x-api-key`, `x-goog-api-key`, `?key=` or `?auth_token=`.
+  </Accordion>
+  <Accordion title="Claude Code calls /v1/v1/messages">
+    Remove `/v1` from `ANTHROPIC_BASE_URL`.
+  </Accordion>
+  <Accordion title="Model not found from the client">
+    Copy the exact ID from `/v1/models`. If the catalog only shows `ail-*` IDs, that is `ail-` catalog mode (see [Routing](/concepts/routing#model-visibility)); other registered IDs remain usable even though they are not listed.
+  </Accordion>
+  <Accordion title="Tool calls fail on a virtual model">
+    The pool needs a member with `chat_text_tools` (and `chat_multiturn_tools` for agent loops); see [Virtual Models](/advanced/virtual-models).
+  </Accordion>
+</AccordionGroup>

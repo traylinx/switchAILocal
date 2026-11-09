@@ -1,18 +1,245 @@
 ---
-title: "Managed server updates"
-description: "Enroll Linux routers once, then reconcile reviewed immutable releases."
+title: "Managed Server Updates"
+description: "Keep Linux Docker Compose hosts on a reviewed release channel with verification and rollback"
 ---
 
-Publishing an image does not update a running server. Use separate canary and
-stable promotions, then explicitly enroll each Compose router service.
+The managed-server updater is an optional tool for Linux hosts that run
+switchAILocal as **one Docker Compose service**. It follows a release channel,
+pulls the exact image digest the channel names, recreates only that service,
+verifies it with real API calls, and rolls back if verification fails.
 
-The [canonical operator manual](https://github.com/traylinx/switchAILocal/blob/main/deploy/managed-server/README.md)
-contains the new-server walkthrough, private profile and probe configuration,
-inert installer, manual apply, timer activation, rollback and recovery commands.
-Keep that code-coupled manual as the single source of truth.
+Introduced in v0.6.2. Nothing is enrolled automatically: installing a release
+or publishing an image never changes a running server.
 
-<Warning>
-Available from v0.6.1. Existing Cortex and HoCa deployments are not enrolled
-automatically. Live client tests,
-rollback validation and action-specific deployment approval remain required.
-</Warning>
+<Note>
+  This page summarizes the tool. The
+  [operator manual](https://github.com/traylinx/switchAILocal/blob/main/deploy/managed-server/README.md)
+  next to the code is the authoritative reference for every safety rule.
+</Note>
+
+## How releases reach a server
+
+```text
+release build → versioned image digest on GHCR → canary manifest (reviewed)
+→ canary verified → stable manifest (reviewed) → enrolled hosts apply that digest
+```
+
+Channels are JSON manifests in the repository:
+
+| Channel | URL |
+| ------- | --- |
+| `stable` | `https://raw.githubusercontent.com/traylinx/switchAILocal/main/channels/stable.json` |
+| `canary` | `https://raw.githubusercontent.com/traylinx/switchAILocal/main/channels/canary.json` |
+
+A manifest names one immutable image and a monotonically increasing
+`generation`:
+
+```json channels/stable.json
+{
+  "schema_version": 1,
+  "channel": "stable",
+  "generation": 1,
+  "version": "0.6.2",
+  "image": "ghcr.io/traylinx/switchailocal@sha256:<digest>",
+  "source_commit": "<40-character commit SHA>",
+  "promoted_at": "2026-10-17T12:56:10+00:00",
+  "verification_ref": "https://github.com/traylinx/switchAILocal/issues/<n>"
+}
+```
+
+Only `ghcr.io/traylinx/switchailocal@sha256:...` images are accepted. Stable
+refuses pre-release versions and requires a `verification_ref`. A fleet
+rollback is a new, higher generation that points at an older image.
+
+## Requirements
+
+- Linux with systemd (for the timer), Docker Engine, Docker Compose v2.
+- Python 3.10 or newer.
+- Root. Docker socket access is root-equivalent.
+- A switchAILocal Compose service that already runs and passes your own client
+  checks.
+
+## 1. Install the tools
+
+The `managed-server/` folder is in every release archive (and in the repository
+under `deploy/managed-server/`). Verify the archive against `checksums.txt`,
+review the files, then:
+
+```bash
+sudo bash managed-server/install.sh
+```
+
+| Installed path | Contents |
+| -------------- | -------- |
+| `/opt/switchailocal-updater/v1/` | `managed_update.py`, `probe.py`, `promote.py` |
+| `/etc/systemd/system/` | `switchailocal-update@.service`, `switchailocal-update@.timer` |
+| `/etc/switchailocal-updater/profiles/` | Your profiles (mode `0700`) |
+| `/etc/switchailocal-updater/enrolled/` | Enrollment markers |
+| `/var/lib/switchailocal-updater/` | Per-profile state |
+
+The installer does not enable units, enroll, pull or restart anything.
+Re-running it with identical files is a no-op; it refuses to overwrite
+different `v1` files.
+
+## 2. Write a profile
+
+One JSON file per Compose service, owned by root, mode `0600`:
+`/etc/switchailocal-updater/profiles/router-01.json`.
+
+```json router-01.json
+{
+  "schema_version": 1,
+  "name": "router-01",
+  "channel": "stable",
+  "manifest_url": "https://raw.githubusercontent.com/traylinx/switchAILocal/main/channels/stable.json",
+  "compose_files": ["/opt/my-app/compose.yaml"],
+  "env_files": ["/opt/my-app/.env.production"],
+  "project": "my-app",
+  "service": "switchailocal",
+  "lock_file": "/run/lock/switchailocal-update.lock",
+  "verify_command": ["/opt/switchailocal-updater/v1/probe.py", "--config", "/etc/switchailocal-updater/router-01-probe.json"],
+  "verify_timeout": 240,
+  "allow_recreate": false
+}
+```
+
+| Field | Required | Default | Notes |
+| ----- | -------- | ------- | ----- |
+| `schema_version` | yes | | `1` |
+| `name` | yes | | Letters, digits, `_ . -`; also the timer instance name |
+| `channel` | yes | | `stable` or `canary` |
+| `manifest_url` | yes | | HTTPS |
+| `compose_files` | yes | | 1 to 8 absolute paths, in Compose order |
+| `project` | yes | | Exact existing Compose project name |
+| `service` | yes | | The switchAILocal service in that project |
+| `lock_file` | yes | | Absolute path; every tool that redeploys this service must take the same `flock` |
+| `verify_command` | yes | | Absolute executable plus arguments; exit 0 means healthy |
+| `env_files` | no | `[]` | Up to 8. Implicit `.env` loading is disabled, so list it here if you rely on it. Mode `0600`. |
+| `allow_recreate` | no | `false` | Must be `true` before `enroll`/`apply` may recreate the container |
+| `pre_update_command`, `post_update_command` | no | none | Optional hooks to quiesce and resume clients; must be idempotent |
+| `docker_binary` | no | `/usr/bin/docker` | |
+| `docker_host` | no | `unix:///var/run/docker.sock` | Local Unix sockets only |
+| `pull_timeout` | no | `300` | Seconds, max `900` |
+| `compose_timeout`, `health_timeout`, `verify_timeout`, `hook_timeout` | no | `120`, `60`, `90`, `60` | Seconds, max `300` |
+
+Profiles, probe configs, key files and env files must be root-owned, `0600`,
+and not writable by group or others; the tool refuses to run otherwise.
+
+## 3. Write the probe config
+
+`probe.py` is the bundled verifier. It sends synthetic requests to the router:
+a text reply, a forced tool call, raw and normalized tool-history replay, an
+image color check, a complete SSE stream, and optionally an embedding
+dimension check (six generation calls plus one embedding call per run).
+
+```json router-01-probe.json
+{
+  "schema_version": 1,
+  "base_url": "http://127.0.0.1:18080/v1",
+  "key_file": "/etc/switchailocal-updater/router-01-api-key",
+  "chat_model": "your-chat-model",
+  "vision_model": "your-vision-model",
+  "embedding_model": "your-embedding-model",
+  "embedding_dimensions": 1024,
+  "max_tokens": 2048,
+  "timeout": 30,
+  "request_fields": {"store": false, "reasoning_effort": "low"}
+}
+```
+
+| Field | Required | Default | Notes |
+| ----- | -------- | ------- | ----- |
+| `base_url` | yes | | Must end in `/v1`; plain HTTP only for loopback, HTTPS elsewhere |
+| `key_file` | yes | | File holding one client key from the router's `api-keys` (not a provider key) |
+| `chat_model`, `vision_model` | yes | | Models that must pass the checks |
+| `embedding_model` + `embedding_dimensions` | no | | Both or neither |
+| `max_tokens` | no | `2048` | Max `4096` |
+| `timeout` | no | `30` | Per request, seconds, max `60` |
+| `request_fields` | no | `{}` | Only `store`, `reasoning_effort`, `prompt_cache_key`, `prompt_cache_retention` |
+
+An update verifies before and after the switch, and a rollback verifies again,
+so budget for those calls. A timer tick with nothing to do makes no inference
+calls. For application-specific checks, point `verify_command` at a root-owned
+wrapper that runs `probe.py` and your own tests.
+
+## 4. Validate, enroll, apply
+
+```bash
+P=/etc/switchailocal-updater/profiles/router-01.json
+U=/opt/switchailocal-updater/v1/managed_update.py
+
+sudo /opt/switchailocal-updater/v1/probe.py --config /etc/switchailocal-updater/router-01-probe.json --validate-only
+sudo $U --profile $P validate-profile
+sudo $U --profile $P check          # read-only: running vs desired image
+```
+
+Disable any other job that redeploys this service, or make it take the same
+`lock_file`. Once downtime is approved, set `"allow_recreate": true`, then:
+
+```bash
+sudo $U --profile $P enroll   # verify current container, record baseline
+sudo $U --profile $P apply    # pull digest, recreate service, verify
+sudo $U --profile $P status
+```
+
+`apply` pulls only the manifest digest, checks the image's source revision,
+records the previous image ID, and recreates just the named service
+(`--no-deps --no-build --pull never --force-recreate`). Config, env files,
+volumes and other services are not touched. The image pin is written to
+`/var/lib/switchailocal-updater/<profile>/image.override.json`; any manual
+`docker compose` command for this service must include that file and take the
+lock. This is a brief restart, not zero-downtime failover.
+
+## 5. Enable the timer
+
+Only after a successful manual `apply`:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now switchailocal-update@router-01.timer
+systemctl list-timers 'switchailocal-update@*'
+```
+
+The timer runs `apply` 5 minutes after boot and then 5 minutes after each run
+finishes, plus up to 90 seconds of random delay. Logs:
+`journalctl -u switchailocal-update@router-01.service`.
+
+## Commands
+
+All commands take `--profile <file>`, require root, and print JSON. Errors go
+to stderr as `{"ok": false, "code": "<CODE>"}` with exit status 1.
+
+| Command | Effect |
+| ------- | ------ |
+| `validate-profile` | Check the profile and file permissions only |
+| `check` | Fetch the manifest and report running, desired, hold and quarantine state; changes nothing |
+| `enroll` | Verify the current container and write state plus an enrollment marker |
+| `apply` | Reconcile to the channel's digest (what the timer runs) |
+| `status` | Last saved result and current identity; no inference calls |
+| `retry` | Re-attempt the current target despite quarantine or a manual hold; full verification |
+| `rollback` | Restore the image from the last successful update and place a hold on the profile |
+
+## Failures and rollback
+
+| Situation | Behavior |
+| --------- | -------- |
+| Pull or baseline check fails | Running container unchanged |
+| New image fails verification | Previous local image restored (no pull), verified, failed digest quarantined |
+| Crash mid-update | Next run restores from the journal before anything else and exits non-zero |
+| Config or env files changed since enrollment | Held until an operator reconciles |
+| State missing or corrupt | Held; restore matching state before resuming |
+| Lock held by another tool | `UPDATE_LOCKED`, nothing changes |
+
+A quarantined digest stays quarantined even if the generation increases; use
+`retry` after fixing the cause. `rollback` holds the profile, so the timer stops
+applying new digests until you run `retry`. A local rollback does not change
+the channel for other hosts.
+
+The previous image is kept by a never-started container labelled
+`io.switchailocal.rollback=<profile>`. Exclude that label from any container
+prune job, and keep disk space for two images.
+
+## Related
+
+- [Docker deployment](/guides/docker-deployment)
+- [Operator manual](https://github.com/traylinx/switchAILocal/blob/main/deploy/managed-server/README.md)

@@ -1,501 +1,92 @@
 ---
-title: 'WebSocket'
-description: 'Real-time bidirectional streaming for AI interactions'
+title: 'WebSocket Relay'
+description: 'GET /v1/ws: connect a browser or agent as a relay provider'
 ---
 
-## Overview
+## What `/v1/ws` is
 
-WebSocket support enables real-time, bidirectional communication with AI providers. Use this for interactive applications that require low-latency streaming.
+`/v1/ws` is **not** a chat-streaming API. Use `stream: true` on the HTTP endpoints for that.
 
-<Warning>
-WebSocket support is currently available for relay functionality. Standard chat completions use Server-Sent Events (SSE) for streaming.
-</Warning>
+A WebSocket client that connects here **becomes a provider**. The gateway sends it HTTP-style requests over the socket, and the client executes them (typically against Google AI Studio from a browser session) and sends the responses back. Requests routed to the `aistudio` provider are delivered to connected relay clients.
 
-## Endpoint
+## Connecting
 
-```
-ws://localhost:18080/v1/ws
+```text
+GET /v1/ws   (WebSocket upgrade)
 ```
 
-Upgrade from HTTP to WebSocket using standard WebSocket handshake.
-
-## Authentication
-
-### Query Parameter (Recommended)
+**Auth:** client API key when `ws-auth: true` (the default). Browsers cannot set headers on the handshake, so use a query parameter:
 
 ```javascript
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
-);
+const ws = new WebSocket("ws://localhost:18080/v1/ws?auth_token=YOUR_API_KEY");
 ```
 
-### Sec-WebSocket-Protocol Header
+`?key=` and the usual headers also work (see [Authentication](/api/authentication)). Missing or wrong keys get `401` before the upgrade.
 
-```javascript
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws',
-  ['access_token', 'sk-test-123']
-);
+Other details:
+
+- Any `Origin` is accepted.
+- Only `GET` is allowed.
+- Each connection is registered as a provider session named `aistudio-<random>`. A new connection with the same name replaces the old one.
+- When `ws-auth` changes from `false` to `true` at runtime, all existing sessions are closed.
+
+## Message envelope
+
+Every frame in both directions is a JSON object:
+
+```json
+{"id": "<request id>", "type": "<message type>", "payload": {}}
 ```
 
-### Disable Authentication (Development Only)
+### Server to client
 
-```yaml config.yaml
-websocket_auth: false  # Not recommended for production
-```
-
-<Warning>
-Disabling WebSocket authentication allows unauthenticated access. Only use in development environments.
-</Warning>
-
-## Message Protocol
-
-### Client to Server
-
-Send JSON messages to the server:
+`http_request`, sent when the gateway routes a request to this relay:
 
 ```json
 {
-  "type": "chat.message",
-  "model": "gemini-2.5-pro",
-  "messages": [
-    {"role": "user", "content": "Hello!"}
-  ],
-  "stream": true
-}
-```
-
-### Server to Client
-
-Receive streaming chunks or complete responses:
-
-```json
-{
-  "type": "chat.chunk",
-  "content": "Hello",
-  "done": false
-}
-```
-
-```json
-{
-  "type": "chat.chunk",
-  "content": "!",
-  "done": true
-}
-```
-
-## Examples
-
-### JavaScript/Browser
-
-```javascript
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
-);
-
-ws.onopen = () => {
-  console.log('Connected');
-  
-  // Send chat request
-  ws.send(JSON.stringify({
-    type: 'chat.message',
-    model: 'gemini-2.5-pro',
-    messages: [
-      { role: 'user', content: 'Tell me a joke' }
-    ],
-    stream: true
-  }));
-};
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  
-  if (data.type === 'chat.chunk') {
-    process.stdout.write(data.content);
-    
-    if (data.done) {
-      console.log('\nComplete!');
-      ws.close();
-    }
+  "id": "6f1c...",
+  "type": "http_request",
+  "payload": {
+    "method": "POST",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    "headers": {"Content-Type": ["application/json"]},
+    "body": "{...}",
+    "sent_at": "2026-01-01T00:00:00Z"
   }
-};
-
-ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
-};
-
-ws.onclose = () => {
-  console.log('Disconnected');
-};
+}
 ```
 
-### Python
+`pong` is sent in reply to a client `ping`, with the same `id`.
 
-```python
-import asyncio
-import websockets
-import json
+### Client to server
 
-async def chat():
-    uri = "ws://localhost:18080/v1/ws?apiKey=sk-test-123"
-    
-    async with websockets.connect(uri) as ws:
-        # Send request
-        await ws.send(json.dumps({
-            "type": "chat.message",
-            "model": "gemini-2.5-pro",
-            "messages": [
-                {"role": "user", "content": "Tell me a joke"}
-            ],
-            "stream": True
-        }))
-        
-        # Receive chunks
-        async for message in ws:
-            data = json.loads(message)
-            
-            if data["type"] == "chat.chunk":
-                print(data["content"], end="", flush=True)
-                
-                if data["done"]:
-                    print("\nComplete!")
-                    break
+Reply with the same `id` as the request:
 
-asyncio.run(chat())
-```
+| `type` | `payload` | Meaning |
+|---|---|---|
+| `http_response` | `{"status": 200, "headers": {...}, "body": "..."}` | Complete, non-streaming response (ends the request) |
+| `stream_start` | `{"status": 200, "headers": {...}}` | Start of a streaming response |
+| `stream_chunk` | `{"data": "..."}` | One chunk of the streaming body |
+| `stream_end` | `{}` | End of the stream (ends the request) |
+| `error` | `{"error": "message", "status": 502}` | Failure (ends the request) |
+| `ping` | none | Keep-alive; the server answers `pong` |
 
-### Node.js
+`headers` values may be strings or string arrays.
 
-```javascript
-import WebSocket from 'ws';
+## Timeouts and limits
 
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
-);
+| Setting | Value |
+|---|---|
+| Server WebSocket ping interval | 30 s |
+| Read deadline (reset by pong) | 60 s |
+| Maximum inbound message size | 64 MiB |
 
-ws.on('open', () => {
-  console.log('Connected');
-  
-  ws.send(JSON.stringify({
-    type: 'chat.message',
-    model: 'gemini-2.5-pro',
-    messages: [
-      { role: 'user', content: 'Tell me a joke' }
-    ],
-    stream: true
-  }));
-});
-
-ws.on('message', (data) => {
-  const message = JSON.parse(data);
-  
-  if (message.type === 'chat.chunk') {
-    process.stdout.write(message.content);
-    
-    if (message.done) {
-      console.log('\nComplete!');
-      ws.close();
-    }
-  }
-});
-
-ws.on('error', (error) => {
-  console.error('WebSocket error:', error);
-});
-
-ws.on('close', () => {
-  console.log('Disconnected');
-});
-```
-
-## Message Types
-
-### Request Types
-
-| Type | Description | Required Fields |
-|------|-------------|----------------|
-| `chat.message` | Send chat completion request | `model`, `messages` |
-| `ping` | Keep-alive ping | None |
-| `cancel` | Cancel ongoing request | `request_id` |
-
-### Response Types
-
-| Type | Description | Fields |
-|------|-------------|--------|
-| `chat.chunk` | Streaming content chunk | `content`, `done` |
-| `chat.complete` | Full response | `content`, `usage` |
-| `error` | Error occurred | `message`, `code` |
-| `pong` | Ping response | `timestamp` |
+If a session closes while requests are in flight, each pending request fails with an `error` message.
 
 ## Configuration
 
-### Server Configuration
-
 ```yaml config.yaml
-# WebSocket settings
-websocket_auth: true
-websocket_timeout: 300  # Seconds
-websocket_max_message_size: 1048576  # 1MB
+ws-auth: true   # require a client API key for /v1/ws (default true)
 ```
 
-### Custom Route
-
-Register WebSocket on a custom path:
-
-```go
-import (
-    "github.com/traylinx/switchAILocal/internal/api"
-    "github.com/traylinx/switchAILocal/internal/relay"
-)
-
-server := api.NewServer(cfg, authManager, accessManager, configPath, luaEngine)
-
-// Custom WebSocket relay
-relay := relay.NewRelay(server.GetHandlers())
-server.AttachWebsocketRoute("/custom/ws", relay)
-```
-
-## Advanced Features
-
-### Connection Management
-
-```javascript
-class WebSocketManager {
-  constructor(url, apiKey) {
-    this.url = `${url}?apiKey=${apiKey}`;
-    this.ws = null;
-    this.reconnectAttempts = 0;
-    this.maxReconnects = 5;
-  }
-
-  connect() {
-    this.ws = new WebSocket(this.url);
-
-    this.ws.onopen = () => {
-      console.log('Connected');
-      this.reconnectAttempts = 0;
-    };
-
-    this.ws.onclose = () => {
-      console.log('Disconnected');
-      this.reconnect();
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('Error:', error);
-    };
-  }
-
-  reconnect() {
-    if (this.reconnectAttempts >= this.maxReconnects) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
-
-    this.reconnectAttempts++;
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-
-    console.log(`Reconnecting in ${delay}ms...`);
-    setTimeout(() => this.connect(), delay);
-  }
-
-  send(message) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    }
-  }
-
-  close() {
-    if (this.ws) {
-      this.ws.close();
-    }
-  }
-}
-
-const manager = new WebSocketManager(
-  'ws://localhost:18080/v1/ws',
-  'sk-test-123'
-);
-manager.connect();
-```
-
-### Keep-Alive
-
-Send periodic pings to maintain connection:
-
-```javascript
-const PING_INTERVAL = 30000; // 30 seconds
-
-const ws = new WebSocket(
-  'ws://localhost:18080/v1/ws?apiKey=sk-test-123'
-);
-
-let pingInterval;
-
-ws.onopen = () => {
-  // Start ping interval
-  pingInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'ping' }));
-    }
-  }, PING_INTERVAL);
-};
-
-ws.onclose = () => {
-  clearInterval(pingInterval);
-};
-```
-
-### Request Cancellation
-
-```javascript
-let currentRequestId = null;
-
-function sendRequest(content) {
-  currentRequestId = Date.now().toString();
-  
-  ws.send(JSON.stringify({
-    type: 'chat.message',
-    request_id: currentRequestId,
-    model: 'gemini-2.5-pro',
-    messages: [{ role: 'user', content }],
-    stream: true
-  }));
-}
-
-function cancelRequest() {
-  if (currentRequestId) {
-    ws.send(JSON.stringify({
-      type: 'cancel',
-      request_id: currentRequestId
-    }));
-  }
-}
-
-// Usage
-sendRequest('Tell me a long story');
-
-// Cancel after 2 seconds
-setTimeout(() => cancelRequest(), 2000);
-```
-
-## Error Handling
-
-```javascript
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  
-  if (data.type === 'error') {
-    console.error(`Error ${data.code}: ${data.message}`);
-    
-    switch (data.code) {
-      case 'auth_error':
-        console.log('Authentication failed');
-        break;
-      case 'rate_limit':
-        console.log('Rate limit exceeded');
-        break;
-      case 'provider_error':
-        console.log('Provider unavailable');
-        break;
-      default:
-        console.log('Unknown error');
-    }
-  }
-};
-```
-
-## Performance Considerations
-
-<AccordionGroup>
-  <Accordion title="Connection Pooling">
-    Reuse WebSocket connections instead of creating new ones for each request:
-    ```javascript
-    // Good: Single persistent connection
-    const ws = new WebSocket(url);
-    // Reuse for multiple requests
-    
-    // Avoid: New connection per request
-    function sendMessage(content) {
-      const ws = new WebSocket(url); // Don't do this
-      ws.send(content);
-      ws.close();
-    }
-    ```
-  </Accordion>
-
-  <Accordion title="Message Batching">
-    Buffer and send messages in batches when possible:
-    ```javascript
-    const messageQueue = [];
-    let sendTimer = null;
-    
-    function queueMessage(message) {
-      messageQueue.push(message);
-      
-      if (!sendTimer) {
-        sendTimer = setTimeout(() => {
-          ws.send(JSON.stringify(messageQueue));
-          messageQueue.length = 0;
-          sendTimer = null;
-        }, 100); // Batch every 100ms
-      }
-    }
-    ```
-  </Accordion>
-
-  <Accordion title="Compression">
-    Enable WebSocket compression for large messages:
-    ```javascript
-    // Browser (automatic with permessage-deflate)
-    const ws = new WebSocket(url);
-    
-    // Node.js with ws library
-    import WebSocket from 'ws';
-    const ws = new WebSocket(url, {
-      perMessageDeflate: true
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Troubleshooting
-
-### Connection Refused
-
-**Cause**: WebSocket endpoint not available
-
-**Solution**:
-1. Verify server is running: `http://localhost:18080`
-2. Check WebSocket is enabled in config
-3. Try HTTP endpoint first: `/v1/models`
-
-### Authentication Failed
-
-**Cause**: Invalid or missing API key
-
-**Solution**:
-1. Verify API key in query parameter or header
-2. Check key is configured in `config.yaml`
-3. Confirm `websocket_auth: true` if using authentication
-
-### Connection Timeout
-
-**Cause**: Idle connection exceeded timeout
-
-**Solution**:
-1. Implement periodic ping messages
-2. Increase `websocket_timeout` in config
-3. Enable automatic reconnection
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Chat Completions" icon="messages" href="/api/chat-completions">
-    Use standard SSE streaming for chat
-  </Card>
-  <Card title="Authentication" icon="key" href="/api/authentication">
-    Configure WebSocket authentication
-  </Card>
-</CardGroup>
+`ws-auth` can be read and changed at runtime via [`/v0/management/ws-auth`](/api/management/config#settings).

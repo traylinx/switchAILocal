@@ -1,0 +1,210 @@
+---
+title: Images, Audio & Music
+description: Image generation and edits, speech, transcription, music, embeddings defaults and native web search
+icon: photo-film
+---
+
+Besides chat, switchAILocal proxies OpenAI-style media endpoints. Requests are routed like chat requests (aliases, prefixes, virtual models, failover), then the executor picks the right upstream endpoint for the provider. Some providers get a dedicated adapter because their native API differs from OpenAI's.
+
+## Endpoints at a glance
+
+| Endpoint | Body | Default model slot | Works with |
+|---|---|---|---|
+| `POST /v1/images/generations` | JSON | `intelligence.matrix.image_gen` | OpenAI-compatible providers; MiniMax via `/image_generation` |
+| `POST /v1/images/edits` | multipart or JSON | `image_gen` | OpenAI-compatible providers exposing `/images/edits` |
+| `POST /v1/audio/speech` | JSON | `speech` | OpenAI-compatible providers; MiniMax via native T2A adapter |
+| `POST /v1/audio/transcriptions` | multipart | `transcription` | OpenAI-compatible whisper endpoints (e.g. Groq); Alibaba via chat bridge; MiniMax returns `501` |
+| `POST /v1/audio/translations` | multipart | `transcription` | OpenAI-compatible providers exposing `/audio/translations` |
+| `POST /v1/music/generations` | JSON | `music_generation` | MiniMax only |
+| `POST /v1/music/lyrics` | JSON | `lyrics_generation`, then `music_generation` | MiniMax only |
+| `POST /v1/embeddings` | JSON | `embedding` | OpenAI-compatible providers, Ollama |
+
+"OpenAI-compatible providers" means entries under `openai-compatibility` (and the `switchai-api-key` provider). Built-in executors such as Gemini, Claude, Codex or the CLI tools do not implement these media operations.
+
+When the request has no `model`, the endpoint uses the slot from `intelligence.matrix`. If the slot is empty as well, the request fails with `400 model not specified and no '<slot>' configured in intelligence.matrix`. The slots are read even when `intelligence.enabled` is `false`.
+
+## Minimal config
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "minimax"
+    prefix: "minimax"
+    base-url: "https://api.minimax.io/v1"
+    api-key-entries:
+      - api-key: "YOUR_MINIMAX_KEY"
+    models:
+      - name: "image-01"
+        alias: "ail-image"
+      - name: "speech-2.8-hd"
+        alias: "ail-speech"
+      - name: "music-2.6"
+        alias: "ail-music"
+      - name: "music-cover"
+        alias: "ail-music-cover"
+  - name: "groq"
+    prefix: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "YOUR_GROQ_KEY"
+    models:
+      - name: "whisper-large-v3"
+        alias: "ail-transcribe"
+
+intelligence:
+  matrix:
+    image_gen: "ail-image"
+    speech: "ail-speech"
+    transcription: "ail-transcribe"
+    music_generation: "ail-music"
+    embedding: "ail-embed"      # define this alias on a provider with /embeddings
+```
+
+Matrix values are plain model IDs; they must resolve like any other model name.
+
+## Images
+
+```bash
+curl http://localhost:18080/v1/images/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-image", "prompt": "a lighthouse at dusk, watercolor"}'
+```
+
+- The request body is forwarded as-is (only the `model` field is rewritten to the upstream name), so provider-specific fields such as MiniMax `aspect_ratio` pass through.
+- For MiniMax the path is rewritten to `/image_generation`.
+- `/v1/images/*` returns the provider's own response shape. MiniMax returns `{"data": {"image_urls": [...]}}`, not an OpenAI list.
+- Image edits accept `multipart/form-data` (the `model` form field is read and rewritten) or JSON.
+
+### Strict OpenAI namespace: `/openai/v1`
+
+Clients that require `data[0].url` / `data[0].b64_json` should use base URL `http://localhost:18080/openai/v1`. It exposes:
+
+`GET /openai/v1/models`, `POST /openai/v1/chat/completions`, `/completions`, `/embeddings`, `/images/generations`, `/images/edits`
+
+Only the image routes behave differently: their responses are normalised into OpenAI's list shape (`image_urls`, `images[]`, `url`, `b64_json` and similar fields are mapped to `data: [{"url"|"b64_json", "revised_prompt"}]`). Everything else is identical to `/v1`. Audio and music are only under `/v1`.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:18080/openai/v1", api_key="sk-test-123")
+img = client.images.generate(model="ail-image", prompt="a lighthouse at dusk")
+print(img.data[0].url)
+```
+
+## Speech (text-to-speech)
+
+```bash
+curl http://localhost:18080/v1/audio/speech \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-speech", "input": "Hello from switchAILocal", "voice": "English_expressive_narrator", "response_format": "mp3"}' \
+  --output hello.mp3
+```
+
+The response is raw audio. `Content-Type` follows `response_format` (or `audio_setting.format`, or `format`): `mp3` → `audio/mpeg` (default), `opus`, `aac`, `flac`, `wav`, `pcm`.
+
+**MiniMax adapter** (`internal/runtime/executor/minimax_tts.go`): requests to a MiniMax provider are translated to MiniMax's native `/t2a_v2` API.
+
+- OpenAI fields map as `input` → `text`, `voice` → `voice_setting.voice_id`, `speed` → `voice_setting.speed`, `response_format` → `audio_setting.format`.
+- MiniMax-native fields (`text`, `voice_setting`, `audio_setting`, `pronunciation_dict`, `language_boost`, `voice_modify`, `subtitle_enable`, `subtitle_type`) are preserved. Unknown fields are dropped.
+- `voice` must be a MiniMax voice ID (for example `English_expressive_narrator`); OpenAI voice names such as `alloy` are rejected upstream.
+- `stream: true` is rejected with `400`.
+- MiniMax status codes are mapped to HTTP so failover can classify them: `1002` → `429`, `1004`/`1008` → `401`, `2013` → `400`, `2061` → `402`, others → `502`.
+
+## Transcription and translation
+
+```bash
+curl http://localhost:18080/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-test-123" \
+  -F model=ail-transcribe \
+  -F file=@meeting.m4a
+```
+
+- The `model` form field is read from the multipart body; if absent, `matrix.transcription` is used. Translations use the same slot.
+- OpenAI-compatible providers receive the multipart body at `/audio/transcriptions` or `/audio/translations`.
+- **Alibaba** (provider name containing `alibaba`): transcription is bridged to DashScope's chat-completions `input_audio` API (for ASR models such as `qwen3-asr-flash`), and the reply is reshaped into `{"text": "..."}`. Inline audio is capped at 25 MB.
+- **MiniMax** has no transcription API; requests return `501` with a hint to use another provider.
+
+## Music and lyrics
+
+Music generation (`music-2.6`) and style-transfer covers (`music-cover`) are MiniMax-only. Other providers return `501`.
+
+```bash
+curl http://localhost:18080/v1/music/generations \
+  -H "Authorization: Bearer sk-test-123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ail-music", "prompt": "lo-fi, rainy evening", "lyrics": "[Verse]\nStreetlights hum..."}'
+```
+
+- Model names `music-2.6`, `minimax:music-2.6`, `ail-music` are all routed as **`ail-music`**; `music-cover` variants as **`ail-music-cover`**. Define those aliases on your MiniMax provider, otherwise routing fails.
+- The sync response is JSON with base64 audio; `stream: true` returns `audio/mpeg` bytes progressively. Streams use a watchdog floor of 60s to first byte and 120s between chunks.
+- `/v1/music/lyrics` defaults `mode` to `write_full_song`.
+
+Full field reference: [Music & Lyrics API](/api/music).
+
+## Embeddings default
+
+`POST /v1/embeddings` without `model` uses `matrix.embedding`. Supported upstreams are OpenAI-compatible providers (forwarded to `/embeddings`) and Ollama (forwarded to Ollama's `/v1/embeddings`). See [Embeddings API](/api/embeddings).
+
+## Native web search tools
+
+Some models accept provider-native tools in the OpenAI `tools[]` array, for example MiniMax `{"type": "web_search"}`. Declare them per model alias:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "minimax"
+    # ...
+    models:
+      - name: "MiniMax-M3"
+        alias: "minimax-chat"
+        native_tools:
+          - type: "web_search"
+            description: "MiniMax native web search"
+            params:
+              force_search: { type: "boolean", default: false }
+```
+
+Effects:
+
+- `GET /v1/models` lists the tools under `native_tools` for that model ID, so agent runtimes can discover them.
+- On `/v1/chat/completions` for that model ID, every declared tool type that the caller did not already send is appended to `tools`. For `web_search`, `force_search: true` is added when the caller sent at least `AIL_AUTOINJECT_FORCE_THRESHOLD` function tools (default `5`; `0` disables). `params` are documentation only and are not injected.
+- When a `web_search` tool is injected, `max_tokens` is raised to at least `2000`.
+- Opt out per request with header `X-Ail-Autoinject: off`.
+
+Matching uses the requested model ID. A virtual model (for example `ail-compound`) does not inherit `native_tools` from its members.
+
+Legacy fallback for models without `native_tools`: set `AIL_AUTOINJECT_WEBSEARCH=true` and list model IDs in `AIL_AUTOINJECT_MODELS` (comma-separated).
+
+## Matrix slot reference
+
+| Slot | Read by |
+|---|---|
+| `image_gen`, `speech`, `transcription` | the endpoints above when `model` is missing; the Cortex Router for `auto` requests |
+| `embedding` | `/v1/embeddings` when `model` is missing |
+| `music_generation`, `lyrics_generation` | `/v1/music/generations`, `/v1/music/lyrics` |
+| `vision` | Cortex Router; modality hints in `/v1/models` |
+| `audio` | modality hints in `/v1/models` only |
+| `music_cover`, `web_search` | not read by any handler in this release; pass the model explicitly |
+
+<Warning>
+If the `cortex-router` plugin is enabled, `image_gen`, `transcription` and `speech` must all be set. The plugin raises an error when any of them is missing, and the error makes it skip every request, so `model: "auto"` is no longer routed by Cortex.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="400 model not specified and no 'image_gen' configured">
+    Send `model` in the request or set the slot under `intelligence.matrix`.
+  </Accordion>
+  <Accordion title="Image client crashes parsing the response">
+    The client expects OpenAI's `data[]` list. Point it at `/openai/v1` instead of `/v1`.
+  </Accordion>
+  <Accordion title="501 from transcription or music">
+    The resolved provider has no adapter for that operation (MiniMax transcription, non-MiniMax music). Route the slot to a provider that supports it.
+  </Accordion>
+  <Accordion title="MiniMax TTS returns 400 (2013 invalid params)">
+    Usually an OpenAI voice name or an unsupported field. Use a MiniMax `voice_id`.
+  </Accordion>
+  <Accordion title="MiniMax TTS returns 429">
+    MiniMax code `1002` (rate limit). Low-tier plans allow only a few TTS requests per minute.
+  </Accordion>
+</AccordionGroup>

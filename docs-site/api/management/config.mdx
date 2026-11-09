@@ -1,733 +1,257 @@
 ---
-title: 'Configuration Management'
-description: 'Manage server configuration and settings programmatically'
+title: 'Configuration & Monitoring'
+description: 'Management endpoints for config, settings, logs, usage, telemetry, intelligent systems, and Amp settings'
 ---
 
-## Overview
-
-The Configuration Management API allows you to read and modify switchAILocal's configuration at runtime without restarting the server.
-
-## Get Configuration
-
-### JSON Format
-
-```
-GET /v0/management/config
-```
-
-Returns the current configuration in JSON format:
+All paths are relative to `/v0/management` and need the [management key](/api/management/overview#authentication). Examples use `-H "Authorization: Bearer YOUR_MANAGEMENT_KEY"`, shortened to `$AUTH` below:
 
 ```bash
-curl http://localhost:18080/v0/management/config \
-  -H "X-Management-Key: your-secret-key"
+AUTH="Authorization: Bearer YOUR_MANAGEMENT_KEY"
 ```
 
-**Response**:
+## Configuration
+
+### GET /config
+
+The whole in-memory config as JSON (mostly kebab-case keys).
+
+- `host`, `port`, `remote-management`, and `auth-dir` are left out.
+- `api-keys` and all provider keys **are included in clear text**.
+- Returns `{}` when no config is loaded.
+
+```bash
+curl -H "$AUTH" http://localhost:18080/v0/management/config
+```
+
+### GET /config.yaml
+
+The raw `config.yaml` file, comments included, as `application/yaml; charset=utf-8` with `Cache-Control: no-store`. It includes the bcrypt hash of the management key.
+
+- `404 {"error":"not_found","message":"config file not found"}` when the file is missing.
+- `500 read_failed` when it cannot be read.
+
+### PUT /config.yaml
+
+Replaces the file. Send raw YAML as the body (the `Content-Type` is not checked). The body is validated in two steps before anything is written:
+
+1. Parsed as YAML into the config structure. Failure: `400 {"error":"invalid_yaml","message":...}`.
+2. Loaded with the full config loader, including the same checks as startup, such as refusing `allow-remote: true` without a secret. Failure: `422 {"error":"invalid_config","message":...}`.
+
+On success the file is written, reloaded, and the response is `200 {"ok":true,"changed":["config"]}`. Write or reload failures return `500 write_failed` / `reload_failed`.
+
+```bash
+curl -X PUT -H "$AUTH" --data-binary @config.yaml http://localhost:18080/v0/management/config.yaml
+```
+
+### GET /latest-version
+
+Asks GitHub for the latest release tag, honouring `proxy-url`.
+
+- Success: `200 {"latest-version":"v0.6.2"}`.
+- Failure: `502 {"error":"request_failed|unexpected_status|decode_failed|invalid_response","message":...}`.
+
+## Settings
+
+Each setting has `GET` and `PUT`/`PATCH` (identical). Write with `{"value": ...}`. A missing or wrongly typed `value` returns `400 {"error":"invalid body"}`. A successful write returns `{"status":"ok"}`.
+
+| Path | GET response | `value` type | Config key |
+|---|---|---|---|
+| `/debug` | `{"debug": false}` | bool | `debug` |
+| `/logging-to-file` | `{"logging-to-file": false}` | bool | `logging-to-file` |
+| `/usage-statistics-enabled` | `{"usage-statistics-enabled": false}` | bool | `usage-statistics-enabled` |
+| `/request-log` | `{"request-log": false}` | bool | `request-log` |
+| `/ws-auth` | `{"ws-auth": true}` | bool | `ws-auth` |
+| `/request-retry` | `{"request-retry": 3}` | int | `request-retry` |
+| `/max-retry-interval` | `{"max-retry-interval": 30}` | int (seconds) | `max-retry-interval` |
+| `/proxy-url` | `{"proxy-url": ""}` | string | `proxy-url` |
+| `/quota-exceeded/switch-project` | `{"switch-project": true}` | bool | `quota-exceeded.switch-project` |
+| `/quota-exceeded/switch-preview-model` | `{"switch-preview-model": true}` | bool | `quota-exceeded.switch-preview-model` |
+
+`DELETE /proxy-url` clears the proxy.
+
+```bash
+curl -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"value": true}' http://localhost:18080/v0/management/debug
+```
+
+## Logs
+
+### GET /logs
+
+Reads the application log (`main.log` plus rotated files, oldest first). Needs `logging-to-file: true`, otherwise `400 {"error":"logging to file disabled"}`.
+
+| Query | Meaning |
+|---|---|
+| `after` | Unix seconds. Only lines with a later timestamp are returned |
+| `limit` | Keep only the last N lines. Default `0` = no limit. Invalid values return `400` |
+
+```json
+{"lines": ["..."], "line-count": 1520, "latest-timestamp": 1767225600}
+```
+
+`line-count` is the number of lines scanned, not the number returned.
+
+### DELETE /logs
+
+Empties `main.log` and deletes rotated files.
+
+- Success: `{"success":true,"message":"Logs cleared successfully","removed":3}`.
+- `400` when file logging is off. `404` when the log directory does not exist.
+
+### GET /request-error-logs
+
+Lists per-request error logs (`error-*.log`), newest first:
+
+```json
+{"files": [{"name": "error-2026-01-01-10-30-15.log", "size": 2048, "modified": 1767263415}]}
+```
+
+The list is always empty while `request-log: true`, because full request logs are written instead.
+
+### GET /request-error-logs/:name
+
+Downloads one error log as an attachment.
+
+- The name must match `error-*.log`; otherwise `404`.
+- A name containing a path separator returns `400`.
+
+### GET /request-log-by-id/:id
+
+Downloads the request log file whose name ends with `-<id>.log`.
+
+- `400` for a missing or unsafe ID.
+- `404 {"error":"log file not found for the given request ID"}` when no file matches.
+
+## Usage and metrics
+
+### GET /usage
+
+In-memory usage statistics. Requires `usage-statistics-enabled: true` to collect data, and resets on restart.
+
 ```json
 {
-  "host": "0.0.0.0",
-  "port": 18080,
-  "debug": false,
-  "request_log": true,
-  "websocket_auth": true,
-  "gemini": {
-    "api-key": [
-      {"name": "Production", "key": "***"}
-    ]
+  "usage": {
+    "total_requests": 120,
+    "success_count": 118,
+    "failure_count": 2,
+    "total_tokens": 48211,
+    "apis": {
+      "<client key>": {
+        "total_requests": 120,
+        "total_tokens": 48211,
+        "models": {
+          "llama3.2": {
+            "total_requests": 40,
+            "total_tokens": 9000,
+            "details": [{"timestamp": "...", "source": "...", "auth_index": "...",
+              "tokens": {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cached_tokens": 0, "total_tokens": 0},
+              "failed": false}]
+          }
+        }
+      }
+    },
+    "requests_by_day": {"2026-01-01": 120},
+    "requests_by_hour": {"10": 50},
+    "tokens_by_day": {"2026-01-01": 48211},
+    "tokens_by_hour": {"10": 20000}
   },
-  "routing": {
-    "priority": ["geminicli", "ollama", "switchai"]
-  }
+  "failed_requests": 2
 }
 ```
 
-### YAML Format
+### GET /metrics
 
-```
-GET /v0/management/config.yaml
-```
+Counters for the Superbrain self-healing system:
 
-Returns the configuration in YAML format:
-
-```bash
-curl http://localhost:18080/v0/management/config.yaml \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
-```yaml
-host: 0.0.0.0
-port: 18080
-debug: false
-request_log: true
-websocket_auth: true
-
-gemini:
-  api-key:
-    - name: Production
-      key: "***"
-
-routing:
-  priority:
-    - geminicli
-    - ollama
-    - switchai
-```
-
-## Update Configuration
-
-```
-PUT /v0/management/config.yaml
-```
-
-Update the entire configuration file:
-
-```bash
-curl -X PUT http://localhost:18080/v0/management/config.yaml \
-  -H "X-Management-Key: your-secret-key" \
-  -H "Content-Type: application/yaml" \
-  --data-binary @config.yaml
-```
-
-**Success Response**:
 ```json
-{
-  "message": "Configuration updated successfully"
-}
+{"superbrain": {"healing_attempts": 0, "successful_healings": 0, "failed_healings": 0, "silence_detections": 0,
+  "diagnoses_performed": 0, "fallbacks_triggered": 0, "stdin_injections_total": 0, "restarts_total": 0,
+  "context_optimizations": 0, "healing_by_type": {}, "failure_by_type": {}, "latency_stats": {},
+  "active_monitoring_contexts": 0, "queued_healing_actions": 0, "success_rate_percent": 0,
+  "failure_rate_percent": 0, "uptime_seconds": 0, "timestamp": "..."}}
 ```
 
-<Note>
-Configuration changes are applied immediately without server restart. The `config.yaml` file is updated on disk.
-</Note>
+This is not the Prometheus endpoint; that one is [`GET /metrics`](/api/system#get-metrics) on the server root.
 
-## Individual Settings
+### GET /observability/dashboard
 
-### Debug Mode
+Process runtime statistics:
 
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/debug \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "debug": false
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/debug \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"debug": true}'
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "message": "Debug mode updated",
-      "debug": true
-    }
-    ```
-  </Tab>
-</Tabs>
-
-### File Logging
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/logging-to-file \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "logging_to_file": true
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/logging-to-file \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-### Request Logging
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/request-log \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "request_log": true
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/request-log \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-### WebSocket Authentication
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/ws-auth \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "websocket_auth": true
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/ws-auth \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-### Usage Statistics
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/usage-statistics-enabled \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "usage_statistics_enabled": true
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/usage-statistics-enabled \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-### Proxy Settings
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/proxy-url \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "proxy_url": "http://proxy.example.com:8080"
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/proxy-url \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"proxy_url": "http://proxy.example.com:8080"}'
-    ```
-  </Tab>
-  
-  <Tab title="Delete">
-    ```bash
-    curl -X DELETE http://localhost:18080/v0/management/proxy-url \
-      -H "X-Management-Key: your-secret-key"
-    ```
-  </Tab>
-</Tabs>
-
-## Retry Configuration
-
-### Request Retry
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/request-retry \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "request_retry": 3
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/request-retry \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"retries": 5}'
-    ```
-  </Tab>
-</Tabs>
-
-### Max Retry Interval
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/max-retry-interval \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "max_retry_interval": 60
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/max-retry-interval \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"seconds": 120}'
-    ```
-  </Tab>
-</Tabs>
-
-## Quota Configuration
-
-### Switch Project on Quota
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/quota-exceeded/switch-project \
-      -H "X-Management-Key: your-secret-key"
-    ```
-    
-    **Response**:
-    ```json
-    {
-      "switch_project": true
-    }
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/quota-exceeded/switch-project \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-### Switch Preview Model
-
-<Tabs>
-  <Tab title="Get">
-    ```bash
-    curl http://localhost:18080/v0/management/quota-exceeded/switch-preview-model \
-      -H "X-Management-Key: your-secret-key"
-    ```
-  </Tab>
-  
-  <Tab title="Update">
-    ```bash
-    curl -X PUT http://localhost:18080/v0/management/quota-exceeded/switch-preview-model \
-      -H "X-Management-Key: your-secret-key" \
-      -H "Content-Type: application/json" \
-      -d '{"enabled": true}'
-    ```
-  </Tab>
-</Tabs>
-
-## Monitoring
-
-### Server Logs
-
-```
-GET /v0/management/logs
-```
-
-Retrieve server logs:
-
-```bash
-curl http://localhost:18080/v0/management/logs \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Query Parameters**:
-- `lines` - Number of lines to retrieve (default: 100)
-- `level` - Filter by log level: `debug`, `info`, `warn`, `error`
-
-**Example**:
-```bash
-curl "http://localhost:18080/v0/management/logs?lines=50&level=error" \
-  -H "X-Management-Key: your-secret-key"
-```
-
-### Delete Logs
-
-```
-DELETE /v0/management/logs
-```
-
-Clear all log files:
-
-```bash
-curl -X DELETE http://localhost:18080/v0/management/logs \
-  -H "X-Management-Key: your-secret-key"
-```
-
-### Request Error Logs
-
-```
-GET /v0/management/request-error-logs
-```
-
-List all request error logs:
-
-```bash
-curl http://localhost:18080/v0/management/request-error-logs \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
 ```json
-{
-  "logs": [
-    {
-      "name": "error-2026-03-09-10-30-15.json",
-      "size": 1024,
-      "timestamp": "2026-03-09T10:30:15Z"
-    }
-  ]
-}
+{"timestamp": "2026-01-01T10:00:00Z",
+ "system": {"goroutines": 42, "heap_alloc_mb": 31.2, "heap_sys_mb": 64.0, "num_gc": 12, "go_version": "go1.24", "num_cpu": 10},
+ "server": {"uptime": "1h2m3s"}}
 ```
 
-### Download Error Log
+## Auto-routing telemetry
 
-```
-GET /v0/management/request-error-logs/:name
-```
+Both endpoints return `503 {"error":"auto-routing not initialized"}` unless `auto-routing.enabled: true`.
 
-Download a specific error log:
+### GET /autoroute/status
 
-```bash
-curl http://localhost:18080/v0/management/request-error-logs/error-2026-03-09-10-30-15.json \
-  -H "X-Management-Key: your-secret-key"
-```
-
-### Get Request by ID
-
-```
-GET /v0/management/request-log-by-id/:id
-```
-
-Retrieve a specific request log:
-
-```bash
-curl http://localhost:18080/v0/management/request-log-by-id/req_abc123 \
-  -H "X-Management-Key: your-secret-key"
-```
-
-## State Box
-
-```
-GET /v0/management/state-box/status
-```
-
-Get State Box information:
-
-```bash
-curl http://localhost:18080/v0/management/state-box/status \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
 ```json
-{
-  "enabled": true,
-  "path": "/home/user/.switchailocal",
-  "mode": "user",
-  "writable": true,
-  "size_bytes": 10485760
-}
+{"enabled": true, "active_weights": {}, "shadow_weights": {}, "active_hypothesis": "...",
+ "window_req_count": 0, "window_explored_count": 0, "avg_prod_rqs": 0, "avg_shadow_rqs": 0}
 ```
 
-## Version Check
+### GET /autoroute/journal
 
-```
-GET /v0/management/latest-version
-```
+Query `limit` (1–100, default 50). Returns `{"entries": [...]}`. Entry fields use Go field names (`Timestamp`, `RequestID`, `ProdModel`, `ProdLatency` in nanoseconds, ...).
 
-Check for updates:
+## Intelligent systems
 
-```bash
-curl http://localhost:18080/v0/management/latest-version \
-  -H "X-Management-Key: your-secret-key"
-```
+These routes always exist. When a subsystem is not enabled they return `200 {"enabled": false, "message": "..."}`.
 
-**Response**:
+| Route | Response when enabled |
+|---|---|
+| `GET /memory/stats` | `{"enabled":true,"stats":{"total_decisions","total_users","total_quirks","disk_usage_bytes","oldest_decision","newest_decision","last_cleanup","retention_days","compression_enabled",...}}` |
+| `GET /heartbeat/status` | `{"enabled":true,"providers":{...},"stats":{...},"running":true}` |
+| `GET /steering/rules` | `{"enabled":true,"rules_count":3,"rules":[...]}` |
+| `GET /hooks/status` | `{"enabled":true,"hooks_count":2,"hooks_dir":"...","hooks":[...]}` |
+| `GET /analytics` | `{"enabled":true,"analytics":{...}}` |
+| `POST /steering/reload` | `{"success":true,"message":"Steering rules reloaded successfully","rules_count":3}` |
+| `POST /hooks/reload` | `{"success":true,"message":"Hooks reloaded successfully","hooks_count":2}` |
+
+Reload failures return `500 {"success":false,"error":...,"message":...}`.
+
+## Intelligence service
+
+The standalone server always registers these routes. Embedders that build the server without an intelligence service do not get them. When `intelligence.enabled` is false, `/skills` and the feedback routes return `503` and `/cache/metrics` reports `"enabled": false`.
+
+| Route | Notes |
+|---|---|
+| `GET /skills` | `{"count","skills":[{"id","name","description","required_capability","has_embedding"}],"embeddings_available","usage_stats"}`. `503` when the skill registry is unavailable |
+| `POST /feedback` | Body: `query`, `intent`, `selected_model`, `routing_tier`, `latency_ms` (required, non-zero), plus optional `confidence`, `matched_skill`, `cascade_occurred`, `response_quality`, `success`, `error_message`, `metadata`. Returns `201 {"message":"feedback recorded successfully"}` |
+| `GET /feedback/stats` | `{"total_records","success_rate","tier_distribution","avg_latency_ms","cascade_rate"}` |
+| `GET /feedback/recent` | Query `limit` (default 100). Returns `{"records":[...]}` |
+| `GET /cache/metrics` | `{"enabled":bool,"metrics":{...}}` (always `200`) |
+| `POST /cache/clear` | `{"success":true,"message":"Cache cleared successfully"}`; `400` when the semantic cache is unavailable |
+
+## State box
+
+`GET /state-box/status` is registered only when a state box is configured:
+
 ```json
-{
-  "current_version": "1.0.0",
-  "latest_version": "1.1.0",
-  "update_available": true,
-  "release_url": "https://github.com/traylinx/switchAILocal/releases/tag/v1.1.0"
-}
+{"root_path": "...", "read_only": false, "initialized": true,
+ "discovery_registry": {"path": "...", "exists": true, "size": 0, "mode": "...", "mod_time": "..."},
+ "feedback_database": {"...": "..."},
+ "permission_status": "ok", "warnings": [], "errors": []}
 ```
 
-## Hot-Reload Operations
+`permission_status` is `ok`, `warning`, or `error`. Files readable by group or others produce a warning.
 
-### Reload Steering Rules
+## Ampcode
 
-```
-POST /v0/management/steering/reload
-```
+Settings for the [Amp CLI routes](/api/amp). PUT and PATCH take `{"value": ...}` unless noted.
 
-Reload steering rules from disk:
-
-```bash
-curl -X POST http://localhost:18080/v0/management/steering/reload \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
-```json
-{
-  "message": "Steering rules reloaded successfully",
-  "rules_loaded": 5
-}
-```
-
-### Reload Hooks
-
-```
-POST /v0/management/hooks/reload
-```
-
-Reload hooks from disk:
-
-```bash
-curl -X POST http://localhost:18080/v0/management/hooks/reload \
-  -H "X-Management-Key: your-secret-key"
-```
-
-**Response**:
-```json
-{
-  "message": "Hooks reloaded successfully",
-  "hooks_loaded": 3
-}
-```
-
-## Python Examples
-
-```python
-import requests
-import yaml
-
-class ConfigManager:
-    def __init__(self, base_url, secret_key):
-        self.base_url = base_url
-        self.headers = {"X-Management-Key": secret_key}
-    
-    def get_config(self):
-        """Get configuration in JSON format"""
-        response = requests.get(
-            f"{self.base_url}/v0/management/config",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def update_config(self, config_path):
-        """Update configuration from YAML file"""
-        with open(config_path, 'r') as f:
-            config_yaml = f.read()
-        
-        response = requests.put(
-            f"{self.base_url}/v0/management/config.yaml",
-            headers={**self.headers, "Content-Type": "application/yaml"},
-            data=config_yaml
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def set_debug(self, enabled):
-        """Enable or disable debug mode"""
-        response = requests.put(
-            f"{self.base_url}/v0/management/debug",
-            headers=self.headers,
-            json={"debug": enabled}
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def get_logs(self, lines=100, level=None):
-        """Retrieve server logs"""
-        params = {"lines": lines}
-        if level:
-            params["level"] = level
-        
-        response = requests.get(
-            f"{self.base_url}/v0/management/logs",
-            headers=self.headers,
-            params=params
-        )
-        response.raise_for_status()
-        return response.text
-
-# Usage
-manager = ConfigManager(
-    "http://localhost:18080",
-    "your-secret-key"
-)
-
-# Get current config
-config = manager.get_config()
-print(f"Debug mode: {config['debug']}")
-
-# Enable debug
-manager.set_debug(True)
-
-# Get recent error logs
-error_logs = manager.get_logs(lines=50, level="error")
-print(error_logs)
-```
-
-## JavaScript Examples
-
-```javascript
-class ConfigManager {
-  constructor(baseURL, secretKey) {
-    this.baseURL = baseURL;
-    this.headers = { 'X-Management-Key': secretKey };
-  }
-
-  async getConfig() {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/config`,
-      { headers: this.headers }
-    );
-    if (!response.ok) throw new Error('Failed to get config');
-    return response.json();
-  }
-
-  async updateConfig(configYAML) {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/config.yaml`,
-      {
-        method: 'PUT',
-        headers: {
-          ...this.headers,
-          'Content-Type': 'application/yaml'
-        },
-        body: configYAML
-      }
-    );
-    if (!response.ok) throw new Error('Failed to update config');
-    return response.json();
-  }
-
-  async setDebug(enabled) {
-    const response = await fetch(
-      `${this.baseURL}/v0/management/debug`,
-      {
-        method: 'PUT',
-        headers: {
-          ...this.headers,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ debug: enabled })
-      }
-    );
-    if (!response.ok) throw new Error('Failed to set debug');
-    return response.json();
-  }
-
-  async getLogs(lines = 100, level = null) {
-    const params = new URLSearchParams({ lines });
-    if (level) params.append('level', level);
-
-    const response = await fetch(
-      `${this.baseURL}/v0/management/logs?${params}`,
-      { headers: this.headers }
-    );
-    if (!response.ok) throw new Error('Failed to get logs');
-    return response.text();
-  }
-}
-
-// Usage
-const manager = new ConfigManager(
-  'http://localhost:18080',
-  'your-secret-key'
-);
-
-const config = await manager.getConfig();
-console.log(`Debug mode: ${config.debug}`);
-
-await manager.setDebug(true);
-
-const errorLogs = await manager.getLogs(50, 'error');
-console.log(errorLogs);
-```
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Provider Management" icon="layer-group" href="/api/management/providers">
-    Manage AI provider settings
-  </Card>
-  <Card title="Authentication" icon="key" href="/api/authentication">
-    Set up management authentication
-  </Card>
-  <Card title="Configuration Guide" icon="book" href="/configuration/overview">
-    Learn about configuration options
-  </Card>
-</CardGroup>
+| Route | Methods | Notes |
+|---|---|---|
+| `/ampcode` | GET | `{"ampcode":{"upstream-url","upstream-api-key","restrict-management-to-localhost","model-mappings","force-model-mappings"}}`. The upstream key is returned in clear text |
+| `/ampcode/upstream-url` | GET, PUT, PATCH, DELETE | `{"upstream-url": "..."}`; string value (trimmed); DELETE clears it |
+| `/ampcode/upstream-api-key` | GET, PUT, PATCH, DELETE | `{"upstream-api-key": "..."}` |
+| `/ampcode/restrict-management-to-localhost` | GET, PUT, PATCH | bool |
+| `/ampcode/force-model-mappings` | GET, PUT, PATCH | bool |
+| `/ampcode/model-mappings` | GET | `{"model-mappings":[{"from","to","regex"}]}` |
+| | PUT | `{"value":[{"from","to","regex"}]}` replaces the list |
+| | PATCH | `{"value":[...]}` adds or updates entries, matched by `from` |
+| | DELETE | Body `{"value":["from-1", ...]}` removes those entries. **An empty or missing body removes all mappings** |
