@@ -7,7 +7,7 @@ package observability
 import (
 	"fmt"
 	"net/http"
-	_ "net/http/pprof" // Register pprof handlers on default mux
+	"net/http/pprof"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -29,9 +29,18 @@ func StartPprofServer(port int) {
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	log.Infof("Starting pprof server on %s", addr)
+
+	// Create a dedicated mux for pprof instead of using the global DefaultServeMux
+	// This prevents pprof from being exposed on all HTTP servers in the application
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	go func() {
-		// Uses the default mux which has pprof handlers registered via the blank import above.
-		if err := http.ListenAndServe(addr, nil); err != nil && err != http.ErrServerClosed {
+		if err := http.ListenAndServe(addr, mux); err != nil && err != http.ErrServerClosed {
 			log.Errorf("pprof server failed: %v", err)
 		}
 	}()
