@@ -9,6 +9,12 @@ on:
   push:
     tags:
       - 'v*'
+  # Re-publish an existing release to npm only (no build, no GitHub Release).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish to npm (e.g. v0.6.4)
+        required: true
 
 permissions:
   contents: write
@@ -16,8 +22,10 @@ permissions:
 
 jobs:
   security-gate:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/go-vulnerability-gate.yml
   build:
+    if: github.event_name == 'push'
     needs: security-gate
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
@@ -101,6 +109,7 @@ jobs:
 
   release:
     name: Create Release
+    if: github.event_name == 'push'
     needs: [build, security-gate]
     runs-on: ubuntu-latest
     steps:
@@ -130,21 +139,35 @@ jobs:
   publish-npm:
     name: Publish npm package
     needs: [release, security-gate]
+    # Runs after a tag release, or alone from workflow_dispatch for an existing tag.
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
+    # npm trusted publishing: the registry trusts this workflow file
+    # (traylinx/switchAILocal, release.yml) through GitHub OIDC. No npm token
+    # is stored; provenance is attached automatically.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.security-gate.outputs.source_commit }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || needs.security-gate.outputs.source_commit }}
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - name: Update npm
+        run: npm install -g npm@11 && npm --version
 
       - name: Sync package.json version to tag
         working-directory: npx/switchailocal
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           echo "Syncing package.json to ${TAG_VERSION}"
           jq --arg v "${TAG_VERSION}" '.version = $v' package.json > package.json.tmp
           mv package.json.tmp package.json
@@ -164,13 +187,9 @@ jobs:
             echo "Will publish ${PKG_NAME}@${PKG_VERSION}"
           fi
 
+      # A failure here fails the job (the GitHub Release already exists). It
+      # used to be ignored, which hid an expired token for seven months.
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
         working-directory: npx/switchailocal
-        # npm scope permissions are not release-critical for the binary + GHCR
-        # artifacts Tytus uses. Do not mark the GitHub Release failed if npm
-        # rejects the scoped package publish.
-        continue-on-error: true
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
