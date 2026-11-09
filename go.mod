@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/andybalholm/brotli v1.2.7
+	github.com/andybalholm/brotli v1.2.8
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/expr-lang/expr v1.17.7
 	github.com/fsnotify/fsnotify v1.9.0
