@@ -7,7 +7,7 @@ require (
 	github.com/andybalholm/brotli v1.2.7
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/expr-lang/expr v1.17.7
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
 	github.com/goccy/go-json v0.10.5
