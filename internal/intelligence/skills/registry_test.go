@@ -33,7 +33,7 @@ func TestNewRegistry(t *testing.T) {
 func TestLoadAll(t *testing.T) {
 	// Create temporary directory with test skills
 	tmpDir := t.TempDir()
-	
+
 	// Create a test skill
 	skillDir := filepath.Join(tmpDir, "test-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -134,7 +134,7 @@ func TestLoadAllMultipleSkills(t *testing.T) {
 // TestGetSkill tests retrieving a skill by ID.
 func TestGetSkill(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a test skill
 	skillDir := filepath.Join(tmpDir, "test-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -270,7 +270,7 @@ func (m *MockEmbeddingEngine) CosineSimilarity(a, b []float32) float64 {
 // TestEmbeddingComputation tests embedding computation during skill loading.
 func TestEmbeddingComputation(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a test skill
 	skillDir := filepath.Join(tmpDir, "test-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -319,7 +319,7 @@ required-capability: coding
 // TestSkillRetrieval tests skill retrieval methods.
 func TestSkillRetrieval(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test skills
 	for i := 1; i <= 3; i++ {
 		skillDir := filepath.Join(tmpDir, "skill-"+string(rune('0'+i)))
@@ -342,7 +342,7 @@ func TestSkillRetrieval(t *testing.T) {
 
 	// Test GetAllSkills returns a copy
 	skills1 := registry.GetAllSkills()
-	
+
 	if len(skills1) != 3 {
 		t.Errorf("expected 3 skills, got %d", len(skills1))
 	}
@@ -358,7 +358,7 @@ func TestSkillRetrieval(t *testing.T) {
 // TestMatchSkill tests skill matching functionality.
 func TestMatchSkill(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test skills with different descriptions
 	skills := []struct {
 		id          string
@@ -446,7 +446,7 @@ func TestMatchSkillEmptyEmbedding(t *testing.T) {
 // TestMatchSkillBelowThreshold tests skill matching below confidence threshold.
 func TestMatchSkillBelowThreshold(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a test skill
 	skillDir := filepath.Join(tmpDir, "test-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -501,7 +501,7 @@ required-capability: coding
 // TestMatchSkillUsageTracking tests that skill matching updates usage statistics.
 func TestMatchSkillUsageTracking(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a test skill
 	skillDir := filepath.Join(tmpDir, "test-skill")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -564,7 +564,7 @@ required-capability: coding
 // TestMatchSkillWithMultipleSkills tests matching with multiple skills.
 func TestMatchSkillWithMultipleSkills(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create multiple test skills
 	skills := []struct {
 		id          string

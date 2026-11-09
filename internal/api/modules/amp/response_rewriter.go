@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -17,6 +18,12 @@ import (
 
 // ResponseRewriter wraps a gin.ResponseWriter to intercept and modify the response body
 // It's used to rewrite model names in responses when model mapping is used
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 type ResponseRewriter struct {
 	gin.ResponseWriter
 	body          *bytes.Buffer
@@ -28,7 +35,7 @@ type ResponseRewriter struct {
 func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRewriter {
 	return &ResponseRewriter{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           bufPool.Get().(*bytes.Buffer),
 		originalModel:  originalModel,
 	}
 }
@@ -52,6 +59,12 @@ func (rw *ResponseRewriter) Write(data []byte) (int, error) {
 		return n, err
 	}
 	return rw.body.Write(data)
+}
+
+// Release returns the buffer to the pool. It should be called after Flush.
+func (rw *ResponseRewriter) Release() {
+	rw.body.Reset()
+	bufPool.Put(rw.body)
 }
 
 // Flush writes the buffered response with model names rewritten

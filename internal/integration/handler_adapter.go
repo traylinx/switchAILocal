@@ -27,12 +27,12 @@ func (ha *HandlerAdapter) ApplySteering(ctx interface{}, messages []map[string]s
 	if ha.integrator == nil {
 		return "", messages, nil
 	}
-	
+
 	routingCtx, ok := ctx.(*steering.RoutingContext)
 	if !ok {
 		return "", messages, nil
 	}
-	
+
 	return ha.integrator.ApplySteering(routingCtx, messages)
 }
 
@@ -42,18 +42,18 @@ func (ha *HandlerAdapter) RecordRouting(decision interface{}) error {
 	if ha.integrator == nil {
 		return nil
 	}
-	
+
 	// Handle *memory.RoutingDecision directly
 	if routingDecision, ok := decision.(*memory.RoutingDecision); ok {
 		return ha.integrator.RecordRouting(routingDecision)
 	}
-	
+
 	// Handle map[string]interface{} by converting to RoutingDecision
 	if decisionMap, ok := decision.(map[string]interface{}); ok {
 		routingDecision := ha.mapToRoutingDecision(decisionMap)
 		return ha.integrator.RecordRouting(routingDecision)
 	}
-	
+
 	return nil
 }
 
@@ -63,18 +63,18 @@ func (ha *HandlerAdapter) UpdateOutcome(decision interface{}) error {
 	if ha.integrator == nil {
 		return nil
 	}
-	
+
 	// Handle *memory.RoutingDecision directly
 	if routingDecision, ok := decision.(*memory.RoutingDecision); ok {
 		return ha.integrator.UpdateOutcome(routingDecision)
 	}
-	
+
 	// Handle map[string]interface{} by converting to RoutingDecision
 	if decisionMap, ok := decision.(map[string]interface{}); ok {
 		routingDecision := ha.mapToRoutingDecision(decisionMap)
 		return ha.integrator.UpdateOutcome(routingDecision)
 	}
-	
+
 	return nil
 }
 
@@ -84,18 +84,18 @@ func (ha *HandlerAdapter) EmitRoutingEvent(decision interface{}) error {
 	if ha.integrator == nil {
 		return nil
 	}
-	
+
 	// Handle *memory.RoutingDecision directly
 	if routingDecision, ok := decision.(*memory.RoutingDecision); ok {
 		return ha.integrator.EmitRoutingEvent(routingDecision)
 	}
-	
+
 	// Handle map[string]interface{} by converting to RoutingDecision
 	if decisionMap, ok := decision.(map[string]interface{}); ok {
 		routingDecision := ha.mapToRoutingDecision(decisionMap)
 		return ha.integrator.EmitRoutingEvent(routingDecision)
 	}
-	
+
 	return nil
 }
 
@@ -104,17 +104,17 @@ func (ha *HandlerAdapter) mapToRoutingDecision(m map[string]interface{}) *memory
 	decision := &memory.RoutingDecision{
 		Timestamp: time.Now(),
 	}
-	
+
 	// Extract API key hash
 	if apiKeyHash, ok := m["api_key_hash"].(string); ok {
 		decision.APIKeyHash = apiKeyHash
 	}
-	
+
 	// Extract timestamp
 	if timestamp, ok := m["timestamp"].(time.Time); ok {
 		decision.Timestamp = timestamp
 	}
-	
+
 	// Extract request info
 	if requestMap, ok := m["request"].(map[string]interface{}); ok {
 		if model, ok := requestMap["model"].(string); ok {
@@ -130,7 +130,7 @@ func (ha *HandlerAdapter) mapToRoutingDecision(m map[string]interface{}) *memory
 			decision.Request.ContentLength = contentLength
 		}
 	}
-	
+
 	// Extract routing info
 	if routingMap, ok := m["routing"].(map[string]interface{}); ok {
 		if selectedModel, ok := routingMap["selected_model"].(string); ok {
@@ -146,7 +146,7 @@ func (ha *HandlerAdapter) mapToRoutingDecision(m map[string]interface{}) *memory
 			decision.Routing.LatencyMs = latencyMs
 		}
 	}
-	
+
 	// Extract outcome info
 	if outcomeMap, ok := m["outcome"].(map[string]interface{}); ok {
 		if success, ok := outcomeMap["success"].(bool); ok {
@@ -162,7 +162,7 @@ func (ha *HandlerAdapter) mapToRoutingDecision(m map[string]interface{}) *memory
 			decision.Outcome.QualityScore = qualityScore
 		}
 	}
-	
+
 	return decision
 }
 

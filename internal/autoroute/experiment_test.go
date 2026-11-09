@@ -33,12 +33,12 @@ func TestOptimizationLab_EvaluateAndAdapt_Promote(t *testing.T) {
 		Latency:      0.1,
 		SuccessRate:  0.7, // Heavy bias towards success
 	}
-	
+
 	lab.windowReqCount = 20 // Must be >= 10 to evaluate
-	
+
 	// Set the shadow RQS to be significantly higher than production (Avg 0.60 vs Prod 0.50)
-	lab.windowProdRQS = 20 * 0.50 
-	lab.windowShadowRQS = 20 * 0.60 
+	lab.windowProdRQS = 20 * 0.50
+	lab.windowShadowRQS = 20 * 0.60
 	lab.mu.Unlock()
 
 	// Force adaptation evaluation
@@ -47,7 +47,7 @@ func TestOptimizationLab_EvaluateAndAdapt_Promote(t *testing.T) {
 	// Check if the scorer's weights were updated to the winning shadow configuration
 	updatedWeights := scorer.weights
 	assert.InDelta(t, 0.7, updatedWeights.SuccessRate, 0.001, "Scorer weights should be updated to the winning shadow weights")
-	
+
 	// Verify window was reset
 	lab.mu.RLock()
 	assert.Equal(t, 0, lab.windowReqCount)
@@ -80,9 +80,9 @@ func TestOptimizationLab_EvaluateAndAdapt_Discard(t *testing.T) {
 		Latency:      0.1,
 		SuccessRate:  0.7,
 	}
-	
+
 	lab.windowReqCount = 20
-	
+
 	// Set shadow RQS to be WORSE than production
 	lab.windowProdRQS = 20 * 0.60
 	lab.windowShadowRQS = 20 * 0.50

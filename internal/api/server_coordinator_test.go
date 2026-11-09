@@ -216,7 +216,7 @@ func TestCreatePipelineIntegratorFromCoordinator_ValidCoordinator(t *testing.T) 
 	integrator := createPipelineIntegratorFromCoordinator(mockCoordinator)
 
 	assert.NotNil(t, integrator)
-	
+
 	// Verify the integrator can be used
 	model, messages, err := integrator.ApplySteering(nil, []map[string]string{})
 	assert.NoError(t, err)
@@ -244,7 +244,7 @@ func TestCreateEventBusIntegratorFromCoordinator_ValidCoordinator(t *testing.T) 
 	integrator := createEventBusIntegratorFromCoordinator(mockCoordinator)
 
 	assert.NotNil(t, integrator)
-	
+
 	// Verify the integrator can be used
 	err := integrator.ConnectHeartbeatEvents()
 	assert.NoError(t, err)

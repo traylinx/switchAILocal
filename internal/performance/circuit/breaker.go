@@ -180,7 +180,7 @@ func (r *Registry) Get(provider string) *Breaker {
 	if b, ok := r.breakers[provider]; ok {
 		return b
 	}
-	
+
 	b := NewBreaker(r.config)
 	r.breakers[provider] = b
 	return b
