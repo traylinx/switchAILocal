@@ -3,8 +3,9 @@ on:
   push:
     branches: [main]
     paths: ['deploy/managed-server/**', 'deploy/release/**', 'channels/**', '.github/workflows/**']
+  # No path filter on pull requests: `contracts` is a required status check, and
+  # a filtered workflow never reports, which blocks every PR outside these paths.
   pull_request:
-    paths: ['deploy/managed-server/**', 'deploy/release/**', 'channels/**', '.github/workflows/**']
 permissions:
   contents: read
 jobs:
