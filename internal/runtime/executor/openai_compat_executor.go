@@ -164,7 +164,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 		}
 
 		if contentType == "application/json" {
-			log.Infof("DEBUG MULTIMODAL OP: operation=%v, req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s",
+			log.Debugf("openai compat multimodal: operation=%v, req.Model=%s, upstreamModel=%s, modelOverride=%s, targetModel=%s",
 				req.Metadata["operation"], req.Model, upstreamModel, modelOverride, targetModel)
 
 			if targetModel != "" {
@@ -222,7 +222,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *switchailocala
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
 
-	log.Infof("OPENAI COMPAT EXECUTOR SENDING PAYLOAD: %s", string(translated))
+	// Never log the request body: it carries prompts, images and documents.
+	log.Debugf("openai compat executor: POST %s (%d bytes)", url, len(translated))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return resp, err
