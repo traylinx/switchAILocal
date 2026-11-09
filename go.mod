@@ -1,10 +1,10 @@
 module github.com/traylinx/switchAILocal
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/andybalholm/brotli v1.2.0
+	github.com/andybalholm/brotli v1.2.7
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/expr-lang/expr v1.17.7
 	github.com/fsnotify/fsnotify v1.9.0
@@ -16,7 +16,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.18.7
+	github.com/klauspost/compress v1.20.2
 	github.com/leanovate/gopter v0.2.11
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/minio/minio-go/v7 v7.0.98
