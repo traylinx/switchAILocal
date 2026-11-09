@@ -140,3 +140,29 @@ func TestLocalCLIExecutor_BuildFinalArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildFinalArgsKimiForwardsModel(t *testing.T) {
+	kimi := &LocalCLIExecutor{Provider: "kimicli", Args: []string{"-p"}, AutoApproveFlag: "--auto"}
+	tests := []struct {
+		name     string
+		executor *LocalCLIExecutor
+		model    string
+		opts     *CLIOptions
+		want     []string
+	}{
+		{"kimi model before -p", kimi, "kimicli:kimi-for-coding", nil, []string{"--model", "kimi-for-coding", "-p", "-hi"}},
+		{"kimi flags stay before -p", kimi, "kimicli:k2", &CLIOptions{Flags: CLIFlags{AutoApprove: true}}, []string{"--model", "k2", "--auto", "-p", "-hi"}},
+		{"kimi bare prefix", kimi, "kimicli:", nil, []string{"-p", "-hi"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.executor.buildFinalArgs("-hi", tt.opts, nil, tt.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
