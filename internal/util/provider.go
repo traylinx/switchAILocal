@@ -56,6 +56,7 @@ var KnownProviders = map[string]string{
 	constant.Codex:     "OpenAI Codex",
 	"ollama":           "Ollama (Local)",
 	constant.VibeCLI:   "Vibe CLI",
+	constant.KimiCLI:   "Kimi CLI",
 	constant.OpenAI:    "OpenAI",
 	"openai-compat":    "OpenAI Compatible",
 	"opencode":         "OpenCode Agent",
@@ -121,6 +122,7 @@ func ValidateProviderPrefix(providerPrefix, model string) (string, error) {
 		constant.GeminiCLI: true,
 		constant.ClaudeCLI: true,
 		constant.VibeCLI:   true,
+		constant.KimiCLI:   true,
 		"ollama":           true,
 		"opencode":         true,
 	}

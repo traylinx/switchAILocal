@@ -849,6 +849,14 @@ func (e *LocalCLIExecutor) buildFinalArgs(prompt string, cliOpts *CLIOptions, fo
 	// 2. Default tool arguments (like -p)
 	finalArgs = append(finalArgs, e.Args...)
 
+	// 2b. kimi takes the model as a flag. Its -p consumes the next argument
+	// (the prompt), so the model flag goes before -p with the control flags.
+	if cliModel := stripProviderPrefix(modelName); cliModel != "" && e.Provider == "kimicli" {
+		if !e.containsFlag(flags, "--model") && !e.containsFlag(flags, "-m") {
+			finalArgs = append(append([]string{"--model", cliModel}, flags...), e.Args...)
+		}
+	}
+
 	// 3. Format arguments (like --output-format=json)
 	if e.SupportsJSON && len(formatArgs) > 0 {
 		finalArgs = append(finalArgs, formatArgs...)
@@ -1028,4 +1036,17 @@ func (e *LocalCLIExecutor) applyBillboardPrompt(prompt string) string {
 	)
 
 	return billboardInstruction + prompt
+}
+
+// stripProviderPrefix turns "kimicli:kimi-for-coding" into "kimi-for-coding".
+// It returns "" for a bare prefix or an unknown model, so the CLI keeps its
+// own default.
+func stripProviderPrefix(modelName string) string {
+	if modelName == "" || modelName == "unknown" {
+		return ""
+	}
+	if idx := strings.Index(modelName, ":"); idx >= 0 {
+		return modelName[idx+1:]
+	}
+	return modelName
 }
