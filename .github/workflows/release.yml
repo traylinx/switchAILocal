@@ -25,8 +25,8 @@ jobs:
     if: github.event_name == 'push'
     uses: ./.github/workflows/go-vulnerability-gate.yml
   build:
-    if: github.event_name == 'push'
     needs: security-gate
+    if: github.event_name == 'push'
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
