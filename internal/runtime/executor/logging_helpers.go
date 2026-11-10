@@ -60,10 +60,29 @@ type upstreamRequestLog struct {
 	AuthValue string
 }
 
+var byteBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
+
+func getByteBuffer() *bytes.Buffer {
+	b := byteBufferPool.Get().(*bytes.Buffer)
+	b.Reset()
+	return b
+}
+
+func putByteBuffer(b *bytes.Buffer) {
+	if b.Cap() > 128*1024 {
+		return
+	}
+	byteBufferPool.Put(b)
+}
+
 type upstreamAttempt struct {
 	index                int
 	request              string
-	response             *strings.Builder
+	response             *bytes.Buffer
 	responseIntroWritten bool
 	statusWritten        bool
 	headersWritten       bool
@@ -94,7 +113,8 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	attempts := getAttempts(ginCtx)
 	index := len(attempts) + 1
 
-	builder := &strings.Builder{}
+	builder := getByteBuffer()
+	defer putByteBuffer(builder)
 	builder.WriteString(fmt.Sprintf("=== API REQUEST %d ===\n", index))
 	builder.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format(time.RFC3339Nano)))
 	if info.URL != "" {
@@ -121,7 +141,7 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	attempt := &upstreamAttempt{
 		index:    index,
 		request:  builder.String(),
-		response: &strings.Builder{},
+		response: &bytes.Buffer{},
 	}
 	attempts = append(attempts, attempt)
 	ginCtx.Set(apiAttemptsKey, attempts)
@@ -145,7 +165,8 @@ func (s *LoggingStore) RecordRequest(info upstreamRequestLog) {
 	defer s.mu.Unlock()
 
 	index := len(s.attempts) + 1
-	builder := &strings.Builder{}
+	builder := getByteBuffer()
+	defer putByteBuffer(builder)
 	builder.WriteString(fmt.Sprintf("=== API REQUEST %d ===\n", index))
 	builder.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format(time.RFC3339Nano)))
 	if info.URL != "" {
@@ -170,7 +191,7 @@ func (s *LoggingStore) RecordRequest(info upstreamRequestLog) {
 	attempt := &upstreamAttempt{
 		index:    index,
 		request:  builder.String(),
-		response: &strings.Builder{},
+		response: &bytes.Buffer{},
 	}
 	s.attempts = append(s.attempts, attempt)
 }
@@ -212,7 +233,7 @@ func (s *LoggingStore) AppendResponseChunk(chunk []byte) {
 		s.attempts = append(s.attempts, &upstreamAttempt{
 			index:    1,
 			request:  "=== API REQUEST 1 ===\n<missing>\n\n",
-			response: &strings.Builder{},
+			response: &bytes.Buffer{},
 		})
 	}
 	attempt := s.attempts[len(s.attempts)-1]
@@ -411,7 +432,7 @@ func ensureAttempt(ginCtx *gin.Context) ([]*upstreamAttempt, *upstreamAttempt) {
 		attempt := &upstreamAttempt{
 			index:    1,
 			request:  "=== API REQUEST 1 ===\n<missing>\n\n",
-			response: &strings.Builder{},
+			response: &bytes.Buffer{},
 		}
 		attempts = []*upstreamAttempt{attempt}
 		ginCtx.Set(apiAttemptsKey, attempts)
@@ -434,18 +455,20 @@ func updateAggregatedRequest(ginCtx *gin.Context, attempts []*upstreamAttempt) {
 	if ginCtx == nil {
 		return
 	}
-	var builder strings.Builder
+	builder := getByteBuffer()
+	defer putByteBuffer(builder)
 	for _, attempt := range attempts {
 		builder.WriteString(attempt.request)
 	}
-	ginCtx.Set(apiRequestKey, []byte(builder.String()))
+	ginCtx.Set(apiRequestKey, bytes.Clone(builder.Bytes()))
 }
 
 func updateAggregatedResponse(ginCtx *gin.Context, attempts []*upstreamAttempt) {
 	if ginCtx == nil {
 		return
 	}
-	var builder strings.Builder
+	builder := getByteBuffer()
+	defer putByteBuffer(builder)
 	for idx, attempt := range attempts {
 		if attempt == nil || attempt.response == nil {
 			continue
@@ -462,10 +485,10 @@ func updateAggregatedResponse(ginCtx *gin.Context, attempts []*upstreamAttempt) 
 			builder.WriteString("\n")
 		}
 	}
-	ginCtx.Set(apiResponseKey, []byte(builder.String()))
+	ginCtx.Set(apiResponseKey, bytes.Clone(builder.Bytes()))
 }
 
-func writeHeaders(builder *strings.Builder, headers http.Header) {
+func writeHeaders(builder *bytes.Buffer, headers http.Header) {
 	if builder == nil {
 		return
 	}
