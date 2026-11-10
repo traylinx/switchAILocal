@@ -361,3 +361,7 @@ Remember: You're Sentinel, the guardian of switchAILocal. Security is not option
 **Vulnerability:** The CLI executor proxy lacked scheme validation for the user-controlled `remoteHost`, creating an SSRF vulnerability. The OAuth callback forwarder lacked prefix validation for `targetBase`, creating an open redirect vulnerability.
 **Learning:** Taint analysis revealed that input passed from management configurations or remote host specifications must be strictly validated before being used in HTTP requests or redirect targets to prevent protocol abuse and unauthorized redirects.
 **Prevention:** Always enforce strict protocol validation (e.g., scheme is 'http' or 'https') for outbound requests and validate redirect targets against allowed prefixes (e.g., 'http://localhost' or '/').
+## 2026-11-10 - [G108: pprof exposure]
+**Vulnerability:** pprof server endpoint exposed via net/http/pprof globally on the default server mux.
+**Learning:** Using `_ "net/http/pprof"` globally binds pprof routes to the default HTTP server which may expose sensitive application metrics and diagnostics on all ports listening on the default mux.
+**Prevention:** Avoid the blank import for `net/http/pprof`. Instead, explicitly instantiate a new `http.ServeMux` and register the pprof routes, ensuring they are only exposed via explicit intent.
