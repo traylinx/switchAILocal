@@ -163,7 +163,7 @@ Create a PR with:
 ⚡ Pre-allocate slices with known capacity in hot paths
 ⚡ Cache compiled regex patterns in pattern matcher
 ⚡ Reuse HTTP client connections with proper pooling
-⚡ Use strings.Builder instead of string concatenation
+⚡ Use bytes.Buffer instead of string concatenation
 ⚡ Add buffer pooling for streaming responses
 ⚡ Replace map lookups in loops with single lookup
 ⚡ Add early returns to skip unnecessary processing
@@ -219,3 +219,8 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+
+
+## $(date +%Y-%m-%d) - Optimize bytes.Buffer for request/response logging
+**Learning:** In switchAILocal, `bytes.Buffer` is used for accumulating upstream API request and response logs. The codebase repeatedly instantiates `&bytes.Buffer{}` for these logs in high-traffic paths like `recordAPIRequest` and during log aggregation (`updateAggregatedRequest`, `updateAggregatedResponse`). The previous attempt to use `sync.Pool` with `strings.Builder` was an anti-pattern in Go because `strings.Builder.Reset()` explicitly discards the underlying byte buffer (`b.buf = nil`), trading away stack allocation for `sync.Pool` overhead with zero real memory savings. `bytes.Buffer.Reset()`, on the other hand, retains its capacity for reuse.
+**Action:** Introduced a `sync.Pool` for `*bytes.Buffer` in `internal/runtime/executor/logging_helpers.go`. Acquired buffers via `byteBufferPool.Get()` and returned them via a custom `putByteBuffer(b)` function that enforces a maximum capacity check (e.g., `b.Cap() <= 128 * 1024`) to prevent permanent memory bloat from occasional massive payloads. Replaced local variable declarations with this pooled buffer pattern, properly reducing memory allocations in the hot logging paths.
