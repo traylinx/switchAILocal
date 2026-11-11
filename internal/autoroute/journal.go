@@ -14,40 +14,40 @@ import (
 // ExperimentJournal maintains a TSV audit trail of all routing
 // decisions and shadow experiments, directly inspired by AutoResearch.
 type ExperimentJournal struct {
-	filePath   string
-	file       *os.File
-	writer     *csv.Writer
-	mu         sync.Mutex
-	enabled    bool
+	filePath string
+	file     *os.File
+	writer   *csv.Writer
+	mu       sync.Mutex
+	enabled  bool
 
 	// In-memory ring buffer for recent UI telemetry
-	recent     []JournalEntry
-	recentIdx  int
-	recentLen  int
-	maxRecent  int
+	recent    []JournalEntry
+	recentIdx int
+	recentLen int
+	maxRecent int
 }
 
 // JournalEntry represents a single row in the TSV log.
 type JournalEntry struct {
-	Timestamp      time.Time
-	RequestID      string
-	Intent         string
-	Complexity     float64
+	Timestamp  time.Time
+	RequestID  string
+	Intent     string
+	Complexity float64
 	// Production Decision
-	ProdModel      string
-	ProdTier       string
-	ProdLatency    time.Duration
-	ProdSuccess    bool
-	ProdRQS        float64
+	ProdModel   string
+	ProdTier    string
+	ProdLatency time.Duration
+	ProdSuccess bool
+	ProdRQS     float64
 	// Shadow Decision (if diff from Prod)
-	ShadowModel    string
-	ShadowTier     string
+	ShadowModel       string
+	ShadowTier        string
 	ShadowExpectedRQS float64 // Predicted RQS based on heuristic/history
 	// Active Weights
-	WeightAvail    float64
-	WeightQuota    float64
-	WeightLatency  float64
-	WeightSuccess  float64
+	WeightAvail   float64
+	WeightQuota   float64
+	WeightLatency float64
+	WeightSuccess float64
 }
 
 // NewExperimentJournal initializes an append-only TSV logger.
@@ -62,7 +62,7 @@ func NewExperimentJournal(workspaceDir string, enabled bool) (*ExperimentJournal
 	}
 
 	filePath := filepath.Join(logDir, "experiments.tsv")
-	
+
 	// Open file in append mode, create if not exist
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -128,14 +128,14 @@ func (j *ExperimentJournal) Record(entry JournalEntry) {
 
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	
+
 	// Update in-memory ring buffer
 	j.recent[j.recentIdx] = entry
 	j.recentIdx = (j.recentIdx + 1) % j.maxRecent
 	if j.recentLen < j.maxRecent {
 		j.recentLen++
 	}
-	
+
 	if err := j.writer.Write(row); err != nil {
 		log.WithError(err).Warn("Failed to write to experiment journal")
 		return
@@ -171,7 +171,7 @@ func (j *ExperimentJournal) GetRecent(n int) []JournalEntry {
 	}
 
 	result := make([]JournalEntry, n)
-	
+
 	// Read backwards from the current index
 	idx := j.recentIdx - 1
 	for i := 0; i < n; i++ {
@@ -181,6 +181,6 @@ func (j *ExperimentJournal) GetRecent(n int) []JournalEntry {
 		result[i] = j.recent[idx]
 		idx--
 	}
-	
+
 	return result
 }

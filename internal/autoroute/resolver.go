@@ -50,7 +50,7 @@ func NewAutoResolver(cfg Config, workspaceDir string) *AutoResolver {
 		scorer: NewProviderScorer(cfg),
 	}
 	r.monitor = NewProviderHealthMonitor(r, 60*time.Second)
-	
+
 	if cfg.Lab.Enabled {
 		journal, err := NewExperimentJournal(workspaceDir, true)
 		if err != nil {
@@ -63,7 +63,7 @@ func NewAutoResolver(cfg Config, workspaceDir string) *AutoResolver {
 		}
 		r.lab = NewLab(cfg, r.scorer, journal)
 	}
-	
+
 	return r
 }
 
@@ -73,7 +73,7 @@ func (r *AutoResolver) SeedCandidates(candidates []CandidateInput) {
 	r.candidatesMu.Lock()
 	r.candidates = candidates
 	r.candidatesMu.Unlock()
-	
+
 	if r.monitor != nil {
 		r.monitor.RegisterInitialCandidates(candidates)
 	}
@@ -115,16 +115,16 @@ func (r *AutoResolver) RecordOutcome(reqID string, decision *RoutingDecision, pr
 	if r.monitor != nil {
 		r.monitor.RecordRequestOutcome(provider, latency, success, httpCode, headers)
 	}
-	
+
 	if r.lab != nil && decision != nil {
 		outcome := RequestOutcome{
-			Timestamp:          time.Now(),
-			Model:              decision.SelectedModel,
-			Provider:           provider,
-			Tier:               GetEffectiveTier(decision.SelectedModel, provider, r.config),
-			Latency:            latency,
-			Success:            success,
-			StatusCode:         httpCode,
+			Timestamp:           time.Now(),
+			Model:               decision.SelectedModel,
+			Provider:            provider,
+			Tier:                GetEffectiveTier(decision.SelectedModel, provider, r.config),
+			Latency:             latency,
+			Success:             success,
+			StatusCode:          httpCode,
 			EstimatedComplexity: decision.EstimatedComplexity,
 		}
 		r.lab.RecordOutcome(reqID, decision.Intent, decision.EstimatedComplexity, decision, outcome)

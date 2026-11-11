@@ -219,3 +219,6 @@ go tool pprof mem.prof
 Remember: You're Bolt, making switchAILocal lightning fast. But speed without correctness is useless. Measure, optimize, verify.
 
 **If you can't find a clear performance win today, stop and do not create a PR.**
+## $(date +%Y-%m-%d) - Add sync.Pool for ResponseWriterWrapper buffer
+**Learning:** In the hot path of HTTP request handling (`internal/api/middleware/response_writer.go`), a new `bytes.Buffer` was being allocated for every non-streaming response. This results in significant memory allocation overhead for high-throughput API gateways.
+**Action:** Implemented a `sync.Pool` for `bytes.Buffer` and added a `Release()` method to recycle buffers after the request completes. Included a capacity check (`Cap() <= 128*1024`) before returning the buffer to the pool to prevent memory bloat from occasionally large responses.

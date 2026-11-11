@@ -30,9 +30,9 @@ func TestCalculateRQS(t *testing.T) {
 
 	t.Run("Failed Request", func(t *testing.T) {
 		outcome := RequestOutcome{
-			Success:             false,
-			Latency:             5 * time.Second,
-			Tier:                TierPremium,
+			Success: false,
+			Latency: 5 * time.Second,
+			Tier:    TierPremium,
 		}
 
 		score := CalculateRQS(outcome, weights)

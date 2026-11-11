@@ -82,7 +82,6 @@ func TestScoringCodingSlot(t *testing.T) {
 	}
 }
 
-
 // TestScoringReasoningSlot tests that reasoning models are scored correctly
 func TestScoringReasoningSlot(t *testing.T) {
 	builder := NewBuilder(false, false, nil)
@@ -134,30 +133,30 @@ func TestFallbackChainGeneration(t *testing.T) {
 			ID:       "model-1",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     128000,
-				EstimatedLatency:  "standard",
-				CostTier:          "high",
+				SupportsCoding:   true,
+				ContextWindow:    128000,
+				EstimatedLatency: "standard",
+				CostTier:         "high",
 			},
 		},
 		{
 			ID:       "model-2",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     64000,
-				EstimatedLatency:  "standard",
-				CostTier:          "medium",
+				SupportsCoding:   true,
+				ContextWindow:    64000,
+				EstimatedLatency: "standard",
+				CostTier:         "medium",
 			},
 		},
 		{
 			ID:       "model-3",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     32000,
-				EstimatedLatency:  "fast",
-				CostTier:          "low",
+				SupportsCoding:   true,
+				ContextWindow:    32000,
+				EstimatedLatency: "fast",
+				CostTier:         "low",
 			},
 		},
 	}
@@ -232,10 +231,10 @@ func TestManualOverrideApplication(t *testing.T) {
 			ID:       "deepseek-coder",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     128000,
-				EstimatedLatency:  "standard",
-				CostTier:          "medium",
+				SupportsCoding:   true,
+				ContextWindow:    128000,
+				EstimatedLatency: "standard",
+				CostTier:         "medium",
 			},
 		},
 	}
@@ -290,20 +289,20 @@ func TestCostOptimization(t *testing.T) {
 			ID:       "expensive-model",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     128000,
-				EstimatedLatency:  "standard",
-				CostTier:          "high",
+				SupportsCoding:   true,
+				ContextWindow:    128000,
+				EstimatedLatency: "standard",
+				CostTier:         "high",
 			},
 		},
 		{
 			ID:       "cheap-model",
 			Provider: "openai",
 			Capabilities: &capability.ModelCapability{
-				SupportsCoding:    true,
-				ContextWindow:     64000,
-				EstimatedLatency:  "standard",
-				CostTier:          "low",
+				SupportsCoding:   true,
+				ContextWindow:    64000,
+				EstimatedLatency: "standard",
+				CostTier:         "low",
 			},
 		},
 	}

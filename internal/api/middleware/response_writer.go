@@ -11,11 +11,19 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/interfaces"
 	"github.com/traylinx/switchAILocal/internal/logging"
 )
+
+// bufferPool is a sync.Pool for bytes.Buffer to reduce allocations during response logging.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
@@ -55,7 +63,7 @@ type ResponseWriterWrapper struct {
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
-		body:           &bytes.Buffer{},
+		body:           bufferPool.Get().(*bytes.Buffer),
 		logger:         logger,
 		requestInfo:    requestInfo,
 		headers:        make(map[string][]string),
@@ -238,6 +246,17 @@ func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
 
 	for chunk := range w.chunkChannel {
 		w.streamWriter.WriteChunkAsync(chunk)
+	}
+}
+
+// Release returns the buffer to the pool. It should be called after Finalize.
+func (w *ResponseWriterWrapper) Release() {
+	if w.body != nil {
+		if w.body.Cap() <= 128*1024 { // 128KB limit to avoid memory bloat
+			w.body.Reset()
+			bufferPool.Put(w.body)
+		}
+		w.body = nil
 	}
 }
 
