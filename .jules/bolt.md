@@ -222,3 +222,7 @@ Remember: You're Bolt, making switchAILocal lightning fast. But speed without co
 ## $(date +%Y-%m-%d) - Add sync.Pool for ResponseWriterWrapper buffer
 **Learning:** In the hot path of HTTP request handling (`internal/api/middleware/response_writer.go`), a new `bytes.Buffer` was being allocated for every non-streaming response. This results in significant memory allocation overhead for high-throughput API gateways.
 **Action:** Implemented a `sync.Pool` for `bytes.Buffer` and added a `Release()` method to recycle buffers after the request completes. Included a capacity check (`Cap() <= 128*1024`) before returning the buffer to the pool to prevent memory bloat from occasionally large responses.
+
+## $(date +%Y-%m-%d) - Bump Go Version for Vulnerability Fix
+**Learning:** Found a vulnerability (GO-2026-6859) in the Go standard library (`net/http`) while running `govulncheck`. The vulnerability is an HTTP/1 server crash due to a MaxBytesReader header race.
+**Action:** Bumped the Go version in `go.mod` and `.github/workflows/go-vulnerability-gate.yml` from `1.26.10` to `1.26.11` to resolve the vulnerability. This ensures the CI check for govulncheck passes.
