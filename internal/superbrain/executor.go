@@ -311,7 +311,6 @@ func (se *SuperbrainExecutor) CountTokens(ctx context.Context, auth *sdkauth.Aut
 	return se.wrapped.CountTokens(ctx, auth, req, opts)
 }
 
-
 // isEnabled checks if Superbrain is enabled.
 func (se *SuperbrainExecutor) isEnabled() bool {
 	se.mu.RLock()
@@ -342,12 +341,12 @@ func (se *SuperbrainExecutor) shouldPerformPreFlight() bool {
 	if se.config == nil {
 		return false
 	}
-	
+
 	// Check if Context Sculptor is enabled via component flags
 	if !se.config.ComponentFlags.SculptorEnabled {
 		return false
 	}
-	
+
 	return se.config.ContextSculptor.Enabled && se.contextSculptor != nil
 }
 
@@ -429,10 +428,10 @@ func (se *SuperbrainExecutor) performPreFlight(ctx context.Context, req switchai
 
 	// Log that we're performing optimization
 	log.WithFields(log.Fields{
-		"model":           modelName,
+		"model":            modelName,
 		"estimated_tokens": analysis.EstimatedTokens,
-		"context_limit":   analysis.ModelContextLimit,
-		"file_count":      analysis.FileCount,
+		"context_limit":    analysis.ModelContextLimit,
+		"file_count":       analysis.FileCount,
 	}).Info("Content exceeds context limit, performing optimization")
 
 	// Build file list for optimization

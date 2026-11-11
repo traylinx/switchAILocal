@@ -15,7 +15,7 @@ func TestE2EFailover_QuotaExhaustion(t *testing.T) {
 	cfg.IntentMatrix = map[string][]string{
 		"reasoning": {"openai:o1-preview", "claude:claude-3-opus", "switchai:deepseek-reasoner"},
 	}
-	
+
 	resolver := NewAutoResolver(cfg, t.TempDir())
 
 	req := &RoutingRequest{
@@ -69,7 +69,7 @@ func TestE2EFailover_QuotaExhaustion(t *testing.T) {
 	if decision.SelectedModel == "openai:o1-preview" {
 		t.Errorf("Router erroneously selected the quota-exhausted model instead of failing over.")
 	}
-	
+
 	if decision.SelectedModel == "ollama:llama3" {
 		t.Errorf("Router selected a model that violates the intent matrix restrictions.")
 	}
@@ -79,7 +79,7 @@ func TestE2EFailover_QuotaExhaustion(t *testing.T) {
 		t.Errorf("Expected failover to switchai:deepseek-reasoner, got: %s", decision.SelectedModel)
 	}
 
-	// The exhausted model should still be in the fallback chain in case the primary fails, 
+	// The exhausted model should still be in the fallback chain in case the primary fails,
 	// but relegated to the back.
 	foundExhausted := false
 	for _, fallback := range decision.FallbackChain {

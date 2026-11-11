@@ -203,12 +203,12 @@ func (cfg *Config) GetHeartbeatInterval() time.Duration {
 	if cfg == nil {
 		return 5 * time.Minute
 	}
-	
+
 	interval, err := time.ParseDuration(cfg.Heartbeat.Interval)
 	if err != nil {
 		return 5 * time.Minute // Default fallback
 	}
-	
+
 	return interval
 }
 
@@ -217,12 +217,12 @@ func (cfg *Config) GetHeartbeatTimeout() time.Duration {
 	if cfg == nil {
 		return 5 * time.Second
 	}
-	
+
 	timeout, err := time.ParseDuration(cfg.Heartbeat.Timeout)
 	if err != nil {
 		return 5 * time.Second // Default fallback
 	}
-	
+
 	return timeout
 }
 
@@ -231,12 +231,12 @@ func (cfg *Config) GetHeartbeatRetryDelay() time.Duration {
 	if cfg == nil {
 		return time.Second
 	}
-	
+
 	delay, err := time.ParseDuration(cfg.Heartbeat.RetryDelay)
 	if err != nil {
 		return time.Second // Default fallback
 	}
-	
+
 	return delay
 }
 
@@ -245,14 +245,14 @@ func (cfg *Config) IsProviderHeartbeatEnabled(provider string) bool {
 	if cfg == nil || !cfg.Heartbeat.Enabled {
 		return false
 	}
-	
+
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
 	if providerConfig, exists := cfg.Heartbeat.Providers[normalizedProvider]; exists {
 		if providerConfig.Enabled != nil {
 			return *providerConfig.Enabled
 		}
 	}
-	
+
 	// Default to enabled if no provider-specific setting
 	return true
 }
@@ -262,7 +262,7 @@ func (cfg *Config) GetProviderHeartbeatInterval(provider string) time.Duration {
 	if cfg == nil {
 		return 5 * time.Minute
 	}
-	
+
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
 	if providerConfig, exists := cfg.Heartbeat.Providers[normalizedProvider]; exists {
 		if providerConfig.Interval != "" {
@@ -271,7 +271,7 @@ func (cfg *Config) GetProviderHeartbeatInterval(provider string) time.Duration {
 			}
 		}
 	}
-	
+
 	// Fall back to global interval
 	return cfg.GetHeartbeatInterval()
 }
@@ -281,7 +281,7 @@ func (cfg *Config) GetProviderHeartbeatTimeout(provider string) time.Duration {
 	if cfg == nil {
 		return 5 * time.Second
 	}
-	
+
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
 	if providerConfig, exists := cfg.Heartbeat.Providers[normalizedProvider]; exists {
 		if providerConfig.Timeout != "" {
@@ -290,7 +290,7 @@ func (cfg *Config) GetProviderHeartbeatTimeout(provider string) time.Duration {
 			}
 		}
 	}
-	
+
 	// Fall back to global timeout
 	return cfg.GetHeartbeatTimeout()
 }

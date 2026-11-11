@@ -15,11 +15,11 @@ import (
 
 // mockExecutor is a mock implementation of ProviderExecutor for testing.
 type mockExecutor struct {
-	identifier     string
-	executeFunc    func(ctx context.Context, auth *sdkauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error)
+	identifier        string
+	executeFunc       func(ctx context.Context, auth *sdkauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error)
 	executeStreamFunc func(ctx context.Context, auth *sdkauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (<-chan switchailocalexecutor.StreamChunk, error)
-	refreshFunc    func(ctx context.Context, auth *sdkauth.Auth) (*sdkauth.Auth, error)
-	countTokensFunc func(ctx context.Context, auth *sdkauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error)
+	refreshFunc       func(ctx context.Context, auth *sdkauth.Auth) (*sdkauth.Auth, error)
+	countTokensFunc   func(ctx context.Context, auth *sdkauth.Auth, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error)
 }
 
 func (m *mockExecutor) Identifier() string {

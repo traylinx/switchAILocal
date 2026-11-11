@@ -90,7 +90,6 @@ func NewBuilder(preferLocal, costOptimization bool, overrides map[string]string)
 	}
 }
 
-
 // Build generates a dynamic matrix from the provided models with capabilities.
 // It scores and ranks models for each capability slot and assigns primary models
 // with fallback chains.
@@ -312,7 +311,6 @@ func (b *Builder) scoreCreative(cap *capability.ModelCapability) float64 {
 	return score
 }
 
-
 // scoreFast scores a model for the fast slot.
 // Prioritizes: low latency, low cost
 func (b *Builder) scoreFast(cap *capability.ModelCapability) float64 {
@@ -369,7 +367,7 @@ func (b *Builder) scoreSecure(cap *capability.ModelCapability) float64 {
 	if contextScore > 1.0 {
 		contextScore = 1.0
 	}
-	
+
 	if cap.IsLocal {
 		score += contextScore * 0.1
 	} else {

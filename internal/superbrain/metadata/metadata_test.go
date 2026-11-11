@@ -36,7 +36,7 @@ func TestRecordAction(t *testing.T) {
 
 	// Record a successful action
 	agg.RecordAction("stdin_injection", "Injected permission response", true, map[string]interface{}{
-		"pattern": "file_permission",
+		"pattern":  "file_permission",
 		"response": "y\n",
 	})
 
@@ -106,10 +106,10 @@ func TestRecordDiagnosis(t *testing.T) {
 	agg := NewAggregator("req-3", "claudecli")
 
 	diagnosis := &types.Diagnosis{
-		FailureType:  types.FailureTypePermissionPrompt,
-		RootCause:    "Process waiting for file permission",
-		Confidence:   0.95,
-		Remediation:  types.RemediationStdinInject,
+		FailureType: types.FailureTypePermissionPrompt,
+		RootCause:   "Process waiting for file permission",
+		Confidence:  0.95,
+		Remediation: types.RemediationStdinInject,
 		RemediationArgs: map[string]string{
 			"pattern": "file_permission",
 		},

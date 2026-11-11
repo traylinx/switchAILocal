@@ -65,6 +65,7 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			// Error is logged but we continue serving the response
 			_ = err
 		}
+		wrapper.Release()
 	}
 }
 

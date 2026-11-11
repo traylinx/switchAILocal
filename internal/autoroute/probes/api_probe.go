@@ -75,10 +75,10 @@ func (p *APIProber) Probe(ctx context.Context) autoroute.ProbeResult {
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		result.Available = true
-		
+
 		// Parse rate limits from headers
 		result.RateLimits = extractRateLimits(p.providerName, resp.Header)
-		
+
 		// Attempt to parse models if it's a known format (e.g. OpenAI /models format)
 		var jsonBody map[string]interface{}
 		if err := json.NewDecoder(resp.Body).Decode(&jsonBody); err == nil {

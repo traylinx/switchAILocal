@@ -111,7 +111,7 @@ func (rm *RestartManager) GetRestartStrategy(diagnosis *types.Diagnosis, provide
 	// Get the corrective flags for this failure type
 	flags, ok := providerFlags.Flags[diagnosis.FailureType]
 	if !ok || len(flags) == 0 {
-		strategy.Reason = fmt.Sprintf("No corrective flags defined for failure type %s on provider %s", 
+		strategy.Reason = fmt.Sprintf("No corrective flags defined for failure type %s on provider %s",
 			diagnosis.FailureType, provider)
 		return strategy
 	}
@@ -144,7 +144,7 @@ func (rm *RestartManager) BuildRestartCommand(originalArgs []string, correctiveF
 
 	// Build new args list
 	newArgs := make([]string, 0, len(originalArgs)+len(correctiveFlags))
-	
+
 	// Copy original args
 	newArgs = append(newArgs, originalArgs...)
 
@@ -160,11 +160,11 @@ func (rm *RestartManager) BuildRestartCommand(originalArgs []string, correctiveF
 
 // FormatRestartAction creates a HealingAction for a restart attempt.
 func FormatRestartAction(strategy *RestartStrategy, success bool, details map[string]interface{}) types.HealingAction {
-	description := fmt.Sprintf("Restarted process with corrective flags: %s", 
+	description := fmt.Sprintf("Restarted process with corrective flags: %s",
 		strings.Join(strategy.CorrectiveFlags, " "))
-	
+
 	if !success {
-		description = fmt.Sprintf("Attempted restart with corrective flags: %s (failed)", 
+		description = fmt.Sprintf("Attempted restart with corrective flags: %s (failed)",
 			strings.Join(strategy.CorrectiveFlags, " "))
 	}
 
@@ -254,7 +254,7 @@ func (rm *RestartManager) DecideRestartOrEscalate(
 	// Check if restart limit has been reached
 	if restartCount >= maxRestarts {
 		decision.ShouldEscalate = true
-		decision.Reason = fmt.Sprintf("Restart limit reached (%d/%d), escalating to fallback", 
+		decision.Reason = fmt.Sprintf("Restart limit reached (%d/%d), escalating to fallback",
 			restartCount, maxRestarts)
 		return decision
 	}
@@ -272,7 +272,7 @@ func (rm *RestartManager) DecideRestartOrEscalate(
 
 	// Can restart
 	decision.ShouldRestart = true
-	decision.Reason = fmt.Sprintf("Restart attempt %d/%d with corrective flags", 
+	decision.Reason = fmt.Sprintf("Restart attempt %d/%d with corrective flags",
 		restartCount+1, maxRestarts)
 	return decision
 }
@@ -285,7 +285,7 @@ func CheckRestartLimit(restartCount, maxRestarts int) bool {
 
 // FormatEscalationAction creates a HealingAction for escalation to fallback.
 func FormatEscalationAction(reason string, restartCount, maxRestarts int) types.HealingAction {
-	description := fmt.Sprintf("Escalating to fallback after %d restart attempts (max: %d)", 
+	description := fmt.Sprintf("Escalating to fallback after %d restart attempts (max: %d)",
 		restartCount, maxRestarts)
 
 	return types.HealingAction{
@@ -364,9 +364,9 @@ func (rh *RestartHistory) ToHealingActions() []types.HealingAction {
 
 	for _, attempt := range rh.Attempts {
 		action := types.HealingAction{
-			ActionType:  "restart_with_flags",
-			Description: fmt.Sprintf("Restart attempt %d/%d with flags: %s", 
-				attempt.AttemptNumber, rh.TotalRestarts, 
+			ActionType: "restart_with_flags",
+			Description: fmt.Sprintf("Restart attempt %d/%d with flags: %s",
+				attempt.AttemptNumber, rh.TotalRestarts,
 				strings.Join(attempt.Strategy.CorrectiveFlags, " ")),
 			Success: attempt.Success,
 			Details: map[string]interface{}{
@@ -400,7 +400,7 @@ func (rh *RestartHistory) GetSummary() string {
 // RecordSuccessfulRestart creates a HealingAction for a successful restart with corrective flags.
 // This is a convenience function that includes all relevant metadata about the successful restart.
 func RecordSuccessfulRestart(strategy *RestartStrategy, attemptNumber int, durationMs int64) types.HealingAction {
-	description := fmt.Sprintf("Successfully restarted process (attempt %d) with corrective flags: %s", 
+	description := fmt.Sprintf("Successfully restarted process (attempt %d) with corrective flags: %s",
 		attemptNumber, strings.Join(strategy.CorrectiveFlags, " "))
 
 	return types.HealingAction{
@@ -419,7 +419,7 @@ func RecordSuccessfulRestart(strategy *RestartStrategy, attemptNumber int, durat
 
 // RecordFailedRestart creates a HealingAction for a failed restart attempt.
 func RecordFailedRestart(strategy *RestartStrategy, attemptNumber int, errorMsg string, durationMs int64) types.HealingAction {
-	description := fmt.Sprintf("Restart attempt %d failed with corrective flags: %s", 
+	description := fmt.Sprintf("Restart attempt %d failed with corrective flags: %s",
 		attemptNumber, strings.Join(strategy.CorrectiveFlags, " "))
 
 	return types.HealingAction{

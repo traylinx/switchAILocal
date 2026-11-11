@@ -95,9 +95,9 @@ func TestTokenizeWord(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name     string
-		word     string
-		wantUNK  bool // whether we expect UNK tokens
+		name    string
+		word    string
+		wantUNK bool // whether we expect UNK tokens
 	}{
 		{
 			name:    "known word",
