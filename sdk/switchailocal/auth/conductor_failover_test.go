@@ -20,7 +20,7 @@ type httpStatusErr struct {
 	msg  string
 }
 
-func (e *httpStatusErr) Error() string  { return e.msg }
+func (e *httpStatusErr) Error() string   { return e.msg }
 func (e *httpStatusErr) StatusCode() int { return e.code }
 
 // TestExecuteProvidersOnce_AdvancesOnTransient verifies the conductor

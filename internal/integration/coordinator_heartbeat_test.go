@@ -13,7 +13,7 @@ import (
 
 func TestServiceCoordinator_HeartbeatWithProviders(t *testing.T) {
 	t.Skip("Skipping test due to deadlock in heartbeat monitor Start() - this is a known issue")
-	
+
 	tmpDir := t.TempDir()
 
 	// Create a main config with Ollama enabled

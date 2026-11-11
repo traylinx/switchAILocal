@@ -39,7 +39,7 @@ func executeMCPToolCall(ctx context.Context, command string, args []string, env 
 	}
 
 	cmd := exec.CommandContext(ctx, command, args...)
-	
+
 	// Set up environment safely
 	cmd.Env = os.Environ()
 	for k, v := range env {
@@ -50,7 +50,7 @@ func executeMCPToolCall(ctx context.Context, command string, args []string, env 
 	if err != nil {
 		return "", fmt.Errorf("failed to get stdin pipe: %w", err)
 	}
-	
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("failed to get stdout pipe: %w", err)
@@ -86,7 +86,7 @@ func executeMCPToolCall(ctx context.Context, command string, args []string, env 
 			if err := decoder.Decode(&resp); err != nil {
 				return nil, fmt.Errorf("JSON-RPC decoding error: %w", err)
 			}
-			
+
 			if resp.ID == expectedID {
 				return &resp, nil
 			}

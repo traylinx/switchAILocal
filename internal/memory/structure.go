@@ -13,7 +13,7 @@ const (
 	userPreferencesDir = "user-preferences"
 	dailyLogsDir       = "daily"
 	analyticsDir       = "analytics"
-	
+
 	// File permissions
 	dirPermissions  = 0700 // Owner read/write/execute only
 	filePermissions = 0600 // Owner read/write only

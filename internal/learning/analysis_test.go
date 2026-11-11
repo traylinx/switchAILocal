@@ -17,7 +17,7 @@ func TestPerformStatisticalAnalysis_EmptyHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	model := engine.performStatisticalAnalysis([]*memory.RoutingDecision{})
-	
+
 	assert.NotNil(t, model)
 	assert.Equal(t, 0, model.TotalRequests)
 	assert.Empty(t, model.ModelPreferences)
@@ -43,7 +43,7 @@ func TestPerformStatisticalAnalysis_ModelPreferences(t *testing.T) {
 		{APIKeyHash: "user1", Timestamp: time.Now(), Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: true, QualityScore: 0.9}},
 		{APIKeyHash: "user1", Timestamp: time.Now(), Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: false, QualityScore: 0.0}},
 		{APIKeyHash: "user1", Timestamp: time.Now(), Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: false, QualityScore: 0.0}},
-		
+
 		// GPT: 3/5 success (60%)
 		{APIKeyHash: "user1", Timestamp: time.Now(), Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "gpt:4"}, Outcome: memory.OutcomeInfo{Success: true, QualityScore: 0.7}},
 		{APIKeyHash: "user1", Timestamp: time.Now(), Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "gpt:4"}, Outcome: memory.OutcomeInfo{Success: true, QualityScore: 0.6}},
@@ -53,11 +53,11 @@ func TestPerformStatisticalAnalysis_ModelPreferences(t *testing.T) {
 	}
 
 	model := engine.performStatisticalAnalysis(history)
-	
+
 	require.NotNil(t, model)
 	assert.Equal(t, "user1", model.UserID)
 	assert.Equal(t, 15, model.TotalRequests)
-	
+
 	// Should prefer Claude for coding (higher success rate and quality)
 	codingPref, exists := model.ModelPreferences["coding"]
 	require.True(t, exists)
@@ -75,7 +75,7 @@ func TestPerformStatisticalAnalysis_ProviderBias(t *testing.T) {
 
 	// Create test data with different provider performance
 	history := []*memory.RoutingDecision{}
-	
+
 	// Claude provider: 9/10 success (90%)
 	for i := 0; i < 10; i++ {
 		success := i < 9
@@ -87,7 +87,7 @@ func TestPerformStatisticalAnalysis_ProviderBias(t *testing.T) {
 			Outcome:    memory.OutcomeInfo{Success: success, QualityScore: 0.8},
 		})
 	}
-	
+
 	// OpenAI provider: 5/10 success (50%)
 	for i := 0; i < 10; i++ {
 		success := i < 5
@@ -101,18 +101,18 @@ func TestPerformStatisticalAnalysis_ProviderBias(t *testing.T) {
 	}
 
 	model := engine.performStatisticalAnalysis(history)
-	
+
 	require.NotNil(t, model)
-	
+
 	// Global success rate should be 70% (14/20)
 	// Claude: 90% vs 70% global = +20% = +0.4 bias (after 2x amplification)
 	// OpenAI: 50% vs 70% global = -20% = -0.4 bias (after 2x amplification)
-	
+
 	claudeBias, exists := model.ProviderBias["claude"]
 	if exists {
 		assert.Greater(t, claudeBias, 0.0, "Claude should have positive bias")
 	}
-	
+
 	openAIBias, exists := model.ProviderBias["openai"]
 	if exists {
 		assert.Less(t, openAIBias, 0.0, "OpenAI should have negative bias")
@@ -127,7 +127,7 @@ func TestPerformStatisticalAnalysis_TimePatterns(t *testing.T) {
 
 	// Create test data with time patterns
 	history := []*memory.RoutingDecision{}
-	
+
 	// Morning coding (9 AM): 8 requests
 	for i := 0; i < 8; i++ {
 		timestamp := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
@@ -139,7 +139,7 @@ func TestPerformStatisticalAnalysis_TimePatterns(t *testing.T) {
 			Outcome:    memory.OutcomeInfo{Success: true, QualityScore: 0.8},
 		})
 	}
-	
+
 	// Afternoon writing (2 PM): 6 requests
 	for i := 0; i < 6; i++ {
 		timestamp := time.Date(2024, 1, 1, 14, 0, 0, 0, time.UTC)
@@ -153,16 +153,16 @@ func TestPerformStatisticalAnalysis_TimePatterns(t *testing.T) {
 	}
 
 	model := engine.performStatisticalAnalysis(history)
-	
+
 	require.NotNil(t, model)
-	
+
 	timePattern, exists := model.TimePatterns["general"]
 	require.True(t, exists)
-	
+
 	// Check hourly usage
 	assert.Equal(t, 8, timePattern.HourlyUsage[9])  // 9 AM
 	assert.Equal(t, 6, timePattern.HourlyUsage[14]) // 2 PM
-	
+
 	// Check peak intents (should be dominant with >50% and >=5 samples)
 	assert.Equal(t, "coding", timePattern.PeakIntents[9])   // 8/8 = 100% coding at 9 AM
 	assert.Equal(t, "writing", timePattern.PeakIntents[14]) // 6/6 = 100% writing at 2 PM
@@ -180,16 +180,16 @@ func TestPerformStatisticalAnalysis_MinimumSamples(t *testing.T) {
 		{APIKeyHash: "user1", Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: true}},
 		{APIKeyHash: "user1", Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: true}},
 		{APIKeyHash: "user1", Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "claude:3.5"}, Outcome: memory.OutcomeInfo{Success: true}},
-		
+
 		// Only 2 samples for gpt (below 5 minimum)
 		{APIKeyHash: "user1", Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "gpt:4"}, Outcome: memory.OutcomeInfo{Success: false}},
 		{APIKeyHash: "user1", Request: memory.RequestInfo{Intent: "coding"}, Routing: memory.RoutingInfo{SelectedModel: "gpt:4"}, Outcome: memory.OutcomeInfo{Success: false}},
 	}
 
 	model := engine.performStatisticalAnalysis(history)
-	
+
 	require.NotNil(t, model)
-	
+
 	// Should not create preferences due to insufficient samples
 	_, exists := model.ModelPreferences["coding"]
 	assert.False(t, exists, "Should not create preference with insufficient samples")
@@ -248,7 +248,7 @@ func BenchmarkPerformStatisticalAnalysis_LargeDataset(b *testing.B) {
 	history := make([]*memory.RoutingDecision, 10000)
 	intents := []string{"coding", "writing", "analysis", "general"}
 	models := []string{"claude:3.5", "gpt:4", "gemini:pro"}
-	
+
 	for i := 0; i < 10000; i++ {
 		history[i] = &memory.RoutingDecision{
 			APIKeyHash: "user1",
