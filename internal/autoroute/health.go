@@ -192,13 +192,13 @@ func (m *ProviderHealthMonitor) RecordRequestOutcome(provider string, latency ti
 	if rlSnap.Detected {
 		state.QuotaRemaining = rlSnap.QuotaHealth
 		log.WithFields(log.Fields{
-			"provider":          provider,
-			"quota_health":      rlSnap.QuotaHealth,
-			"req_remaining":     rlSnap.RequestRemaining,
-			"req_limit":         rlSnap.RequestLimit,
-			"token_remaining":   rlSnap.TokenRemaining,
-			"token_limit":       rlSnap.TokenLimit,
-			"retry_after_sec":   rlSnap.RetryAfterSec,
+			"provider":        provider,
+			"quota_health":    rlSnap.QuotaHealth,
+			"req_remaining":   rlSnap.RequestRemaining,
+			"req_limit":       rlSnap.RequestLimit,
+			"token_remaining": rlSnap.TokenRemaining,
+			"token_limit":     rlSnap.TokenLimit,
+			"retry_after_sec": rlSnap.RetryAfterSec,
 		}).Debug("Rate-limit headers parsed")
 	}
 
@@ -264,7 +264,7 @@ func (m *ProviderHealthMonitor) syncToResolverLocked() {
 			newState.Latency = st.Latency
 			newState.SuccessRate = st.SuccessRate
 			newState.QuotaHealth = st.QuotaRemaining
-			
+
 			// Publish prometheus health metric
 			observability.ProviderHealthScore.WithLabelValues(c.Provider, st.Status).Set(st.SuccessRate)
 		}

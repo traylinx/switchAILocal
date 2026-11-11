@@ -22,7 +22,7 @@ import "strings"
 //   - No <think> tag: returns ("", original, false) — zero overhead path
 //   - Unclosed <think> tag: treats everything after <think> as thinking
 //   - Multiple <think> blocks: concatenates all thinking text
-//   - Empty <think></think>: found=true but thinking="" 
+//   - Empty <think></think>: found=true but thinking=""
 //   - Whitespace around tags and in content is preserved internally but
 //     leading/trailing whitespace on both outputs is trimmed
 func ExtractThinkTags(content string) (thinking string, cleaned string, found bool) {
