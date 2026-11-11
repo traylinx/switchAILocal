@@ -226,3 +226,7 @@ Remember: You're Bolt, making switchAILocal lightning fast. But speed without co
 ## $(date +%Y-%m-%d) - Bump Go Version for Vulnerability Fix
 **Learning:** Found a vulnerability (GO-2026-6859) in the Go standard library (`net/http`) while running `govulncheck`. The vulnerability is an HTTP/1 server crash due to a MaxBytesReader header race.
 **Action:** Bumped the Go version in `go.mod` and `.github/workflows/go-vulnerability-gate.yml` from `1.26.10` to `1.26.11` to resolve the vulnerability. This ensures the CI check for govulncheck passes.
+
+## $(date +%Y-%m-%d) - Bump Go Version in CI Files
+**Learning:** Bumping the Go version in `go.mod` to resolve vulnerabilities requires also updating the Go version specified in all CI workflow files (like `ci.yml` and `release.yml`) to ensure the CI uses the correct toolchain and passes build checks.
+**Action:** Updated `GO_VERSION` in `.github/workflows/ci.yml` and `go-version` in `.github/workflows/release.yml` from `1.26.10` to `1.26.11` to fix CI failures.
