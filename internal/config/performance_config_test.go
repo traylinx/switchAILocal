@@ -178,3 +178,22 @@ func TestPerformanceConfig_SanitizePreservesUserValues(t *testing.T) {
 			c2.Streaming.PerProvider["minimax"])
 	}
 }
+
+func TestPerformanceConfig_ClaudeTimeoutDefault(t *testing.T) {
+	var c PerformanceConfig
+	c.SanitizePerformance()
+	if got := c.ProviderTimeouts.Resolve("claude"); got != DefaultClaudeProviderTimeout {
+		t.Errorf("claude timeout = %v, want %v", got, DefaultClaudeProviderTimeout)
+	}
+	if got := c.ProviderTimeouts.Resolve("openai"); got != 120*time.Second {
+		t.Errorf("other providers keep the default, got %v", got)
+	}
+}
+
+func TestPerformanceConfig_ClaudeTimeoutExplicitWins(t *testing.T) {
+	c := PerformanceConfig{ProviderTimeouts: ProviderTimeoutsConfig{PerProvider: map[string]time.Duration{"claude": 5 * time.Minute}}}
+	c.SanitizePerformance()
+	if got := c.ProviderTimeouts.Resolve("claude"); got != 5*time.Minute {
+		t.Errorf("explicit claude timeout = %v, want 5m", got)
+	}
+}

@@ -211,10 +211,12 @@ performance:
   provider-timeouts:
     # Fallback used when a provider has no explicit entry below.
     default: 120s
-    # Per-provider overrides. Commented entries show recommended starting points.
+    # Per-provider overrides, keyed by provider id. Commented entries show recommended
+    # starting points. Non-streaming calls only; streams use the streaming timeouts below.
+    # claude defaults to 20m when not set (thinking models often need more than 2 minutes).
     # per-provider:
     #   openai: 30s
-    #   anthropic: 60s
+    #   claude: 20m
     #   gemini: 45s
     #   ollama: 180s         # local, can be slow on cold start
   streaming:
