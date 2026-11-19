@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.5] - 2026-11-19
+
+- Fix long Claude requests failing with HTTP 500 after 2 minutes. The `claude` provider now defaults to a 20-minute non-streaming timeout (an explicit `per-provider` value still wins), and a gateway-side timeout with no upstream status returns 504 instead of 500.
+- Claude API keys are no longer sent as Claude Code: no injected system prompt, no Claude Code betas or User-Agent, plain `/v1/messages`. OAuth credentials are unchanged.
+- Fix OpenAI-format requests routed to Claude returning untranslated Claude responses (stream, non-stream and token count). Gzip-encoded Claude error bodies are now decoded.
+- Build with Go 1.26.11 (GO-2026-6859, net/http). govulncheck reports no reachable vulnerabilities.
+- Dependencies: alpine 3.24.1, minio-go 7.0.100, current major versions of five actions.
+- npm package is published through trusted publishing.
+
 ## [0.6.4] - 2026-11-09
 
 Same code as 0.6.3. The 0.6.3 tag has no release: its darwin/arm64 build was refused because GitHub retired the macOS 14 runner image. Releases now build on macOS 15.
