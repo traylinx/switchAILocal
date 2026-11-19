@@ -74,7 +74,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *switchailocalauth.Au
 	// Inject thinking config based on model metadata for thinking variants
 	body = e.injectThinkingConfig(req.Model, req.Metadata, body)
 
-	if !strings.HasPrefix(upstreamModel, "claude-3-5-haiku") {
+	if !isClaudeAPIKeyAuth(auth) && !strings.HasPrefix(upstreamModel, "claude-3-5-haiku") {
 		body = checkSystemInstructions(body)
 	}
 	body = applyPayloadConfig(e.cfg, req.Model, body)
@@ -87,11 +87,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *switchailocalauth.Au
 	extraBetas, body = extractAndRemoveBetas(body)
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
+	if isClaudeAPIKeyAuth(auth) {
+		url = fmt.Sprintf("%s/v1/messages", baseURL)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return resp, err
 	}
-	applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas)
+	applyClaudeHeaders(httpReq, auth, apiKey, stream, extraBetas)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -121,13 +124,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *switchailocalauth.Au
 	}
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		b, _ := io.ReadAll(httpResp.Body)
+		b := readClaudeErrorBody(httpResp)
 		appendAPIResponseChunk(ctx, e.cfg, b)
 		log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
-		if errClose := httpResp.Body.Close(); errClose != nil {
-			log.Errorf("response body close error: %v", errClose)
-		}
 		return resp, err
 	}
 	decodedBody, err := decodeResponseBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
@@ -160,7 +160,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *switchailocalauth.Au
 		reporter.publish(ctx, parseClaudeUsage(data))
 	}
 	var param any
-	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, data, &param)
+	out := sdktranslator.TranslateNonStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), body, data, &param)
 	resp = switchailocalexecutor.Response{Payload: []byte(out)}
 	return resp, nil
 }
@@ -190,7 +190,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 	body, _ = sjson.SetBytes(body, "model", upstreamModel)
 	// Inject thinking config based on model metadata for thinking variants
 	body = e.injectThinkingConfig(req.Model, req.Metadata, body)
-	body = checkSystemInstructions(body)
+	if !isClaudeAPIKeyAuth(auth) {
+		body = checkSystemInstructions(body)
+	}
 	body = applyPayloadConfig(e.cfg, req.Model, body)
 
 	// Ensure max_tokens > thinking.budget_tokens when thinking is enabled
@@ -201,6 +203,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 	extraBetas, body = extractAndRemoveBetas(body)
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
+	if isClaudeAPIKeyAuth(auth) {
+		url = fmt.Sprintf("%s/v1/messages", baseURL)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -234,12 +239,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 	}
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		b, _ := io.ReadAll(httpResp.Body)
+		b := readClaudeErrorBody(httpResp)
 		appendAPIResponseChunk(ctx, e.cfg, b)
 		log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		if errClose := httpResp.Body.Close(); errClose != nil {
-			log.Errorf("response body close error: %v", errClose)
-		}
 		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 		return nil, err
 	}
@@ -298,7 +300,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *switchailocala
 			if detail, ok := parseClaudeStreamUsage(line); ok {
 				reporter.publish(ctx, detail)
 			}
-			chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
+			chunks := sdktranslator.TranslateStream(ctx, from, to, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
 			for i := range chunks {
 				if !sendStreamChunk(ctx, out, switchailocalexecutor.StreamChunk{Payload: []byte(chunks[i])}) {
 					return
@@ -339,7 +341,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *switchailocalaut
 	}
 	body, _ = sjson.SetBytes(body, "model", upstreamModel)
 
-	if !strings.HasPrefix(upstreamModel, "claude-3-5-haiku") {
+	if !isClaudeAPIKeyAuth(auth) && !strings.HasPrefix(upstreamModel, "claude-3-5-haiku") {
 		body = checkSystemInstructions(body)
 	}
 
@@ -348,6 +350,9 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *switchailocalaut
 	extraBetas, body = extractAndRemoveBetas(body)
 
 	url := fmt.Sprintf("%s/v1/messages/count_tokens?beta=true", baseURL)
+	if isClaudeAPIKeyAuth(auth) {
+		url = fmt.Sprintf("%s/v1/messages/count_tokens", baseURL)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return switchailocalexecutor.Response{}, err
@@ -382,11 +387,8 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *switchailocalaut
 	}
 	recordAPIResponseMetadata(ctx, e.cfg, resp.StatusCode, resp.Header.Clone())
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
+		b := readClaudeErrorBody(resp)
 		appendAPIResponseChunk(ctx, e.cfg, b)
-		if errClose := resp.Body.Close(); errClose != nil {
-			log.Errorf("response body close error: %v", errClose)
-		}
 		return switchailocalexecutor.Response{}, statusErr{code: resp.StatusCode, msg: string(b)}
 	}
 	decodedBody, err := decodeResponseBody(resp.Body, resp.Header.Get("Content-Encoding"))
@@ -409,7 +411,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *switchailocalaut
 	}
 	appendAPIResponseChunk(ctx, e.cfg, data)
 	count := gjson.GetBytes(data, "input_tokens").Int()
-	out := sdktranslator.TranslateTokenCount(ctx, to, from, count, data)
+	out := sdktranslator.TranslateTokenCount(ctx, from, to, count, data)
 	return switchailocalexecutor.Response{Payload: []byte(out)}, nil
 }
 
@@ -679,8 +681,33 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 	return body, nil
 }
 
+func isClaudeAPIKeyAuth(auth *switchailocalauth.Auth) bool {
+	return auth != nil && auth.Attributes != nil && strings.TrimSpace(auth.Attributes["api_key"]) != ""
+}
+
+func readClaudeErrorBody(resp *http.Response) []byte {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	decoded, err := decodeResponseBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err == nil && decoded != nil {
+		defer func() {
+			if errClose := decoded.Close(); errClose != nil {
+				log.Errorf("response body close error: %v", errClose)
+			}
+		}()
+		b, _ := io.ReadAll(decoded)
+		return b
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if errClose := resp.Body.Close(); errClose != nil {
+		log.Errorf("response body close error: %v", errClose)
+	}
+	return b
+}
+
 func applyClaudeHeaders(r *http.Request, auth *switchailocalauth.Auth, apiKey string, stream bool, extraBetas []string) {
-	useAPIKey := auth != nil && auth.Attributes != nil && strings.TrimSpace(auth.Attributes["api_key"]) != ""
+	useAPIKey := isClaudeAPIKeyAuth(auth)
 	isAnthropicBase := r.URL != nil && strings.EqualFold(r.URL.Scheme, "https") && strings.EqualFold(r.URL.Host, "api.anthropic.com")
 	if isAnthropicBase && useAPIKey {
 		r.Header.Del("Authorization")
@@ -693,6 +720,48 @@ func applyClaudeHeaders(r *http.Request, auth *switchailocalauth.Auth, apiKey st
 	var ginHeaders http.Header
 	if ginCtx, ok := r.Context().Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
 		ginHeaders = ginCtx.Request.Header
+	}
+
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+
+	if useAPIKey {
+		// Direct Anthropic API keys (including sk-ant-usr-*) must NOT send
+		// Claude Code OAuth spoofing headers (claude-code/oauth betas or claude-cli UA).
+		var betas []string
+		seen := make(map[string]bool)
+		addBetaList := func(raw string) {
+			for _, part := range strings.Split(raw, ",") {
+				b := strings.TrimSpace(part)
+				if b == "" || seen[b] {
+					continue
+				}
+				seen[b] = true
+				betas = append(betas, b)
+			}
+		}
+		if ginHeaders != nil {
+			addBetaList(ginHeaders.Get("Anthropic-Beta"))
+		}
+		for _, b := range extraBetas {
+			addBetaList(b)
+		}
+		if len(betas) > 0 {
+			r.Header.Set("Anthropic-Beta", strings.Join(betas, ","))
+		}
+		misc.EnsureHeader(r.Header, ginHeaders, "Anthropic-Version", "2023-06-01")
+		r.Header.Set("User-Agent", "switchAILocal")
+		r.Header.Set("Connection", "keep-alive")
+		r.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+		if stream {
+			r.Header.Set("Accept", "text/event-stream")
+		} else {
+			r.Header.Set("Accept", "application/json")
+		}
+		util.ApplyCustomHeadersFromAttrs(r, attrs)
+		return
 	}
 
 	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
@@ -738,10 +807,6 @@ func applyClaudeHeaders(r *http.Request, auth *switchailocalauth.Auth, apiKey st
 		r.Header.Set("Accept", "text/event-stream")
 	} else {
 		r.Header.Set("Accept", "application/json")
-	}
-	var attrs map[string]string
-	if auth != nil {
-		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
 }
