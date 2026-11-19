@@ -9,6 +9,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1240,6 +1241,10 @@ func (h *BaseAPIHandler) WriteErrorResponse(c *gin.Context, msg *interfaces.Erro
 	status := http.StatusInternalServerError
 	if msg != nil && msg.StatusCode > 0 {
 		status = msg.StatusCode
+	} else if msg != nil && errors.Is(msg.Error, context.DeadlineExceeded) {
+		// The gateway's own provider timeout cut the upstream call before it
+		// answered (no upstream status). That is a gateway timeout, not a crash.
+		status = http.StatusGatewayTimeout
 	}
 	if msg != nil && msg.Addon != nil {
 		for key, values := range msg.Addon {

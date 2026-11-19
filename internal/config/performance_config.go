@@ -33,6 +33,10 @@ type PerformanceConfig struct {
 	Streaming StreamHealthConfig `yaml:"streaming" json:"streaming"`
 }
 
+// DefaultClaudeProviderTimeout is the non-streaming timeout used for the claude
+// provider when the config has no explicit per-provider entry for it.
+const DefaultClaudeProviderTimeout = 20 * time.Minute
+
 // ProviderTimeoutsConfig holds per-provider and default request timeouts.
 // Use Resolve(provider) to look up the effective timeout for a given provider name.
 type ProviderTimeoutsConfig struct {
@@ -168,6 +172,12 @@ func (c *PerformanceConfig) SanitizePerformance() {
 	}
 	if c.ProviderTimeouts.PerProvider == nil {
 		c.ProviderTimeouts.PerProvider = map[string]time.Duration{}
+	}
+	// Claude thinking models routinely need more than the 2-minute default on
+	// non-streaming calls (Anthropic's own SDKs wait 10 minutes or longer).
+	// An explicit per-provider "claude" entry still wins.
+	if _, ok := c.ProviderTimeouts.PerProvider["claude"]; !ok {
+		c.ProviderTimeouts.PerProvider["claude"] = DefaultClaudeProviderTimeout
 	}
 	if c.Streaming.FirstByteTimeout == 0 {
 		c.Streaming.FirstByteTimeout = 15 * time.Second
