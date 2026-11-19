@@ -110,7 +110,7 @@ networking are covered in [Docker deployment](/guides/docker-deployment).
 
 ## Build from source
 
-Requires Go 1.26.10 or newer with CGO enabled (the embedding engine links
+Requires Go 1.26.11 or newer with CGO enabled (the embedding engine links
 ONNX Runtime through cgo), so a C compiler must be installed.
 
 <Tabs>
@@ -315,7 +315,7 @@ curl http://localhost:18080/v1/models -H "Authorization: Bearer sk-your-key"
     expands it) instead of a quoted `~`.
   </Accordion>
   <Accordion title="Go build fails">
-    Check `go version` (1.26.10+ required by `go.mod`) and that a C compiler is
+    Check `go version` (1.26.11+ required by `go.mod`) and that a C compiler is
     available (`CGO_ENABLED=1`). Then retry `go mod download`.
   </Accordion>
   <Accordion title="bind: address already in use">

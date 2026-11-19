@@ -62,7 +62,7 @@ Details: [Providers](https://switchailocal.traylinx.com/configuration/providers)
 | Linux x86_64 / arm64 | yes (`linux_amd64`, `linux_arm64`) | yes |
 | Windows | no | yes (or WSL) |
 
-Building from source needs Go 1.26.10+ with CGO enabled (a C compiler).
+Building from source needs Go 1.26.11+ with CGO enabled (a C compiler).
 
 ## Quick start
 
