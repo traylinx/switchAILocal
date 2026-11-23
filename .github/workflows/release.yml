@@ -50,7 +50,7 @@ jobs:
           # (onnxruntime for darwin/amd64 must be installed separately; see
           # scripts/download-embedding-model.sh for the ARM equivalent).
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.security-gate.outputs.source_commit }}
@@ -113,7 +113,7 @@ jobs:
     needs: [build, security-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.security-gate.outputs.source_commit }}
 
@@ -151,7 +151,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || needs.security-gate.outputs.source_commit }}
 
