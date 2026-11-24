@@ -428,3 +428,25 @@ func TestLimiter_LazyEvictionAndCloseStopsGoroutine(t *testing.T) {
 		t.Fatal("eviction goroutine must not start after Close")
 	}
 }
+
+func TestLimiter_CheckPerKeyZeroRateMeansNoPerKeyLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, cfg := range []config.RateLimiterConfig{
+		{Enabled: true, GlobalRequestsPerSecond: 1000, GlobalBurst: 1000, PerKeyRequestsPerSecond: 0, PerKeyBurst: 5},
+		{Enabled: true, GlobalRequestsPerSecond: 1000, GlobalBurst: 1000, PerKeyRequestsPerSecond: 5, PerKeyBurst: 0},
+	} {
+		l := New(cfg)
+		for i := 0; i < 20; i++ {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			SetPrincipal(c, "config-api-key:sha256:abc")
+			if !l.CheckPerKey(c) {
+				t.Fatalf("cfg %+v: request %d refused; a zero per-key rate must mean no per-key limit", cfg, i)
+			}
+		}
+		if got := l.BucketCount(); got != 0 {
+			t.Fatalf("cfg %+v: %d buckets created, want 0", cfg, got)
+		}
+		l.Close()
+	}
+}

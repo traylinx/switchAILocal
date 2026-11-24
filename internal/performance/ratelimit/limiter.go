@@ -377,6 +377,10 @@ func (l *Limiter) CheckPerKey(c *gin.Context) bool {
 	if l == nil || !l.cfg.Enabled || c == nil {
 		return true
 	}
+	// A per-key rate or burst of zero or less means "no per-key limit", never "refuse every key".
+	if l.cfg.PerKeyRequestsPerSecond <= 0 || l.cfg.PerKeyBurst <= 0 {
+		return true
+	}
 	principal := PrincipalFromContext(c)
 	if principal == "" {
 		return true
