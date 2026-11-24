@@ -19,10 +19,11 @@ import (
 // BaseAPIHandler for constructing SDK-specific handlers, and the resolved
 // authentication middleware for protecting routes that require API keys.
 type Context struct {
-	Engine         *gin.Engine
-	BaseHandler    *handlers.BaseAPIHandler
-	Config         *config.Config
-	AuthMiddleware gin.HandlerFunc
+	Engine          *gin.Engine
+	BaseHandler     *handlers.BaseAPIHandler
+	Config          *config.Config
+	AuthMiddleware  gin.HandlerFunc
+	PerKeyRateLimit gin.HandlerFunc
 }
 
 // RouteModule represents a pluggable routing module that can register routes

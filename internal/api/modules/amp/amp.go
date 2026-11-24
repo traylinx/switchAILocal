@@ -29,14 +29,15 @@ type Option func(*AmpModule)
 //   - Automatic gzip decompression for misconfigured upstreams
 //   - Model mapping for routing unavailable models to alternatives
 type AmpModule struct {
-	secretSource    SecretSource
-	proxy           *httputil.ReverseProxy
-	proxyMu         sync.RWMutex // protects proxy for hot-reload
-	accessManager   *sdkaccess.Manager
-	authMiddleware_ gin.HandlerFunc
-	modelMapper     *DefaultModelMapper
-	enabled         bool
-	registerOnce    sync.Once
+	secretSource     SecretSource
+	proxy            *httputil.ReverseProxy
+	proxyMu          sync.RWMutex // protects proxy for hot-reload
+	accessManager    *sdkaccess.Manager
+	authMiddleware_  gin.HandlerFunc
+	perKeyRateLimit_ gin.HandlerFunc
+	modelMapper      *DefaultModelMapper
+	enabled          bool
+	registerOnce     sync.Once
 
 	// restrictToLocalhost controls localhost-only access for management routes (hot-reloadable)
 	restrictToLocalhost bool
@@ -99,6 +100,13 @@ func WithAuthMiddleware(middleware gin.HandlerFunc) Option {
 	}
 }
 
+// WithPerKeyRateLimit sets the post-auth per-key rate limiting middleware.
+func WithPerKeyRateLimit(middleware gin.HandlerFunc) Option {
+	return func(m *AmpModule) {
+		m.perKeyRateLimit_ = middleware
+	}
+}
+
 // Name returns the module identifier
 func (m *AmpModule) Name() string {
 	return "amp-routing"
@@ -121,12 +129,17 @@ func (m *AmpModule) Register(ctx modules.Context) error {
 	settings := ctx.Config.AmpCode
 	upstreamURL := strings.TrimSpace(settings.UpstreamURL)
 
-	// Determine auth middleware (from module or context)
+	// Determine auth and post-auth per-key rate limit middleware (from module or context)
 	auth := m.getAuthMiddleware(ctx)
+	perKeyRateLimit := m.getPerKeyRateLimit(ctx)
 
 	// Use registerOnce to ensure routes are only registered once
 	var regErr error
 	m.registerOnce.Do(func() {
+		if m.perKeyRateLimit_ == nil && perKeyRateLimit != nil {
+			m.perKeyRateLimit_ = perKeyRateLimit
+		}
+
 		// Initialize model mapper from config (for routing unavailable models to alternatives)
 		m.modelMapper = NewModelMapper(settings.ModelMappings)
 
@@ -177,6 +190,15 @@ func (m *AmpModule) getAuthMiddleware(ctx modules.Context) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 	}
+}
+
+// getPerKeyRateLimit returns the post-auth per-key rate limit middleware,
+// preferring the module option and falling back to the registration context.
+func (m *AmpModule) getPerKeyRateLimit(ctx modules.Context) gin.HandlerFunc {
+	if m.perKeyRateLimit_ != nil {
+		return m.perKeyRateLimit_
+	}
+	return ctx.PerKeyRateLimit
 }
 
 // OnConfigUpdated handles configuration updates with partial reload support.
