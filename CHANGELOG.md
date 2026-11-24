@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+- Per-key rate limit now applies to every key form (Bearer, X-Api-Key, X-Goog-Api-Key, ?key=, ?auth_token=) and counts only authenticated keys.
+
 ## [0.6.5] - 2026-11-19
 
 - Fix long Claude requests failing with HTTP 500 after 2 minutes. The `claude` provider now defaults to a 20-minute non-streaming timeout (an explicit `per-provider` value still wins), and a gateway-side timeout with no upstream status returns 504 instead of 500.
