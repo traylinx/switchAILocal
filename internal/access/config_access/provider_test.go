@@ -3,8 +3,8 @@ package configaccess
 import (
 	"context"
 	"net/http"
-	"testing"
 	"net/url"
+	"testing"
 
 	sdkaccess "github.com/traylinx/switchAILocal/sdk/access"
 	sdkconfig "github.com/traylinx/switchAILocal/sdk/config"
@@ -18,6 +18,7 @@ func TestProvider_Authenticate(t *testing.T) {
 		queryParams   map[string]string
 		expectedErr   error
 		expectedPrinc string
+		expectedMode  string
 	}{
 		// -------------------------
 		// Strict Mode (Keys configured)
@@ -40,6 +41,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{"Authorization": "Bearer secret-123"},
 			expectedErr:   nil,
 			expectedPrinc: "secret-123",
+			expectedMode:  "",
 		},
 		{
 			name:          "Strict Mode - Valid Google Auth",
@@ -47,6 +49,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{"X-Goog-Api-Key": "secret-123"},
 			expectedErr:   nil,
 			expectedPrinc: "secret-123",
+			expectedMode:  "",
 		},
 		{
 			name:          "Strict Mode - Valid Query Param",
@@ -54,6 +57,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			queryParams:   map[string]string{"key": "secret-123"},
 			expectedErr:   nil,
 			expectedPrinc: "secret-123",
+			expectedMode:  "",
 		},
 		// -------------------------
 		// Optional Mode (No Keys configured / Empty)
@@ -64,6 +68,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{},
 			expectedErr:   nil,
 			expectedPrinc: "anonymous",
+			expectedMode:  "optional",
 		},
 		{
 			name:          "Optional Mode - Empty Auth Array",
@@ -71,6 +76,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{},
 			expectedErr:   nil,
 			expectedPrinc: "anonymous",
+			expectedMode:  "optional",
 		},
 		{
 			name:          "Optional Mode - Specific Auth Provided",
@@ -78,6 +84,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{"Authorization": "Bearer my-custom-key"},
 			expectedErr:   nil,
 			expectedPrinc: "my-custom-key",
+			expectedMode:  "optional",
 		},
 		{
 			name:          "Optional Mode - Malformed Empty Auth",
@@ -85,6 +92,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			headers:       map[string]string{"Authorization": "Bearer "},
 			expectedErr:   nil,
 			expectedPrinc: "anonymous",
+			expectedMode:  "optional",
 		},
 	}
 
@@ -109,7 +117,7 @@ func TestProvider_Authenticate(t *testing.T) {
 			for k, v := range tt.headers {
 				req.Header.Set(k, v)
 			}
-			
+
 			// Add queryparams
 			q := req.URL.Query()
 			for k, v := range tt.queryParams {
@@ -129,6 +137,9 @@ func TestProvider_Authenticate(t *testing.T) {
 				}
 				if result.Principal != tt.expectedPrinc {
 					t.Errorf("expected principal %q, got %q", tt.expectedPrinc, result.Principal)
+				}
+				if gotMode := result.Metadata["mode"]; gotMode != tt.expectedMode {
+					t.Errorf("expected metadata mode %q, got %q", tt.expectedMode, gotMode)
 				}
 			}
 		})

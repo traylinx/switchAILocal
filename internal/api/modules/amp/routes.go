@@ -132,9 +132,6 @@ func (m *AmpModule) registerManagementRoutes(engine *gin.Engine, baseHandler *ha
 		ampAPI.Use(auth)
 		authWithBypass = wrapManagementAuth(auth, "/threads", "/auth", "/docs", "/settings")
 	}
-	if m.perKeyRateLimit_ != nil {
-		ampAPI.Use(m.perKeyRateLimit_)
-	}
 
 	// Dynamic proxy handler that uses m.getProxy() for hot-reload support
 	proxyHandler := func(c *gin.Context) {
@@ -181,9 +178,6 @@ func (m *AmpModule) registerManagementRoutes(engine *gin.Engine, baseHandler *ha
 	rootMiddleware := []gin.HandlerFunc{m.managementAvailabilityMiddleware(), noCORSMiddleware(), m.localhostOnlyMiddleware()}
 	if authWithBypass != nil {
 		rootMiddleware = append(rootMiddleware, authWithBypass)
-	}
-	if m.perKeyRateLimit_ != nil {
-		rootMiddleware = append(rootMiddleware, m.perKeyRateLimit_)
 	}
 	engine.GET("/threads", append(rootMiddleware, proxyHandler)...)
 	engine.GET("/threads/*path", append(rootMiddleware, proxyHandler)...)
@@ -253,9 +247,6 @@ func (m *AmpModule) registerProviderAliases(engine *gin.Engine, baseHandler *han
 	ampProviders := engine.Group("/api/provider")
 	if auth != nil {
 		ampProviders.Use(auth)
-	}
-	if m.perKeyRateLimit_ != nil {
-		ampProviders.Use(m.perKeyRateLimit_)
 	}
 
 	provider := ampProviders.Group("/:provider")

@@ -341,7 +341,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	engine.Use(logging.GinLogrusRecovery())
 
 	// Performance middleware: load shedding + global rate limiting (positioned early for fast rejection).
-	// Per-key rate limiting is attached post-auth on authenticated route groups.
+	// Per-key rate limiting runs post-auth inside AuthMiddleware.
 	var rateLimiter *ratelimit.Limiter
 	if cfg != nil {
 		engine.Use(loadshed.Middleware(cfg.Performance.LoadShedding))
@@ -403,10 +403,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	var autoResolver *autoroute.AutoResolver
 	if cfg.AutoRouting.Enabled {
 		log.Info("Initializing Intelligent Auto-Routing System")
-		
+
 		// 1. Setup Discovery Service
 		discoverySvc := autoroute.NewDiscoveryService(cfg.AutoRouting.Discovery)
-		
+
 		// 2. Register probers based on configured credentials
 		// CLI Probers
 		discoverySvc.RegisterProber(probes.NewCLIProber("geminicli", "gemini"))
@@ -418,16 +418,16 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			name := fmt.Sprintf("gemini-api-%d", i)
 			endpoint := "/v1beta/models"
 			if key.ModelsURL != "" {
-			    endpoint = key.ModelsURL
+				endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "Authorization"))
 		}
-		
+
 		for i, key := range cfg.ClaudeKey {
 			name := fmt.Sprintf("claude-api-%d", i)
 			endpoint := "/v1/models"
 			if key.ModelsURL != "" {
-			    endpoint = key.ModelsURL
+				endpoint = key.ModelsURL
 			}
 			discoverySvc.RegisterProber(probes.NewAPIProber(name, key.BaseURL, endpoint, key.APIKey, "x-api-key"))
 		}
@@ -443,30 +443,30 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		// 3. Run Boot-Time Discovery
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		
+
 		var candidates []autoroute.CandidateInput
 		if cfg.AutoRouting.Discovery.ProbeOnStartup {
 			log.Info("Running boot-time provider discovery")
 			results := discoverySvc.DiscoverAll(ctx)
-			
+
 			// 4. Convert discovery results to CandidateInputs
 			for provider, res := range results {
 				if !res.Available {
 					log.WithField("provider", provider).Warn("Provider unavailable during discovery")
 					continue
 				}
-				
+
 				for _, model := range res.Models {
-				    candidates = append(candidates, autoroute.CandidateInput{
-					    Provider:  provider,
-					    Model:     model.ID,
-					    Available: true,
-					    Latency:   res.Latency,
-					    SuccessRate: 1.0, 
-					    QuotaHealth: 1.0,
-				    })
+					candidates = append(candidates, autoroute.CandidateInput{
+						Provider:    provider,
+						Model:       model.ID,
+						Available:   true,
+						Latency:     res.Latency,
+						SuccessRate: 1.0,
+						QuotaHealth: 1.0,
+					})
 				}
-				
+
 				log.WithFields(log.Fields{
 					"provider": provider,
 					"models":   len(res.Models),
@@ -474,16 +474,16 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 				}).Info("Discovered provider models")
 			}
 		} else {
-			// If probing disabled on boot, just populate basic fallback providers 
+			// If probing disabled on boot, just populate basic fallback providers
 			for _, p := range []string{"geminicli", "claudecli", "codex", "ollama"} {
-			    candidates = append(candidates, autoroute.CandidateInput{
-					Provider: p,
-					Model:    "auto", 
-					Available: true,
-					Latency:   0,
+				candidates = append(candidates, autoroute.CandidateInput{
+					Provider:    p,
+					Model:       "auto",
+					Available:   true,
+					Latency:     0,
 					SuccessRate: 1.0,
 					QuotaHealth: 1.0,
-			    })
+				})
 			}
 		}
 
@@ -553,18 +553,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.setupRoutes()
 
 	// Register Amp module using V2 interface with Context
-	perKeyRateLimit := s.perKeyRateLimitMiddleware()
-	s.ampModule = ampmodule.New(
-		ampmodule.WithAccessManager(accessManager),
-		ampmodule.WithAuthMiddleware(AuthMiddleware(accessManager)),
-		ampmodule.WithPerKeyRateLimit(perKeyRateLimit),
-	)
+	s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager))
 	ctx := modules.Context{
-		Engine:          engine,
-		BaseHandler:     s.handlers,
-		Config:          cfg,
-		AuthMiddleware:  AuthMiddleware(accessManager),
-		PerKeyRateLimit: perKeyRateLimit,
+		Engine:         engine,
+		BaseHandler:    s.handlers,
+		Config:         cfg,
+		AuthMiddleware: AuthMiddleware(accessManager),
 	}
 	if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
 		log.Errorf("Failed to register Amp module: %v", err)
@@ -608,7 +602,7 @@ func (s *Server) setupRoutes() {
 	if s.cfg != nil {
 		observability.RegisterMetricsRoute(s.engine, s.cfg.Observability.Metrics.Enabled, s.cfg.Observability.Metrics.Path)
 	}
-	
+
 	s.engine.GET("/management", s.serveManagementControlPanel)
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
@@ -620,7 +614,7 @@ func (s *Server) setupRoutes() {
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
+	v1.Use(AuthMiddleware(s.accessManager))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -651,7 +645,7 @@ func (s *Server) setupRoutes() {
 	// legacy /v1 image response shape while giving third-party OpenAI clients a
 	// response with data[0].url / data[0].b64_json.
 	openaiV1 := s.engine.Group("/openai/v1")
-	openaiV1.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
+	openaiV1.Use(AuthMiddleware(s.accessManager))
 	{
 		openaiV1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		openaiV1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -663,7 +657,7 @@ func (s *Server) setupRoutes() {
 
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
-	v1beta.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
+	v1beta.Use(AuthMiddleware(s.accessManager))
 	{
 		v1beta.GET("/models", geminiHandlers.GeminiModels)
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -786,7 +780,6 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	s.wsRouteMu.Unlock()
 
 	authMiddleware := AuthMiddleware(s.accessManager)
-	perKeyMiddleware := s.perKeyRateLimitMiddleware()
 	conditionalAuth := func(c *gin.Context) {
 		if !s.wsAuthEnabled.Load() {
 			c.Next()
@@ -799,14 +792,7 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 		c.Abort()
 	}
 
-	s.engine.GET(trimmed, conditionalAuth, perKeyMiddleware, finalHandler)
-}
-
-func (s *Server) perKeyRateLimitMiddleware() gin.HandlerFunc {
-	if s == nil || s.rateLimiter == nil {
-		return func(c *gin.Context) { c.Next() }
-	}
-	return s.rateLimiter.PerKeyMiddleware()
+	s.engine.GET(trimmed, conditionalAuth, finalHandler)
 }
 
 func (s *Server) registerManagementRoutes() {
@@ -1458,6 +1444,21 @@ func (s *Server) SetWebsocketAuthChangeHandler(fn func(bool, bool)) {
 
 // (management handlers moved to internal/api/handlers/management)
 
+// shouldPerKeyRateLimit reports whether an authentication result represents an
+// authenticated credential that should be tracked in per-key rate-limit buckets.
+// Open/keyless modes (no configured keys or source=="none") stay global-only.
+func shouldPerKeyRateLimit(result *sdkaccess.Result) bool {
+	if result == nil || result.Principal == "" {
+		return false
+	}
+	if result.Metadata != nil {
+		if result.Metadata["source"] == "none" || result.Metadata["mode"] == "optional" {
+			return false
+		}
+	}
+	return true
+}
+
 // AuthMiddleware returns a Gin middleware handler that authenticates requests
 // using the configured authentication providers. When no providers are available,
 // it allows all requests (legacy behaviour).
@@ -1479,13 +1480,16 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
-				
+
 				hasher := sha256.New()
 				hasher.Write([]byte(result.Principal))
 				keyHash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 				c.Set("api_key_hash", keyHash)
-				if result.Principal != "" {
+				if shouldPerKeyRateLimit(result) {
 					ratelimit.SetPrincipal(c, result.Provider+":"+keyHash)
+					if !ratelimit.CheckPerKey(c) {
+						return
+					}
 				}
 			}
 			c.Next()

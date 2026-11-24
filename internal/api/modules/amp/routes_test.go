@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/traylinx/switchAILocal/internal/api/modules"
-	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers"
 )
 
@@ -385,95 +383,5 @@ func TestLocalhostOnlyMiddleware_HotReload(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected 403 after re-enabling restriction, got %d", w.Code)
-	}
-}
-
-func TestPerKeyRateLimitRunsAfterAuth(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-
-	modes := []struct {
-		name         string
-		useOption    bool
-	}{
-		{name: "via_option", useOption: true},
-		{name: "via_context", useOption: false},
-	}
-
-	paths := []string{
-		"/api/provider/openai/models",
-		"/api/internal",
-		"/threads.rss",
-	}
-
-	for _, mode := range modes {
-		t.Run(mode.name, func(t *testing.T) {
-			var order []string
-			authMW := func(c *gin.Context) {
-				order = append(order, "auth")
-				if c.GetHeader("X-Allow") != "yes" {
-					c.AbortWithStatus(http.StatusUnauthorized)
-					return
-				}
-				c.Next()
-			}
-			perKeyMW := func(c *gin.Context) {
-				order = append(order, "per_key")
-				c.AbortWithStatus(http.StatusTooManyRequests)
-			}
-
-			r := gin.New()
-			cfg := &config.Config{
-				AmpCode: config.AmpCode{
-					UpstreamURL:                   upstream.URL,
-					RestrictManagementToLocalhost: false,
-				},
-			}
-			base := &handlers.BaseAPIHandler{Cfg: &cfg.SDKConfig}
-
-			opts := []Option{WithAuthMiddleware(authMW)}
-			ctx := modules.Context{Engine: r, BaseHandler: base, Config: cfg, AuthMiddleware: authMW}
-			if mode.useOption {
-				opts = append(opts, WithPerKeyRateLimit(perKeyMW))
-			} else {
-				ctx.PerKeyRateLimit = perKeyMW
-			}
-
-			m := New(opts...)
-			if err := m.Register(ctx); err != nil {
-				t.Fatalf("register failed: %v", err)
-			}
-
-			for _, path := range paths {
-				// Aborted auth must skip per-key middleware
-				order = nil
-				req := httptest.NewRequest(http.MethodGet, path, nil)
-				w := httptest.NewRecorder()
-				r.ServeHTTP(w, req)
-				if w.Code != http.StatusUnauthorized {
-					t.Fatalf("%s unauthenticated: expected 401, got %d", path, w.Code)
-				}
-				if len(order) != 1 || order[0] != "auth" {
-					t.Fatalf("%s unauthenticated: expected [auth], got %v", path, order)
-				}
-
-				// Passing auth runs per-key middleware immediately after auth
-				order = nil
-				req = httptest.NewRequest(http.MethodGet, path, nil)
-				req.Header.Set("X-Allow", "yes")
-				w = httptest.NewRecorder()
-				r.ServeHTTP(w, req)
-				if w.Code != http.StatusTooManyRequests {
-					t.Fatalf("%s authenticated: expected 429 from per-key middleware, got %d", path, w.Code)
-				}
-				if len(order) != 2 || order[0] != "auth" || order[1] != "per_key" {
-					t.Fatalf("%s authenticated: expected [auth per_key], got %v", path, order)
-				}
-			}
-		})
 	}
 }
