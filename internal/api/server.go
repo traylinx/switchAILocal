@@ -245,6 +245,9 @@ type Server struct {
 
 	// eventBusIntegrator connects system events to hooks.
 	eventBusIntegrator EventBusIntegrator
+
+	// rateLimiter enforces pre-auth global and post-auth per-key rate limits.
+	rateLimiter *ratelimit.Limiter
 }
 
 // IntelligenceService defines the interface for accessing intelligence features.
@@ -337,10 +340,13 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 	engine.Use(logging.GinLogrusRecovery())
 
-	// Performance middleware: load shedding + rate limiting (positioned early for fast rejection)
+	// Performance middleware: load shedding + global rate limiting (positioned early for fast rejection).
+	// Per-key rate limiting is attached post-auth on authenticated route groups.
+	var rateLimiter *ratelimit.Limiter
 	if cfg != nil {
 		engine.Use(loadshed.Middleware(cfg.Performance.LoadShedding))
-		engine.Use(ratelimit.Middleware(cfg.Performance.RateLimiter))
+		rateLimiter = ratelimit.New(cfg.Performance.RateLimiter)
+		engine.Use(rateLimiter.GlobalMiddleware())
 	}
 
 	for _, mw := range optionState.extraMiddleware {
@@ -510,6 +516,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		serviceCoordinator:  optionState.serviceCoordinator,
 		pipelineIntegrator:  pipelineIntegrator,
 		eventBusIntegrator:  eventBusIntegrator,
+		rateLimiter:         rateLimiter,
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	if !cfg.WebsocketAuth {
@@ -546,12 +553,18 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.setupRoutes()
 
 	// Register Amp module using V2 interface with Context
-	s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager))
+	perKeyRateLimit := s.perKeyRateLimitMiddleware()
+	s.ampModule = ampmodule.New(
+		ampmodule.WithAccessManager(accessManager),
+		ampmodule.WithAuthMiddleware(AuthMiddleware(accessManager)),
+		ampmodule.WithPerKeyRateLimit(perKeyRateLimit),
+	)
 	ctx := modules.Context{
-		Engine:         engine,
-		BaseHandler:    s.handlers,
-		Config:         cfg,
-		AuthMiddleware: AuthMiddleware(accessManager),
+		Engine:          engine,
+		BaseHandler:     s.handlers,
+		Config:          cfg,
+		AuthMiddleware:  AuthMiddleware(accessManager),
+		PerKeyRateLimit: perKeyRateLimit,
 	}
 	if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
 		log.Errorf("Failed to register Amp module: %v", err)
@@ -607,7 +620,7 @@ func (s *Server) setupRoutes() {
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -638,7 +651,7 @@ func (s *Server) setupRoutes() {
 	// legacy /v1 image response shape while giving third-party OpenAI clients a
 	// response with data[0].url / data[0].b64_json.
 	openaiV1 := s.engine.Group("/openai/v1")
-	openaiV1.Use(AuthMiddleware(s.accessManager))
+	openaiV1.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
 	{
 		openaiV1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		openaiV1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -650,7 +663,7 @@ func (s *Server) setupRoutes() {
 
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
-	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(AuthMiddleware(s.accessManager), s.perKeyRateLimitMiddleware())
 	{
 		v1beta.GET("/models", geminiHandlers.GeminiModels)
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -773,6 +786,7 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	s.wsRouteMu.Unlock()
 
 	authMiddleware := AuthMiddleware(s.accessManager)
+	perKeyMiddleware := s.perKeyRateLimitMiddleware()
 	conditionalAuth := func(c *gin.Context) {
 		if !s.wsAuthEnabled.Load() {
 			c.Next()
@@ -785,7 +799,14 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 		c.Abort()
 	}
 
-	s.engine.GET(trimmed, conditionalAuth, finalHandler)
+	s.engine.GET(trimmed, conditionalAuth, perKeyMiddleware, finalHandler)
+}
+
+func (s *Server) perKeyRateLimitMiddleware() gin.HandlerFunc {
+	if s == nil || s.rateLimiter == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return s.rateLimiter.PerKeyMiddleware()
 }
 
 func (s *Server) registerManagementRoutes() {
@@ -1241,6 +1262,10 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) error {
 	log.Debug("Stopping API server...")
 
+	if s.rateLimiter != nil {
+		defer s.rateLimiter.Close()
+	}
+
 	if s.keepAliveEnabled {
 		select {
 		case s.keepAliveStop <- struct{}{}:
@@ -1457,7 +1482,11 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 				
 				hasher := sha256.New()
 				hasher.Write([]byte(result.Principal))
-				c.Set("api_key_hash", "sha256:"+hex.EncodeToString(hasher.Sum(nil)))
+				keyHash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+				c.Set("api_key_hash", keyHash)
+				if result.Principal != "" {
+					ratelimit.SetPrincipal(c, result.Provider+":"+keyHash)
+				}
 			}
 			c.Next()
 			return
