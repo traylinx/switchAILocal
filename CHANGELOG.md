@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An invalid key gets 401 from authentication; it no longer consumes a per-key bucket.
 - With no `api-keys` configured (open mode) there is no per-key limit; the global limit still applies.
 - A per-key rate or burst of 0 means no per-key limit.
+- Dependencies: gorilla/websocket to the fix for GO-2026-6278 (govulncheck reports no reachable vulnerabilities).
 
 ## [0.6.5] - 2026-11-19
 
