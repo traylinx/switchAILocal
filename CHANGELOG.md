@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.6] - 2026-11-24
+
+- Per-key rate limit now applies to every key form (Bearer, X-Api-Key, X-Goog-Api-Key, ?key=, ?auth_token=) and counts only authenticated keys.
+- Clients that send their key as X-Api-Key, X-Goog-Api-Key, ?key= or ?auth_token= are now rate limited per key like Bearer clients (they could exceed the limit before).
+- An invalid key gets 401 from authentication; it no longer consumes a per-key bucket.
+- With no `api-keys` configured (open mode) there is no per-key limit; the global limit still applies.
+- A per-key rate or burst of 0 means no per-key limit.
+- Dependencies: gorilla/websocket to the fix for GO-2026-6278 (govulncheck reports no reachable vulnerabilities).
+
 ## [0.6.5] - 2026-11-19
 
 - Fix long Claude requests failing with HTTP 500 after 2 minutes. The `claude` provider now defaults to a 20-minute non-streaming timeout (an explicit `per-provider` value still wins), and a gateway-side timeout with no upstream status returns 504 instead of 500.
