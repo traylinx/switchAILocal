@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [0.6.6] - 2026-11-24
 
 - Per-key rate limit now applies to every key form (Bearer, X-Api-Key, X-Goog-Api-Key, ?key=, ?auth_token=) and counts only authenticated keys.
 - Clients that send their key as X-Api-Key, X-Goog-Api-Key, ?key= or ?auth_token= are now rate limited per key like Bearer clients (they could exceed the limit before).
