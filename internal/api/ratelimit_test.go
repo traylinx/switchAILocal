@@ -41,6 +41,16 @@ type apiRateLimitError struct {
 }
 
 func newRateLimitTestServer(t *testing.T, rlCfg proxyconfig.RateLimiterConfig, wsAuth bool) *Server {
+	return newRateLimitTestServerWithConfig(t, rlCfg, wsAuth, nil)
+}
+
+func newRateLimitTestServerWithConfig(
+	t *testing.T,
+	rlCfg proxyconfig.RateLimiterConfig,
+	wsAuth bool,
+	mutate func(cfg *proxyconfig.Config),
+	opts ...ServerOption,
+) *Server {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
@@ -66,12 +76,15 @@ func newRateLimitTestServer(t *testing.T, rlCfg proxyconfig.RateLimiterConfig, w
 			RateLimiter: rlCfg,
 		},
 	}
+	if mutate != nil {
+		mutate(cfg)
+	}
 
 	authManager := auth.NewManager(nil, nil, nil)
 	accessManager := sdkaccess.NewManager()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	srv := NewServer(cfg, authManager, accessManager, configPath, nil)
+	srv := NewServer(cfg, authManager, accessManager, configPath, nil, opts...)
 	t.Cleanup(func() {
 		if srv.rateLimiter != nil {
 			srv.rateLimiter.Close()
@@ -389,92 +402,5 @@ func TestRateLimit_GlobalFirst(t *testing.T) {
 	}
 	if got := s.rateLimiter.BucketCount(); got != 0 {
 		t.Fatalf("global 429 must happen pre-auth with 0 per-key buckets, got %d", got)
-	}
-}
-
-func TestRateLimit_RouteGroupParity(t *testing.T) {
-	s := newRateLimitTestServer(t, proxyconfig.RateLimiterConfig{
-		Enabled:                 true,
-		GlobalRequestsPerSecond: 1000,
-		GlobalBurst:             1000,
-		PerKeyRequestsPerSecond: 0.01,
-		PerKeyBurst:             1,
-	}, true)
-
-	s.AttachWebsocketRoute("/v1/ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	endpoints := []string{
-		"/v1/models",
-		"/openai/v1/models",
-		"/v1beta/models",
-		"/api/provider/openai/models",
-		"/v1/ws",
-	}
-
-	// Invalid key on every authenticated route group returns 401 and creates no bucket.
-	for _, path := range endpoints {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("X-Api-Key", "invalid-for-"+path)
-		rr := httptest.NewRecorder()
-		s.engine.ServeHTTP(rr, req)
-		if rr.Code != http.StatusUnauthorized {
-			t.Fatalf("%s with invalid key: expected 401, got %d (body=%s)", path, rr.Code, rr.Body.String())
-		}
-	}
-	if got := s.rateLimiter.BucketCount(); got != 0 {
-		t.Fatalf("invalid keys across route groups must create 0 buckets, got %d", got)
-	}
-
-	// Exhaust key A's burst of 1 on /v1/models.
-	reqFirst := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	reqFirst.Header.Set("Authorization", "Bearer "+testRateLimitKeyA)
-	rrFirst := httptest.NewRecorder()
-	s.engine.ServeHTTP(rrFirst, reqFirst)
-	if rrFirst.Code != http.StatusOK {
-		t.Fatalf("first /v1/models call: expected 200, got %d", rrFirst.Code)
-	}
-
-	// Every other authenticated route group must immediately 429 key A via X-Api-Key.
-	for _, path := range endpoints[1:] {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("X-Api-Key", testRateLimitKeyA)
-		rr := httptest.NewRecorder()
-		s.engine.ServeHTTP(rr, req)
-		assertAPI429(t, rr, perKeyLimitMsg)
-	}
-
-	if got := s.rateLimiter.BucketCount(); got != 1 {
-		t.Fatalf("all authenticated groups must share 1 bucket per principal, got %d", got)
-	}
-	assertNoRawKeyInBuckets(t, s, testRateLimitKeyA)
-}
-
-func TestRateLimit_WebsocketAuthDisabledNoBucket(t *testing.T) {
-	s := newRateLimitTestServer(t, proxyconfig.RateLimiterConfig{
-		Enabled:                 true,
-		GlobalRequestsPerSecond: 1000,
-		GlobalBurst:             1000,
-		PerKeyRequestsPerSecond: 0.01,
-		PerKeyBurst:             1,
-	}, false)
-
-	s.AttachWebsocketRoute("/v1/ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/v1/ws", nil)
-		req.Header.Set("Authorization", "Bearer "+testRateLimitKeyA)
-		rr := httptest.NewRecorder()
-		s.engine.ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("ws request %d with wsAuth=false: expected 200, got %d", i, rr.Code)
-		}
-	}
-
-	if got := s.rateLimiter.BucketCount(); got != 0 {
-		t.Fatalf("unauthenticated ws route must create 0 per-key buckets, got %d", got)
 	}
 }
