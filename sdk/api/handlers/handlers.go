@@ -323,18 +323,18 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	}
 
 	// Create a cancel function that also captures the context's error.
-	cancelCtx, cancel := context.WithCancel(newCtx)
+	cancelBaseCtx, cancel := context.WithCancel(newCtx)
 
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
 			select {
 			case <-requestCtx.Done():
 				cancel()
-			case <-cancelCtx.Done():
+			case <-cancelBaseCtx.Done():
 			}
 		}()
 	}
-	cancelCtx = context.WithValue(cancelCtx, ginContextKey, c)
+	cancelCtx := context.WithValue(cancelBaseCtx, ginContextKey, c)
 	cancelCtx = context.WithValue(cancelCtx, handlerContextKey, handler)
 	return cancelCtx, func(params ...interface{}) {
 		if h.Cfg.RequestLog && len(params) == 1 {
