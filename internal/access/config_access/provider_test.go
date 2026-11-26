@@ -145,3 +145,26 @@ func TestProvider_Authenticate(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderAddsCallerIDWithoutReplacingSecretPrincipal(t *testing.T) {
+	root := &sdkconfig.SDKConfig{CallerPolicies: sdkconfig.CallerPoliciesConfig{Callers: []sdkconfig.CallerPolicyConfig{{
+		ID: "agent-1", APIKey: "secret-123", AllowedModels: []string{"chat-model"}, MaxConcurrency: 1, DailyTokenCap: 100,
+	}}}}
+	providerCfg := sdkconfig.MakeInlineAPIKeyProvider(root.InboundAPIKeys())
+	prov, err := newProvider(providerCfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer secret-123")
+	result, err := prov.Authenticate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Principal != "secret-123" {
+		t.Fatalf("authentication principal changed: %q", result.Principal)
+	}
+	if result.Metadata["caller_id"] != "agent-1" {
+		t.Fatalf("caller id metadata = %q", result.Metadata["caller_id"])
+	}
+}

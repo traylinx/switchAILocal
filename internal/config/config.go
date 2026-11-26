@@ -850,6 +850,13 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Performance configuration
 	cfg.Performance.SanitizePerformance()
 
+	if err := cfg.SDKConfig.ValidateCallerPolicies(); err != nil {
+		if optional {
+			return &Config{}, nil
+		}
+		return nil, err
+	}
+
 	if err := cfg.ValidateVirtualModels(); err != nil {
 		if optional {
 			return &Config{}, nil

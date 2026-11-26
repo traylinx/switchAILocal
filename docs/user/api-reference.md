@@ -5,10 +5,31 @@ This page lists every HTTP route switchAILocal registers (release 0.6.x). Full r
 ## Basics
 
 - **Base URL:** `http://localhost:18080` (port from `config.yaml`; the default `host: ""` binds all interfaces).
-- **Client auth:** keys from top-level `api-keys:` in `config.yaml`, sent as `Authorization: Bearer <key>` (also accepted: `X-Api-Key`, `X-Goog-Api-Key`, `?key=`, `?auth_token=`). **An empty `api-keys` list means every request is accepted.** See [`api/authentication.mdx`](../../docs-site/api/authentication.mdx).
+- **Client auth:** keys from top-level `api-keys:` or `caller-policies.callers[].api-key` in `config.yaml`, sent as `Authorization: Bearer <key>` (also accepted: `X-Api-Key`, `X-Goog-Api-Key`, `?key=`, `?auth_token=`). Requests are open only when both key sources are empty. See [`api/authentication.mdx`](../../docs-site/api/authentication.mdx).
 - **Management auth:** `remote-management.secret-key` or `MANAGEMENT_PASSWORD`, sent as `Authorization: Bearer <key>` or `X-Management-Key`. Client keys do not work here. Never expose `/v0/management` publicly.
 - **Errors:** `{"error":{"message","type","code"}}`. The auth middleware returns `401 {"error":"Missing API key"}` or `{"error":"Invalid API key"}`.
 - **Streaming:** SSE (`text/event-stream`). Upstream failures before the first chunk return a JSON error with the real status.
+
+### Named caller policies
+
+`caller-policies` binds each inbound key to a non-secret caller ID plus an exact
+model allowlist, maximum concurrent request count, and daily token cap. Invalid
+or duplicate caller definitions prevent startup. The gateway logs caller IDs,
+models, and counters, but never inbound keys or prompt bodies; its JSON state
+file contains only the UTC day and per-ID counters and is written with mode
+`0600`. Detailed request/error-body logging is suppressed while any named caller
+policy is active, even if `request-log` is enabled, so headers and prompt bodies
+cannot enter those logs.
+
+Concurrency overflow fails immediately (it is not queued) with HTTP `429`, code
+`caller_concurrency_exceeded`, and `Retry-After: 1`. A disallowed model returns
+`403`/`caller_model_not_allowed`; omitting a model from an inference request
+returns `400`/`caller_model_required`; an exhausted daily allowance returns
+`429`/`caller_daily_token_cap_exceeded` and affects only that caller. Daily
+windows reset at `00:00 UTC`. Provider-reported total tokens are charged when
+available; otherwise a conservative estimate from request text is charged. A
+request already in flight can cross the daily threshold, after which the next
+request is refused; possible overshoot is bounded by `max-concurrency`.
 
 ## Inference and data routes (client API key)
 

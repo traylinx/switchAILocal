@@ -79,7 +79,7 @@ func BuildProviders(root *config.SDKConfig) ([]Provider, error) {
 		providers = append(providers, provider)
 	}
 	if len(providers) == 0 {
-		if inline := config.MakeInlineAPIKeyProvider(root.APIKeys); inline != nil {
+		if inline := config.MakeInlineAPIKeyProvider(root.InboundAPIKeys()); inline != nil {
 			provider, err := BuildProvider(inline, root)
 			if err != nil {
 				return nil, err
