@@ -29,7 +29,13 @@ returns `400`/`caller_model_required`; an exhausted daily allowance returns
 windows reset at `00:00 UTC`. Provider-reported total tokens are charged when
 available; otherwise a conservative estimate from request text is charged. A
 request already in flight can cross the daily threshold, after which the next
-request is refused; possible overshoot is bounded by `max-concurrency`.
+request is refused; possible overshoot is bounded by `max-concurrency` times
+the largest in-flight request's provider-reported usage. A missing, corrupt, or
+temporarily unwritable quota state returns `503`/`caller_quota_state_unavailable`.
+Conflicting query, path, form, or body model selectors return
+`403`/`caller_model_conflict`. Named callers are refused on WebSocket routes;
+new authenticated routes require an explicit allowed model unless classified as
+a read-only model catalog.
 
 ## Inference and data routes (client API key)
 

@@ -33,6 +33,7 @@ import (
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
 )
 
@@ -300,6 +301,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	parentCtx = coreusage.PropagateSynchronousObserver(parentCtx, requestCtx)
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
 		if requestID := logging.GetRequestID(requestCtx); requestID != "" {

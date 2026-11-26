@@ -6,9 +6,11 @@ package callerpolicy
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -62,9 +64,61 @@ func TestRequiresExplicitModelOnlyForInferenceRoutes(t *testing.T) {
 			t.Fatalf("inference route %q did not require a model", path)
 		}
 	}
-	for _, path := range []string{"/v1/models/refresh", "/v1/notifications/telegram/sendMessage", "/health"} {
-		if RequiresExplicitModel(httptest.NewRequest("POST", path, nil)) {
+	for _, path := range []string{"/v1/models", "/openai/v1/models", "/api/provider/openai/v1/models"} {
+		if RequiresExplicitModel(httptest.NewRequest("GET", path, nil)) {
 			t.Fatalf("non-inference route %q unexpectedly required a model", path)
+		}
+	}
+}
+
+func TestInspectRequestRejectsConflictingModelSources(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		body string
+	}{
+		{"query versus body", "/v1/chat/completions?model=model-a", `{"model":"forbidden"}`},
+		{"gemini path versus query", "/v1beta/models/forbidden:generateContent?model=model-a", `{}`},
+		{"duplicate top-level model", "/v1/chat/completions", `{"model":"forbidden","model":"model-a"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", tt.url, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			_, _, err := InspectRequest(req)
+			var decision *DecisionError
+			if !errors.As(err, &decision) || decision.Code != CodeModelConflict {
+				t.Fatalf("error = %v, want %s", err, CodeModelConflict)
+			}
+		})
+	}
+}
+
+func TestInspectRequestAcceptsMatchingModelSources(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(`{"model":"model-a"}`))
+	req.Header.Set("Content-Type", "application/json")
+	model, _, err := InspectRequest(req)
+	if err != nil || model != "model-a" {
+		t.Fatalf("model=%q err=%v", model, err)
+	}
+}
+
+func TestInspectRequestRejectsBodyOverMemoryLimit(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", (16<<20)+1))
+	req := httptest.NewRequest("POST", "/v1/chat/completions", body)
+	if _, _, err := InspectRequest(req); err == nil || !strings.Contains(err.Error(), "request body too large") {
+		t.Fatalf("oversized body error = %v", err)
+	}
+}
+
+func TestRequiresExplicitModelDefaultsToDenyForUnknownRoutes(t *testing.T) {
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/api/provider/openai/v1/chat/completions"},
+		{"POST", "/future/inference"},
+		{"GET", "/v1/ws"},
+	} {
+		if !RequiresExplicitModel(httptest.NewRequest(tc.method, tc.path, nil)) {
+			t.Fatalf("%s %s unexpectedly allowed without a model", tc.method, tc.path)
 		}
 	}
 }

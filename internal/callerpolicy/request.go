@@ -7,6 +7,7 @@ package callerpolicy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -15,6 +16,10 @@ import (
 	"strings"
 )
 
+// MaxInspectedBodyBytes bounds the duplicate policy-inspection copy. Requests
+// larger than this are refused before they can consume unbounded process memory.
+const MaxInspectedBodyBytes int64 = 16 << 20
+
 // InspectRequest extracts the requested model and a conservative input-token
 // estimate while restoring the body byte-for-byte for the downstream handler.
 // The body content is never retained by the policy manager or logged.
@@ -22,15 +27,22 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 	if r == nil {
 		return "", 0, nil
 	}
-	model := strings.TrimSpace(r.URL.Query().Get("model"))
-	if model == "" {
-		model = modelFromPath(r.URL.Path)
+	models := make([]string, 0, 4)
+	if r.URL != nil {
+		models = append(models, r.URL.Query()["model"]...)
+		models = append(models, modelFromPath(r.URL.Path))
+	}
+	model, err := resolveModelSources(models)
+	if err != nil {
+		return "", 0, err
 	}
 	if r.Body == nil {
 		return model, 0, nil
 	}
-	data, err := io.ReadAll(r.Body)
+	limited := http.MaxBytesReader(nil, r.Body, MaxInspectedBodyBytes)
+	data, err := io.ReadAll(limited)
 	if err != nil {
+		_ = r.Body.Close()
 		return "", 0, fmt.Errorf("read request body for caller policy: %w", err)
 	}
 	_ = r.Body.Close()
@@ -48,12 +60,16 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 			// body and use its size only as a fallback accounting estimate.
 			return model, estimateBytes(len(data)), nil
 		}
-		if model == "" {
-			if object, ok := payload.(map[string]any); ok {
-				if configured, ok := object["model"].(string); ok {
-					model = strings.TrimSpace(configured)
-				}
-			}
+		bodyModel, count, err := topLevelJSONModel(data)
+		if err != nil {
+			return "", 0, fmt.Errorf("inspect request model for caller policy: %w", err)
+		}
+		if count > 1 {
+			return "", 0, &DecisionError{Code: CodeModelConflict}
+		}
+		model, err = resolveModelSources(append(models, bodyModel))
+		if err != nil {
+			return "", 0, err
 		}
 		return model, estimateJSONTokens(payload, ""), nil
 	case "multipart/form-data":
@@ -78,44 +94,97 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 			}
 			value, _ := io.ReadAll(io.LimitReader(part, 1<<20))
 			_ = part.Close()
-			if name == "model" && model == "" {
-				model = strings.TrimSpace(string(value))
+			if name == "model" {
+				models = append(models, string(value))
 			} else if name == "prompt" || name == "input" || name == "instructions" {
 				textBytes += len(value)
 			}
 		}
-		return model, estimateBytes(textBytes), nil
+		model, err = resolveModelSources(models)
+		return model, estimateBytes(textBytes), err
 	default:
 		return model, estimateBytes(len(data)), nil
 	}
 }
 
-// RequiresExplicitModel reports whether the route can invoke a model and must
-// therefore name it before an allowlist decision can be made. Non-inference
-// routes such as model catalogs, provider status, and notification relays stay
-// available without inventing a model identity.
+// RequiresExplicitModel defaults to requiring a model for policed callers.
+// Only the explicit read-only catalog routes below are safe without one; new
+// and provider-specific routes therefore fail closed until classified.
 func RequiresExplicitModel(r *http.Request) bool {
-	if r == nil || r.Method != http.MethodPost {
+	if r == nil || r.URL == nil {
 		return false
 	}
-	path := r.URL.Path
-	if strings.HasPrefix(path, "/v1beta/models/") {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return true
 	}
-	for _, prefix := range []string{"/v1", "/openai/v1"} {
-		if !strings.HasPrefix(path, prefix+"/") {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	switch path {
+	case "/v1/models", "/openai/v1/models", "/v1beta/models", "/v1/providers":
+		return false
+	}
+	// Amp exposes provider-specific model catalogs at both /models and
+	// /v1/models. Exact suffix matching avoids treating Gemini model actions as
+	// catalogs.
+	return !strings.HasPrefix(path, "/api/provider/") || !strings.HasSuffix(path, "/models")
+}
+
+func resolveModelSources(sources []string) (string, error) {
+	model := ""
+	for _, source := range sources {
+		candidate := strings.TrimSpace(source)
+		if candidate == "" {
 			continue
 		}
-		relative := strings.TrimPrefix(path, prefix)
-		switch relative {
-		case "/chat/completions", "/completions", "/embeddings",
-			"/images/generations", "/images/edits", "/audio/transcriptions",
-			"/audio/translations", "/audio/speech", "/music/generations",
-			"/music/lyrics", "/messages", "/messages/count_tokens", "/responses":
-			return true
+		if model == "" {
+			model = candidate
+			continue
+		}
+		if candidate != model {
+			return "", &DecisionError{Code: CodeModelConflict}
 		}
 	}
-	return false
+	return model, nil
+}
+
+// topLevelJSONModel preserves the first-match semantics used by downstream
+// handlers while rejecting duplicate top-level model keys altogether.
+func topLevelJSONModel(data []byte) (string, int, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return "", 0, err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return "", 0, nil
+	}
+	model := ""
+	count := 0
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return "", 0, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return "", 0, errors.New("non-string JSON object key")
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return "", 0, err
+		}
+		if key != "model" {
+			continue
+		}
+		count++
+		if count == 1 {
+			var configured string
+			if json.Unmarshal(raw, &configured) == nil {
+				model = strings.TrimSpace(configured)
+			}
+		}
+	}
+	return model, count, nil
 }
 
 func modelFromPath(path string) string {

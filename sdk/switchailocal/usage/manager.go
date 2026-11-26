@@ -59,6 +59,20 @@ func WithSynchronousObserver(ctx context.Context, observer SynchronousObserver) 
 	return context.WithValue(ctx, synchronousObserverContextKey{}, observer)
 }
 
+// PropagateSynchronousObserver copies the request-scoped observer from src to
+// dst. API handlers use it when they derive executor contexts from a background
+// parent while retaining the request's cancellation separately.
+func PropagateSynchronousObserver(dst, src context.Context) context.Context {
+	if dst == nil {
+		dst = context.Background()
+	}
+	if src == nil {
+		return dst
+	}
+	observer, _ := src.Value(synchronousObserverContextKey{}).(SynchronousObserver)
+	return WithSynchronousObserver(dst, observer)
+}
+
 type queueItem struct {
 	ctx    context.Context
 	record Record

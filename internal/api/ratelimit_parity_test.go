@@ -47,7 +47,7 @@ func TestRateLimit_RouteGroupParity(t *testing.T) {
 	})
 
 	// Also prove any route wired directly with AuthMiddleware automatically enforces per-key limits.
-	s.engine.POST("/custom/authed", AuthMiddleware(s.accessManager), func(c *gin.Context) {
+	s.engine.POST("/custom/authed", AuthMiddleware(s.accessManager, nil), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -156,7 +156,7 @@ func TestRateLimit_RouterConfiguratorAuthMiddlewareParity(t *testing.T) {
 		PerKeyBurst:             1,
 	}, false, nil, WithRouterConfigurator(func(engine *gin.Engine, _ *handlers.BaseAPIHandler, _ *proxyconfig.Config) {
 		// Intentionally uses only AuthMiddleware; per-key enforcement must be automatic.
-		engine.POST("/ext/echo", AuthMiddleware(nil), func(c *gin.Context) {
+		engine.POST("/ext/echo", AuthMiddleware(nil, nil), func(c *gin.Context) {
 			c.Status(http.StatusOK)
 		})
 	}))
@@ -312,7 +312,7 @@ func TestRateLimit_SourceNoneMetadataCreatesNoBucket(t *testing.T) {
 
 	engine := gin.New()
 	engine.Use(lim.GlobalMiddleware())
-	engine.GET("/test", AuthMiddleware(mgr), func(c *gin.Context) {
+	engine.GET("/test", AuthMiddleware(mgr, nil), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 

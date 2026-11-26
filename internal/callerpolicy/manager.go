@@ -26,6 +26,8 @@ type ErrorCode string
 const (
 	CodeModelDenied         ErrorCode = "caller_model_not_allowed"
 	CodeModelRequired       ErrorCode = "caller_model_required"
+	CodeModelConflict       ErrorCode = "caller_model_conflict"
+	CodeRouteDenied         ErrorCode = "caller_route_not_allowed"
 	CodeConcurrencyExceeded ErrorCode = "caller_concurrency_exceeded"
 	CodeDailyCapExceeded    ErrorCode = "caller_daily_token_cap_exceeded"
 	CodeStateUnavailable    ErrorCode = "caller_quota_state_unavailable"
@@ -71,15 +73,18 @@ type Snapshot struct {
 
 // Manager owns live caller counters and durable daily usage state.
 type Manager struct {
-	mu sync.Mutex
+	mu        sync.Mutex
+	persistMu sync.Mutex
 
-	policies  map[string]policy
-	states    map[string]*callerState
-	day       string
-	stateFile string
-	configDir string
-	stateErr  error
-	now       func() time.Time
+	policies          map[string]policy
+	states            map[string]*callerState
+	day               string
+	stateFile         string
+	configDir         string
+	stateErr          error
+	stateErrRetryable bool
+	now               func() time.Time
+	writeState        func(string, []byte) error
 }
 
 // New constructs a policy manager. Relative state-file paths resolve from the
@@ -90,10 +95,11 @@ func New(cfg config.CallerPoliciesConfig, configFilePath string) *Manager {
 		configDir = ""
 	}
 	m := &Manager{
-		policies:  make(map[string]policy),
-		states:    make(map[string]*callerState),
-		configDir: configDir,
-		now:       time.Now,
+		policies:   make(map[string]policy),
+		states:     make(map[string]*callerState),
+		configDir:  configDir,
+		now:        time.Now,
+		writeState: writeStateFile,
 	}
 	m.Apply(cfg)
 	return m
@@ -137,24 +143,31 @@ func (m *Manager) Apply(cfg config.CallerPoliciesConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fileChanged := stateFile != m.stateFile
+	previousStates := m.states
 	m.policies = policies
 	m.stateFile = stateFile
 	if fileChanged {
 		m.stateErr = nil
+		m.stateErrRetryable = false
 		m.states = make(map[string]*callerState)
 		m.day = ""
 		if len(policies) > 0 {
 			m.stateErr = m.loadLocked()
 		}
+		for id, previous := range previousStates {
+			if current := m.states[id]; current != nil {
+				current.Active = previous.Active
+				if previous.Used > current.Used {
+					current.Used = previous.Used
+				}
+			} else {
+				m.states[id] = &callerState{Used: previous.Used, Active: previous.Active}
+			}
+		}
 	}
 	for id := range policies {
 		if m.states[id] == nil {
 			m.states[id] = &callerState{}
-		}
-	}
-	for id := range m.states {
-		if _, ok := policies[id]; !ok {
-			delete(m.states, id)
 		}
 	}
 }
@@ -166,16 +179,25 @@ func (m *Manager) Begin(callerID, model string, estimatedInputTokens int64) (*Le
 		return nil, nil
 	}
 	m.mu.Lock()
+	if m.stateErr != nil {
+		if !m.stateErrRetryable {
+			m.mu.Unlock()
+			return nil, &DecisionError{Code: CodeStateUnavailable}
+		}
+		m.mu.Unlock()
+		if err := m.persist(); err != nil {
+			return nil, &DecisionError{Code: CodeStateUnavailable}
+		}
+		m.mu.Lock()
+	}
 	defer m.mu.Unlock()
 	p, ok := m.policies[callerID]
 	if !ok {
-		return nil, nil
-	}
-	if m.stateErr != nil {
 		return nil, &DecisionError{Code: CodeStateUnavailable}
 	}
 	if err := m.rolloverLocked(m.now().UTC()); err != nil {
 		m.stateErr = err
+		m.stateErrRetryable = true
 		return nil, &DecisionError{Code: CodeStateUnavailable}
 	}
 	if model != "" {
@@ -221,7 +243,7 @@ type Lease struct {
 
 // ObserveUsage charges successful provider-reported usage synchronously.
 func (l *Lease) ObserveUsage(_ context.Context, record coreusage.Record) {
-	if l == nil || l.manager == nil || record.Failed {
+	if l == nil || l.manager == nil {
 		return
 	}
 	tokens := record.Detail.TotalTokens
@@ -269,40 +291,31 @@ func (m *Manager) addTokens(callerID string, tokens int64) {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.stateErr != nil {
-		return
-	}
 	state := m.states[callerID]
 	if state == nil {
+		m.mu.Unlock()
 		return
 	}
 	state.Used += tokens
-	if err := m.persistLocked(); err != nil {
-		m.stateErr = err
-	}
+	m.mu.Unlock()
+	_ = m.persist()
 }
 
 func (m *Manager) finish(callerID, model string, fallback int64, usageReported bool) Snapshot {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	state := m.states[callerID]
 	if state == nil {
+		m.mu.Unlock()
 		return Snapshot{CallerID: callerID, Model: model, UsageReported: usageReported}
 	}
 	if state.Active > 0 {
 		state.Active--
 	}
-	if fallback > 0 && m.stateErr == nil {
+	if fallback > 0 {
 		state.Used += fallback
 	}
-	if m.stateErr == nil {
-		if err := m.persistLocked(); err != nil {
-			m.stateErr = err
-		}
-	}
 	p := m.policies[callerID]
-	return Snapshot{
+	result := Snapshot{
 		CallerID:      callerID,
 		Model:         model,
 		Active:        state.Active,
@@ -310,6 +323,11 @@ func (m *Manager) finish(callerID, model string, fallback int64, usageReported b
 		DailyCap:      p.dailyTokenCap,
 		UsageReported: usageReported,
 	}
+	m.mu.Unlock()
+	if fallback > 0 {
+		_ = m.persist()
+	}
+	return result
 }
 
 func (m *Manager) snapshot(callerID, model string, usageReported bool) Snapshot {
@@ -371,9 +389,7 @@ func (m *Manager) loadLocked() error {
 		if saved.Used < 0 {
 			return errors.New("caller quota state contains a negative counter")
 		}
-		if _, configured := m.policies[id]; configured {
-			m.states[id] = &callerState{Used: saved.Used}
-		}
+		m.states[id] = &callerState{Used: saved.Used}
 	}
 	return nil
 }
@@ -387,18 +403,54 @@ func (m *Manager) persistLocked() error {
 	}
 	persisted := diskState{Day: m.day, Callers: make(map[string]diskCaller, len(m.states))}
 	for id, state := range m.states {
-		if _, configured := m.policies[id]; configured {
-			persisted.Callers[id] = diskCaller{Used: state.Used}
-		}
+		persisted.Callers[id] = diskCaller{Used: state.Used}
 	}
 	data, err := json.Marshal(persisted)
 	if err != nil {
 		return fmt.Errorf("encode caller quota state: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0o700); err != nil {
+	return m.writeState(m.stateFile, data)
+}
+
+// persist snapshots counters under the manager lock, then performs filesystem
+// I/O outside it. A separate mutex preserves write ordering without letting a
+// slow disk stall another caller's Begin decision.
+func (m *Manager) persist() error {
+	m.persistMu.Lock()
+	defer m.persistMu.Unlock()
+	m.mu.Lock()
+	if len(m.policies) == 0 {
+		m.stateErr = nil
+		m.stateErrRetryable = false
+		m.mu.Unlock()
+		return nil
+	}
+	stateFile := m.stateFile
+	persisted := diskState{Day: m.day, Callers: make(map[string]diskCaller, len(m.states))}
+	for id, state := range m.states {
+		persisted.Callers[id] = diskCaller{Used: state.Used}
+	}
+	data, err := json.Marshal(persisted)
+	m.mu.Unlock()
+	if err == nil {
+		if stateFile == "" {
+			err = errors.New("caller policy state file is empty")
+		} else {
+			err = m.writeState(stateFile, data)
+		}
+	}
+	m.mu.Lock()
+	m.stateErr = err
+	m.stateErrRetryable = err != nil
+	m.mu.Unlock()
+	return err
+}
+
+func writeStateFile(stateFile string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o700); err != nil {
 		return fmt.Errorf("create caller quota state directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(m.stateFile), ".caller-usage-*")
+	tmp, err := os.CreateTemp(filepath.Dir(stateFile), ".caller-usage-*")
 	if err != nil {
 		return fmt.Errorf("create caller quota state temporary file: %w", err)
 	}
@@ -419,8 +471,8 @@ func (m *Manager) persistLocked() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close caller quota state: %w", err)
 	}
-	if err := os.Rename(tmpName, m.stateFile); err != nil {
+	if err := os.Rename(tmpName, stateFile); err != nil {
 		return fmt.Errorf("replace caller quota state: %w", err)
 	}
-	return os.Chmod(m.stateFile, 0o600)
+	return os.Chmod(stateFile, 0o600)
 }

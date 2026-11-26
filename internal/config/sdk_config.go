@@ -96,7 +96,7 @@ func (c *SDKConfig) InboundAPIKeys() []string {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(c.APIKeys)+len(c.CallerPolicies.Callers))
-	keys := make([]string, 0, len(seen))
+	keys := make([]string, 0, len(c.APIKeys)+len(c.CallerPolicies.Callers))
 	appendKey := func(key string) {
 		if key == "" {
 			return
@@ -129,6 +129,10 @@ func (c *SDKConfig) ValidateCallerPolicies() error {
 	c.CallerPolicies.StateFile = strings.TrimSpace(c.CallerPolicies.StateFile)
 	ids := make(map[string]struct{}, len(c.CallerPolicies.Callers))
 	keys := make(map[string]struct{}, len(c.CallerPolicies.Callers))
+	legacyKeys := make(map[string]struct{}, len(c.APIKeys))
+	for _, key := range c.APIKeys {
+		legacyKeys[strings.TrimSpace(key)] = struct{}{}
+	}
 	for i := range c.CallerPolicies.Callers {
 		caller := &c.CallerPolicies.Callers[i]
 		caller.ID = strings.TrimSpace(caller.ID)
@@ -146,6 +150,9 @@ func (c *SDKConfig) ValidateCallerPolicies() error {
 			return fmt.Errorf("caller-policies caller id %q is duplicated", caller.ID)
 		}
 		ids[caller.ID] = struct{}{}
+		if _, collides := legacyKeys[caller.ID]; collides {
+			return fmt.Errorf("caller-policies caller id %q collides with a legacy api-key", caller.ID)
+		}
 		if caller.APIKey == "" {
 			return fmt.Errorf("caller-policies caller %q requires api-key", caller.ID)
 		}

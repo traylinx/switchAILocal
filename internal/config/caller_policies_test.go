@@ -63,6 +63,13 @@ func TestValidateCallerPoliciesRejectsUnboundedOrAmbiguousConfig(t *testing.T) {
 	}
 }
 
+func TestValidateCallerPoliciesRejectsLegacyKeyCallerIDCollision(t *testing.T) {
+	cfg := SDKConfig{APIKeys: []string{"agent-1"}, CallerPolicies: validCallerPolicies()}
+	if err := cfg.ValidateCallerPolicies(); err == nil {
+		t.Fatal("legacy api-key equal to caller id unexpectedly accepted")
+	}
+}
+
 func TestInboundAPIKeysIncludesLegacyAndNamedCallerKeys(t *testing.T) {
 	cfg := SDKConfig{APIKeys: []string{"legacy", "shared"}, CallerPolicies: validCallerPolicies()}
 	cfg.CallerPolicies.Callers[0].APIKey = "shared"
@@ -84,11 +91,7 @@ func TestLoadConfigRejectsInvalidCallerPolicy(t *testing.T) {
 	if _, err := LoadConfigOptional(path, false); err == nil {
 		t.Fatal("invalid policy unexpectedly loaded")
 	}
-	optional, err := LoadConfigOptional(path, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(optional.CallerPolicies.Callers) != 0 {
-		t.Fatal("optional invalid config did not fail closed to empty config")
+	if _, err := LoadConfigOptional(path, true); err == nil {
+		t.Fatal("optional load downgraded invalid policy to an open config")
 	}
 }

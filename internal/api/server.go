@@ -795,6 +795,7 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 			c.Next()
 			return
 		}
+		c.Set("callerPolicyWebsocket", true)
 		authMiddleware(c)
 	}
 	finalHandler := func(c *gin.Context) {
@@ -1302,13 +1303,15 @@ func (s *Server) applyAccessConfig(oldCfg, newCfg *config.Config) {
 	if s == nil || newCfg == nil {
 		return
 	}
+	// Policies move first. During reload an old key-to-caller mapping can then
+	// only fail closed; it can never run against a missing or stale policy.
+	if s.callerPolicies != nil {
+		s.callerPolicies.Apply(newCfg.CallerPolicies)
+	}
 	if s.accessManager != nil {
 		if _, err := access.ApplyAccessProviders(s.accessManager, oldCfg, newCfg); err != nil {
 			return
 		}
-	}
-	if s.callerPolicies != nil {
-		s.callerPolicies.Apply(newCfg.CallerPolicies)
 	}
 }
 
@@ -1477,11 +1480,7 @@ func shouldPerKeyRateLimit(result *sdkaccess.Result) bool {
 // AuthMiddleware returns a Gin middleware handler that authenticates requests
 // using the configured authentication providers. When no providers are available,
 // it allows all requests (legacy behaviour).
-func AuthMiddleware(manager *sdkaccess.Manager, policyManagers ...*callerpolicy.Manager) gin.HandlerFunc {
-	var policyManager *callerpolicy.Manager
-	if len(policyManagers) > 0 {
-		policyManager = policyManagers[0]
-	}
+func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if manager == nil {
 			hasher := sha256.New()
@@ -1519,9 +1518,22 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManagers ...*callerpolicy.
 					}
 				}
 
-				if callerID != "" && policyManager != nil && policyManager.Enabled() {
+				if callerID != "" {
+					if policyManager == nil || !policyManager.Enabled() {
+						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeStateUnavailable})
+						return
+					}
+					if c.GetBool("callerPolicyWebsocket") {
+						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeRouteDenied})
+						return
+					}
 					model, estimate, inspectErr := callerpolicy.InspectRequest(c.Request)
 					if inspectErr != nil {
+						var decision *callerpolicy.DecisionError
+						if errors.As(inspectErr, &decision) {
+							writeCallerPolicyError(c, policyManager, callerID, model, decision)
+							return
+						}
 						log.WithFields(log.Fields{"caller_id": callerID, "status": "request_unreadable"}).Warn("caller policy refused request")
 						c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{
 							"message": "Request body could not be inspected for caller policy",
@@ -1591,6 +1603,12 @@ func writeCallerPolicyError(c *gin.Context, manager *callerpolicy.Manager, calle
 	case callerpolicy.CodeModelDenied:
 		status = http.StatusForbidden
 		message = "Model is not allowed for this caller"
+	case callerpolicy.CodeModelConflict:
+		status = http.StatusForbidden
+		message = "Conflicting model selectors are not allowed"
+	case callerpolicy.CodeRouteDenied:
+		status = http.StatusForbidden
+		message = "Route is not allowed for this caller"
 	case callerpolicy.CodeModelRequired:
 		status = http.StatusBadRequest
 		message = "An explicit model is required for this caller"
@@ -1603,10 +1621,17 @@ func writeCallerPolicyError(c *gin.Context, manager *callerpolicy.Manager, calle
 		status = http.StatusServiceUnavailable
 		message = "Caller quota state is unavailable"
 	}
-	snapshot := manager.CurrentSnapshot(callerID, model)
+	snapshot := callerpolicy.Snapshot{CallerID: callerID, Model: model}
+	if manager != nil {
+		snapshot = manager.CurrentSnapshot(callerID, model)
+	}
+	logModel := model
+	if decision.Code == callerpolicy.CodeModelDenied || decision.Code == callerpolicy.CodeModelConflict {
+		logModel = "<denied>"
+	}
 	log.WithFields(log.Fields{
 		"caller_id":         callerID,
-		"model":             model,
+		"model":             logModel,
 		"active":            snapshot.Active,
 		"daily_tokens_used": snapshot.TokensUsed,
 		"daily_token_cap":   snapshot.DailyCap,

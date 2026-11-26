@@ -65,7 +65,14 @@ func usageHandler(tokens int64) gin.HandlerFunc {
 }
 
 func TestCallerPolicyWrongModelAndDailyCapAreCallerLocal(t *testing.T) {
-	engine, _ := newCallerPolicyTestStack(t, 5, 1, usageHandler(5))
+	engine, _ := newCallerPolicyTestStack(t, 5, 1, func(c *gin.Context) {
+		tokens := int64(1)
+		if c.GetString("apiKey") == "caller-a" {
+			tokens = 5
+		}
+		coreusage.PublishRecord(c.Request.Context(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: tokens}})
+		c.Status(http.StatusOK)
+	})
 	missing := callerRequest(engine, "key-a-private", "", "not logged")
 	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), string(callerpolicy.CodeModelRequired)) {
 		t.Fatalf("missing-model response = %d %s", missing.Code, missing.Body.String())
@@ -87,6 +94,10 @@ func TestCallerPolicyWrongModelAndDailyCapAreCallerLocal(t *testing.T) {
 	if over.Code != http.StatusTooManyRequests || !strings.Contains(over.Body.String(), string(callerpolicy.CodeDailyCapExceeded)) {
 		t.Fatalf("over-cap response = %d %s", over.Code, over.Body.String())
 	}
+	otherAfterCap := callerRequest(engine, "key-b-private", "model-b", "still independent")
+	if otherAfterCap.Code != http.StatusOK {
+		t.Fatalf("other caller failed after daily-cap refusal: %d %s", otherAfterCap.Code, otherAfterCap.Body.String())
+	}
 }
 
 func TestCallerPolicyConcurrencyOverflowFailsImmediately(t *testing.T) {
@@ -94,8 +105,10 @@ func TestCallerPolicyConcurrencyOverflowFailsImmediately(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	engine, _ := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
-		once.Do(func() { close(entered) })
-		<-release
+		if c.GetString("apiKey") == "caller-a" {
+			once.Do(func() { close(entered) })
+			<-release
+		}
 		c.Status(http.StatusOK)
 	})
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -106,9 +119,107 @@ func TestCallerPolicyConcurrencyOverflowFailsImmediately(t *testing.T) {
 		!strings.Contains(over.Body.String(), string(callerpolicy.CodeConcurrencyExceeded)) {
 		t.Fatalf("concurrency response = %d headers=%v body=%s", over.Code, over.Header(), over.Body.String())
 	}
+	other := callerRequest(engine, "key-b-private", "model-b", "independent")
+	if other.Code != http.StatusOK {
+		t.Fatalf("other caller failed during caller-a overflow: %d %s", other.Code, other.Body.String())
+	}
 	close(release)
 	if first := <-done; first.Code != http.StatusOK {
 		t.Fatalf("first request failed: %d", first.Code)
+	}
+}
+
+func TestCallerPolicyRejectsModelSelectorBypassesBeforeHandler(t *testing.T) {
+	called := 0
+	engine, _ := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
+		called++
+		c.Status(http.StatusOK)
+	})
+	for _, tc := range []struct{ name, target, body string }{
+		{"query body conflict", "/v1/chat/completions?model=model-a", `{"model":"forbidden"}`},
+		{"duplicate body model", "/v1/chat/completions", `{"model":"forbidden","model":"model-a"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer key-a-private")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(callerpolicy.CodeModelConflict)) {
+				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if called != 0 {
+		t.Fatalf("bypass requests reached handler %d times", called)
+	}
+}
+
+func TestCallerPolicyFailsClosedForStaleCallerMapping(t *testing.T) {
+	policies := config.CallerPoliciesConfig{
+		StateFile: filepath.Join(t.TempDir(), "usage.json"),
+		Callers:   []config.CallerPolicyConfig{{ID: "old-id", APIKey: "private-key", AllowedModels: []string{"model-a"}, MaxConcurrency: 1, DailyTokenCap: 100}},
+	}
+	root := &config.SDKConfig{CallerPolicies: policies}
+	configaccess.Register()
+	providers, err := sdkaccess.BuildProviders(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessManager := sdkaccess.NewManager()
+	accessManager.SetProviders(providers)
+	policies.Callers[0].ID = "new-id"
+	policyManager := callerpolicy.New(policies, "")
+	engine := gin.New()
+	engine.POST("/v1/chat/completions", AuthMiddleware(accessManager, policyManager), func(c *gin.Context) { c.Status(http.StatusOK) })
+	recorder := callerRequest(engine, "private-key", "model-a", "private")
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), string(callerpolicy.CodeStateUnavailable)) {
+		t.Fatalf("stale mapping response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCallerPolicyFailsClosedWhenManagerMissing(t *testing.T) {
+	policies := config.CallerPoliciesConfig{
+		StateFile: filepath.Join(t.TempDir(), "usage.json"),
+		Callers:   []config.CallerPolicyConfig{{ID: "caller-a", APIKey: "private-key", AllowedModels: []string{"model-a"}, MaxConcurrency: 1, DailyTokenCap: 100}},
+	}
+	root := &config.SDKConfig{CallerPolicies: policies}
+	configaccess.Register()
+	providers, err := sdkaccess.BuildProviders(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessManager := sdkaccess.NewManager()
+	accessManager.SetProviders(providers)
+	engine := gin.New()
+	engine.POST("/v1/chat/completions", AuthMiddleware(accessManager, nil), func(c *gin.Context) { c.Status(http.StatusOK) })
+	recorder := callerRequest(engine, "private-key", "model-a", "private")
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), string(callerpolicy.CodeStateUnavailable)) {
+		t.Fatalf("missing manager response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCallerPolicyRefusesWebsocketForNamedCaller(t *testing.T) {
+	policies := config.CallerPoliciesConfig{
+		StateFile: filepath.Join(t.TempDir(), "usage.json"),
+		Callers:   []config.CallerPolicyConfig{{ID: "caller-a", APIKey: "private-key", AllowedModels: []string{"model-a"}, MaxConcurrency: 1, DailyTokenCap: 100}},
+	}
+	root := &config.SDKConfig{CallerPolicies: policies}
+	configaccess.Register()
+	providers, err := sdkaccess.BuildProviders(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessManager := sdkaccess.NewManager()
+	accessManager.SetProviders(providers)
+	engine := gin.New()
+	engine.GET("/v1/ws", func(c *gin.Context) { c.Set("callerPolicyWebsocket", true); c.Next() }, AuthMiddleware(accessManager, callerpolicy.New(policies, "")), func(c *gin.Context) { c.Status(http.StatusSwitchingProtocols) })
+	req := httptest.NewRequest(http.MethodGet, "/v1/ws?model=model-a", nil)
+	req.Header.Set("Authorization", "Bearer private-key")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(callerpolicy.CodeRouteDenied)) {
+		t.Fatalf("websocket response = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -138,6 +249,28 @@ func TestCallerPolicyLogsIdentityAndCountsNeverKeyOrPrompt(t *testing.T) {
 	for _, forbidden := range []string{"key-a-private", "unique-private-prompt"} {
 		if strings.Contains(logged, forbidden) {
 			t.Fatalf("sensitive value leaked to logs: %q", logged)
+		}
+	}
+}
+
+func TestCallerPolicyRefusalLogRedactsDeniedModelKeyAndPrompt(t *testing.T) {
+	engine, _ := newCallerPolicyTestStack(t, 10, 1, usageHandler(1))
+	var output bytes.Buffer
+	previous := log.StandardLogger().Out
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	response := callerRequest(engine, "key-a-private", "private-denied-model", "unique-private-prompt")
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("request failed: %d %s", response.Code, response.Body.String())
+	}
+	logged := output.String()
+	if !strings.Contains(logged, "model=\"<denied>\"") && !strings.Contains(logged, "model=<denied>") {
+		t.Fatalf("denied model marker missing from %q", logged)
+	}
+	for _, forbidden := range []string{"private-denied-model", "key-a-private", "unique-private-prompt"} {
+		if strings.Contains(logged, forbidden) {
+			t.Fatalf("sensitive refusal value leaked to logs: %q", logged)
 		}
 	}
 }

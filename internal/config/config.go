@@ -851,9 +851,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Performance.SanitizePerformance()
 
 	if err := cfg.SDKConfig.ValidateCallerPolicies(); err != nil {
-		if optional {
-			return &Config{}, nil
-		}
+		// Invalid caller-policy config must never degrade into optional/open
+		// authentication. Callers configured with limits fail closed at load time.
 		return nil, err
 	}
 

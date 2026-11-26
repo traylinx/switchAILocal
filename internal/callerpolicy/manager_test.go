@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,7 +93,8 @@ func TestManagerConcurrencyLimitFailsImmediatelyAndReleases(t *testing.T) {
 
 func TestManagerDailyWindowResetsAtUTCMidnight(t *testing.T) {
 	m := New(testPolicies(t, 5, 1), "")
-	current := time.Date(2026, 11, 26, 23, 59, 59, 0, time.UTC)
+	local := time.FixedZone("x", 2*60*60)
+	current := time.Date(2026, 11, 27, 1, 59, 59, 0, local)
 	m.now = func() time.Time { return current }
 	lease, err := m.Begin("caller-a", "model-a", 1)
 	if err != nil {
@@ -114,6 +116,9 @@ func TestManagerDailyWindowResetsAtUTCMidnight(t *testing.T) {
 
 func TestManagerPersistsOnlyCallerIDsAndCounters(t *testing.T) {
 	cfg := testPolicies(t, 100, 1)
+	if err := os.WriteFile(cfg.StateFile, []byte(`{"day":"2000-01-01","callers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	m := New(cfg, "")
 	lease, err := m.Begin("caller-a", "model-a", 1)
 	if err != nil {
@@ -145,6 +150,140 @@ func TestManagerFailsClosedOnCorruptState(t *testing.T) {
 	m := New(cfg, "")
 	_, err := m.Begin("caller-a", "model-a", 1)
 	requireDecisionCode(t, err, CodeStateUnavailable)
+}
+
+func TestManagerUnknownCallerFailsClosed(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	_, err := m.Begin("stale-caller", "model-a", 1)
+	requireDecisionCode(t, err, CodeStateUnavailable)
+}
+
+func TestManagerRetriesTransientStateWriteOnNextBegin(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	original := m.writeState
+	attempts := 0
+	m.writeState = func(path string, data []byte) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("transient write failure")
+		}
+		return original(path, data)
+	}
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
+	lease.Finish(500)
+	next, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil || next == nil || attempts < 2 {
+		t.Fatalf("transient state error was not retried: lease=%v err=%v attempts=%d", next, err, attempts)
+	}
+	next.Finish(500)
+}
+
+func TestManagerPersistenceDoesNotHoldDecisionLock(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	m.writeState = func(string, []byte) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return nil
+	}
+	first, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := make(chan struct{})
+	go func() {
+		first.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
+		close(persisted)
+	}()
+	<-entered
+	decision := make(chan error, 1)
+	go func() {
+		lease, beginErr := m.Begin("caller-b", "model-b", 0)
+		if lease != nil {
+			lease.Finish(500)
+		}
+		decision <- beginErr
+	}()
+	select {
+	case err := <-decision:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("another caller's decision blocked on state-file I/O")
+	}
+	close(release)
+	<-persisted
+	first.Finish(500)
+}
+
+func TestManagerSkipsStateWriteWhenCountersDoNotChange(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	writes := 0
+	m.writeState = func(string, []byte) error { writes++; return nil }
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Finish(500)
+	if writes != 0 {
+		t.Fatalf("unchanged counters caused %d state writes", writes)
+	}
+}
+
+func TestManagerRestoresSameDayUsageAcrossRestart(t *testing.T) {
+	cfg := testPolicies(t, 5, 1)
+	first := New(cfg, "")
+	lease, err := first.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 5}})
+	lease.Finish(500)
+	restarted := New(cfg, "")
+	_, err = restarted.Begin("caller-a", "model-a", 0)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
+}
+
+func TestManagerChargesFailedProviderRecords(t *testing.T) {
+	m := New(testPolicies(t, 5, 1), "")
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.ObserveUsage(context.Background(), coreusage.Record{Failed: true, Detail: coreusage.Detail{TotalTokens: 5}})
+	lease.Finish(500)
+	_, err = m.Begin("caller-a", "model-a", 0)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
+}
+
+func TestManagerReloadPreservesActiveAndRemovedCallerUsage(t *testing.T) {
+	cfg := testPolicies(t, 5, 1)
+	m := New(cfg, "")
+	active, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedFile := cfg
+	changedFile.StateFile = filepath.Join(t.TempDir(), "moved-state.json")
+	m.Apply(changedFile)
+	_, err = m.Begin("caller-a", "model-a", 0)
+	requireDecisionCode(t, err, CodeConcurrencyExceeded)
+	active.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 5}})
+	active.Finish(500)
+
+	removed := changedFile
+	removed.Callers = removed.Callers[1:]
+	m.Apply(removed)
+	m.Apply(changedFile)
+	_, err = m.Begin("caller-a", "model-a", 0)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
 }
 
 func containsAny(value string, candidates ...string) bool {
