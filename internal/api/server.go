@@ -791,11 +791,14 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 
 	authMiddleware := AuthMiddleware(s.accessManager, s.callerPolicies)
 	conditionalAuth := func(c *gin.Context) {
-		if !s.wsAuthEnabled.Load() {
+		policiesEnabled := s.callerPolicies != nil && s.callerPolicies.Enabled()
+		if !s.wsAuthEnabled.Load() && !policiesEnabled {
 			c.Next()
 			return
 		}
-		c.Set("callerPolicyWebsocket", true)
+		if policiesEnabled {
+			c.Set("callerPolicyWebsocket", true)
+		}
 		authMiddleware(c)
 	}
 	finalHandler := func(c *gin.Context) {
@@ -1274,6 +1277,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %v", err)
 	}
+	if s.callerPolicies != nil {
+		if err := s.callerPolicies.Close(); err != nil {
+			return fmt.Errorf("flush caller quota state: %w", err)
+		}
+	}
 
 	log.Debug("API server stopped")
 	return nil
@@ -1559,7 +1567,11 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Mana
 							if !completed {
 								status = http.StatusInternalServerError
 							}
-							snapshot := lease.Finish(status)
+							responseBytes := int64(c.Writer.Size())
+							if responseBytes < 0 {
+								responseBytes = 0
+							}
+							snapshot := lease.Finish(status, responseBytes)
 							log.WithFields(log.Fields{
 								"caller_id":         snapshot.CallerID,
 								"model":             snapshot.Model,

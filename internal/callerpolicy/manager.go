@@ -85,6 +85,10 @@ type Manager struct {
 	stateErrRetryable bool
 	now               func() time.Time
 	writeState        func(string, []byte) error
+	flushDelay        time.Duration
+	flushTimer        *time.Timer
+	dirty             bool
+	closed            bool
 }
 
 // New constructs a policy manager. Relative state-file paths resolve from the
@@ -100,6 +104,7 @@ func New(cfg config.CallerPoliciesConfig, configFilePath string) *Manager {
 		configDir:  configDir,
 		now:        time.Now,
 		writeState: writeStateFile,
+		flushDelay: time.Second,
 	}
 	m.Apply(cfg)
 	return m
@@ -235,10 +240,11 @@ type Lease struct {
 	model           string
 	estimatedTokens int64
 
-	mu             sync.Mutex
-	finished       bool
-	usageReported  bool
-	reportedTokens int64
+	mu              sync.Mutex
+	finished        bool
+	usageReported   bool
+	reportedTokens  int64
+	fallbackCharged int64
 }
 
 // ObserveUsage charges successful provider-reported usage synchronously.
@@ -254,19 +260,28 @@ func (l *Lease) ObserveUsage(_ context.Context, record coreusage.Record) {
 		return
 	}
 	l.mu.Lock()
-	if l.finished {
-		l.mu.Unlock()
-		return
+	charge := tokens
+	if l.finished && l.fallbackCharged > 0 {
+		// Finish may have conservatively charged request/response bytes before a
+		// streaming executor published its final usage. Replace that estimate
+		// rather than double charging it when the late record arrives.
+		if charge > l.fallbackCharged {
+			charge -= l.fallbackCharged
+		} else {
+			charge = 0
+		}
+		l.fallbackCharged = 0
 	}
 	l.usageReported = true
 	l.reportedTokens += tokens
 	l.mu.Unlock()
-	l.manager.addTokens(l.callerID, tokens)
+	l.manager.addTokens(l.callerID, charge)
 }
 
-// Finish releases concurrency and charges a conservative request-size estimate
-// when a successful handler emitted no provider usage record.
-func (l *Lease) Finish(status int) Snapshot {
+// Finish releases concurrency and charges a conservative request/response-size
+// estimate when a successful handler emitted no provider usage record. The
+// optional response byte count comes from the HTTP response writer.
+func (l *Lease) Finish(status int, responseBytes ...int64) Snapshot {
 	if l == nil || l.manager == nil {
 		return Snapshot{}
 	}
@@ -280,6 +295,10 @@ func (l *Lease) Finish(status int) Snapshot {
 	fallback := int64(0)
 	if status >= 200 && status < 400 && l.reportedTokens == 0 {
 		fallback = l.estimatedTokens
+		if len(responseBytes) > 0 && responseBytes[0] > 0 {
+			fallback += estimateBytes(int(responseBytes[0]))
+		}
+		l.fallbackCharged = fallback
 	}
 	l.mu.Unlock()
 
@@ -297,8 +316,8 @@ func (m *Manager) addTokens(callerID string, tokens int64) {
 		return
 	}
 	state.Used += tokens
+	m.markDirtyLocked(false)
 	m.mu.Unlock()
-	_ = m.persist()
 }
 
 func (m *Manager) finish(callerID, model string, fallback int64, usageReported bool) Snapshot {
@@ -313,6 +332,7 @@ func (m *Manager) finish(callerID, model string, fallback int64, usageReported b
 	}
 	if fallback > 0 {
 		state.Used += fallback
+		m.markDirtyLocked(false)
 	}
 	p := m.policies[callerID]
 	result := Snapshot{
@@ -324,9 +344,6 @@ func (m *Manager) finish(callerID, model string, fallback int64, usageReported b
 		UsageReported: usageReported,
 	}
 	m.mu.Unlock()
-	if fallback > 0 {
-		_ = m.persist()
-	}
 	return result
 }
 
@@ -360,7 +377,8 @@ func (m *Manager) rolloverLocked(now time.Time) error {
 	for _, state := range m.states {
 		state.Used = 0
 	}
-	return m.persistLocked()
+	m.markDirtyLocked(true)
+	return nil
 }
 
 func (m *Manager) loadLocked() error {
@@ -394,24 +412,6 @@ func (m *Manager) loadLocked() error {
 	return nil
 }
 
-func (m *Manager) persistLocked() error {
-	if len(m.policies) == 0 {
-		return nil
-	}
-	if m.stateFile == "" {
-		return errors.New("caller policy state file is empty")
-	}
-	persisted := diskState{Day: m.day, Callers: make(map[string]diskCaller, len(m.states))}
-	for id, state := range m.states {
-		persisted.Callers[id] = diskCaller{Used: state.Used}
-	}
-	data, err := json.Marshal(persisted)
-	if err != nil {
-		return fmt.Errorf("encode caller quota state: %w", err)
-	}
-	return m.writeState(m.stateFile, data)
-}
-
 // persist snapshots counters under the manager lock, then performs filesystem
 // I/O outside it. A separate mutex preserves write ordering without letting a
 // slow disk stall another caller's Begin decision.
@@ -419,6 +419,7 @@ func (m *Manager) persist() error {
 	m.persistMu.Lock()
 	defer m.persistMu.Unlock()
 	m.mu.Lock()
+	m.dirty = false
 	if len(m.policies) == 0 {
 		m.stateErr = nil
 		m.stateErrRetryable = false
@@ -446,11 +447,107 @@ func (m *Manager) persist() error {
 	return err
 }
 
+func (m *Manager) markDirtyLocked(immediate bool) {
+	if m.closed {
+		return
+	}
+	m.dirty = true
+	delay := m.flushDelay
+	if immediate {
+		delay = 0
+	}
+	if m.flushTimer == nil {
+		m.flushTimer = time.AfterFunc(delay, m.flushDirty)
+		return
+	}
+	if immediate {
+		m.flushTimer.Reset(0)
+	}
+}
+
+func (m *Manager) flushDirty() {
+	m.mu.Lock()
+	m.flushTimer = nil
+	if !m.dirty || m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	_ = m.persist()
+}
+
+// Flush durably writes pending counters. Normal usage accounting is debounced
+// so provider executor goroutines never wait for filesystem I/O.
+func (m *Manager) Flush() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	dirty := m.dirty
+	m.mu.Unlock()
+	if !dirty {
+		return nil
+	}
+	return m.persist()
+}
+
+// Close flushes pending counters and prevents future debounce timers. Late
+// usage remains chargeable in memory until the manager is discarded.
+func (m *Manager) Close() error {
+	if m == nil {
+		return nil
+	}
+	if err := m.Flush(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.closed = true
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	m.mu.Unlock()
+	return nil
+}
+
+// AuthorizeModel rechecks the concrete model selected after hooks and routing.
+func (m *Manager) AuthorizeModel(callerID, model string) error {
+	if m == nil || callerID == "" || model == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.policies[callerID]
+	if !ok {
+		return &DecisionError{Code: CodeStateUnavailable}
+	}
+	if _, allowed := p.allowed[model]; !allowed {
+		return &DecisionError{Code: CodeModelDenied}
+	}
+	return nil
+}
+
+// AuthorizeModel implements usage.ModelAuthorizer for executor-dispatch checks.
+func (l *Lease) AuthorizeModel(model string) error {
+	if l == nil || l.manager == nil {
+		return nil
+	}
+	return l.manager.AuthorizeModel(l.callerID, model)
+}
+
 func writeStateFile(stateFile string, data []byte) error {
+	return writeStateFileWithTemp(stateFile, data, os.CreateTemp)
+}
+
+func writeStateFileWithTemp(stateFile string, data []byte, createTemp func(string, string) (*os.File, error)) error {
 	if err := os.MkdirAll(filepath.Dir(stateFile), 0o700); err != nil {
 		return fmt.Errorf("create caller quota state directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(stateFile), ".caller-usage-*")
+	tmp, err := createTemp(filepath.Dir(stateFile), ".caller-usage-*")
 	if err != nil {
 		return fmt.Errorf("create caller quota state temporary file: %w", err)
 	}
@@ -474,5 +571,5 @@ func writeStateFile(stateFile string, data []byte) error {
 	if err := os.Rename(tmpName, stateFile); err != nil {
 		return fmt.Errorf("replace caller quota state: %w", err)
 	}
-	return os.Chmod(stateFile, 0o600)
+	return nil
 }

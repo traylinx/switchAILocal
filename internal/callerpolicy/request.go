@@ -13,7 +13,10 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 // MaxInspectedBodyBytes bounds the duplicate policy-inspection copy. Requests
@@ -27,17 +30,24 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 	if r == nil {
 		return "", 0, nil
 	}
-	models := make([]string, 0, 4)
+	models := make([]string, 0, 6)
+	pathModel := ""
 	if r.URL != nil {
 		models = append(models, r.URL.Query()["model"]...)
-		models = append(models, modelFromPath(r.URL.Path))
+		pathModel = modelFromPath(r.URL.Path)
+		models = append(models, pathModel)
 	}
-	model, err := resolveModelSources(models)
+	queryAndPathModel, err := resolveModelSources(models)
 	if err != nil {
 		return "", 0, err
 	}
 	if r.Body == nil {
-		return model, 0, nil
+		if RequiresExplicitModel(r) && pathModel == "" {
+			// Inference handlers read their model from the body. A query parameter
+			// may conflict with that model, but is never sufficient by itself.
+			return "", 0, nil
+		}
+		return queryAndPathModel, 0, nil
 	}
 	limited := http.MaxBytesReader(nil, r.Body, MaxInspectedBodyBytes)
 	data, err := io.ReadAll(limited)
@@ -48,7 +58,19 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 	_ = r.Body.Close()
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	if len(data) == 0 {
-		return model, 0, nil
+		if RequiresExplicitModel(r) && pathModel == "" {
+			return "", 0, nil
+		}
+		return queryAndPathModel, 0, nil
+	}
+
+	// Inference handlers use GetRawData followed by gjson and do not select a
+	// parser from Content-Type. Inspect the same raw bytes first so a misleading
+	// content type or JSON with trailing garbage cannot hide the executed model.
+	bodyModelFound := false
+	if rawModel := gjson.GetBytes(data, "model"); rawModel.Exists() {
+		models = append(models, rawModel.String())
+		bodyModelFound = true
 	}
 
 	mediaType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -56,8 +78,13 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 	case "application/json", "":
 		var payload any
 		if err := json.Unmarshal(data, &payload); err != nil {
-			// The downstream handler owns malformed-payload errors. Preserve the
-			// body and use its size only as a fallback accounting estimate.
+			model, resolveErr := resolveModelSources(models)
+			if resolveErr != nil {
+				return "", 0, resolveErr
+			}
+			if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
+				return "", 0, errors.New("inference request body does not expose a model")
+			}
 			return model, estimateBytes(len(data)), nil
 		}
 		bodyModel, count, err := topLevelJSONModel(data)
@@ -67,44 +94,84 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 		if count > 1 {
 			return "", 0, &DecisionError{Code: CodeModelConflict}
 		}
-		model, err = resolveModelSources(append(models, bodyModel))
+		if count > 0 {
+			bodyModelFound = true
+		}
+		model, err := resolveModelSources(append(models, bodyModel))
 		if err != nil {
 			return "", 0, err
+		}
+		if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
+			return "", 0, errors.New("inference request body does not expose a model")
 		}
 		return model, estimateJSONTokens(payload, ""), nil
 	case "multipart/form-data":
 		boundary := params["boundary"]
-		if boundary == "" {
-			return model, 0, nil
-		}
-		reader := multipart.NewReader(bytes.NewReader(data), boundary)
 		var textBytes int
-		for {
-			part, nextErr := reader.NextPart()
-			if nextErr == io.EOF {
-				break
-			}
-			if nextErr != nil {
-				break
-			}
-			name := part.FormName()
-			if part.FileName() != "" {
+		if boundary != "" {
+			reader := multipart.NewReader(bytes.NewReader(data), boundary)
+			for {
+				part, nextErr := reader.NextPart()
+				if nextErr == io.EOF {
+					break
+				}
+				if nextErr != nil {
+					break
+				}
+				name := part.FormName()
+				if part.FileName() != "" {
+					_ = part.Close()
+					continue
+				}
+				value, _ := io.ReadAll(io.LimitReader(part, 1<<20))
 				_ = part.Close()
-				continue
-			}
-			value, _ := io.ReadAll(io.LimitReader(part, 1<<20))
-			_ = part.Close()
-			if name == "model" {
-				models = append(models, string(value))
-			} else if name == "prompt" || name == "input" || name == "instructions" {
-				textBytes += len(value)
+				if name == "model" {
+					models = append(models, string(value))
+					bodyModelFound = true
+				} else if name == "prompt" || name == "input" || name == "instructions" {
+					textBytes += len(value)
+				}
 			}
 		}
-		model, err = resolveModelSources(models)
+		model, err := resolveModelSources(models)
+		if err == nil && !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
+			err = errors.New("inference request body does not expose a model")
+		}
 		return model, estimateBytes(textBytes), err
+	case "application/x-www-form-urlencoded":
+		values, parseErr := url.ParseQuery(string(data))
+		if parseErr != nil {
+			return "", 0, fmt.Errorf("inspect urlencoded request for caller policy: %w", parseErr)
+		}
+		for _, formModel := range values["model"] {
+			models = append(models, formModel)
+			bodyModelFound = true
+		}
+		model, err := resolveModelSources(models)
+		if err == nil && !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
+			err = errors.New("inference request body does not expose a model")
+		}
+		return model, estimateFormTokens(values), err
 	default:
+		model, resolveErr := resolveModelSources(models)
+		if resolveErr != nil {
+			return "", 0, resolveErr
+		}
+		if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
+			return "", 0, errors.New("inference request body does not expose a model")
+		}
 		return model, estimateBytes(len(data)), nil
 	}
+}
+
+func estimateFormTokens(values url.Values) int64 {
+	textBytes := 0
+	for _, field := range []string{"prompt", "input", "instructions"} {
+		for _, value := range values[field] {
+			textBytes += len(value)
+		}
+	}
+	return estimateBytes(textBytes)
 }
 
 // RequiresExplicitModel defaults to requiring a model for policed callers.

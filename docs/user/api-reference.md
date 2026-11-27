@@ -26,16 +26,22 @@ Concurrency overflow fails immediately (it is not queued) with HTTP `429`, code
 `403`/`caller_model_not_allowed`; omitting a model from an inference request
 returns `400`/`caller_model_required`; an exhausted daily allowance returns
 `429`/`caller_daily_token_cap_exceeded` and affects only that caller. Daily
-windows reset at `00:00 UTC`. Provider-reported total tokens are charged when
-available; otherwise a conservative estimate from request text is charged. A
+windows reset at `00:00 UTC`. Provider-reported total tokens are charged even
+when they arrive after an HTTP stream finishes; otherwise a byte-based estimate
+from request text plus response output is charged. Counter writes are debounced
+off the executor path and flushed on UTC rollover and shutdown. A
 request already in flight can cross the daily threshold, after which the next
 request is refused; possible overshoot is bounded by `max-concurrency` times
 the largest in-flight request's provider-reported usage. A missing, corrupt, or
 temporarily unwritable quota state returns `503`/`caller_quota_state_unavailable`.
 Conflicting query, path, form, or body model selectors return
-`403`/`caller_model_conflict`. Named callers are refused on WebSocket routes;
-new authenticated routes require an explicit allowed model unless classified as
-a read-only model catalog.
+`403`/`caller_model_conflict`. Inference handlers and policy inspection use the
+same raw-body model semantics regardless of `Content-Type`; a query selector is
+not sufficient for a body-model route. Models selected later by hooks, automatic
+routing, virtual aliases, or fallback must also appear in the caller allowlist.
+Named callers are refused on WebSocket routes even when legacy `ws-auth` is
+disabled; new authenticated routes require an explicit allowed model unless
+classified as a read-only model catalog.
 
 ## Inference and data routes (client API key)
 

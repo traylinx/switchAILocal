@@ -55,10 +55,10 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 			continue
 		}
 
-		forceRebuild := strings.EqualFold(strings.TrimSpace(providerCfg.Type), sdkConfig.AccessProviderTypeConfigAPIKey)
 		if oldCfgProvider, ok := oldCfgMap[key]; ok {
 			isAliased := oldCfgProvider == providerCfg
-			if !forceRebuild && !isAliased && providerConfigEqual(oldCfgProvider, providerCfg) {
+			mappingEqual := !isInlineProvider(key) || callerPolicyMappingEqual(oldCfg, newCfg)
+			if !isAliased && mappingEqual && providerConfigEqual(oldCfgProvider, providerCfg) {
 				if existingProvider, okExisting := existingMap[key]; okExisting {
 					result = append(result, existingProvider)
 					finalIDs[key] = struct{}{}
@@ -89,7 +89,7 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 			key := providerIdentifier(inline)
 			if key != "" {
 				if oldCfgProvider, ok := oldCfgMap[key]; ok {
-					if providerConfigEqual(oldCfgProvider, inline) {
+					if callerPolicyMappingEqual(oldCfg, newCfg) && providerConfigEqual(oldCfgProvider, inline) {
 						if existingProvider, okExisting := existingMap[key]; okExisting {
 							result = append(result, existingProvider)
 							finalIDs[key] = struct{}{}
@@ -135,6 +135,22 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 	sort.Strings(removed)
 
 	return result, added, updated, removed, nil
+}
+
+func callerPolicyMappingEqual(a, b *config.Config) bool {
+	callerMap := func(cfg *config.Config) map[string]string {
+		result := make(map[string]string)
+		if cfg == nil {
+			return result
+		}
+		for _, caller := range cfg.CallerPolicies.Callers {
+			if caller.APIKey != "" && caller.ID != "" {
+				result[caller.APIKey] = caller.ID
+			}
+		}
+		return result
+	}
+	return reflect.DeepEqual(callerMap(a), callerMap(b))
 }
 
 // ApplyAccessProviders reconciles the configured access providers against the

@@ -6,6 +6,7 @@ package callerpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -49,6 +50,9 @@ func TestManagerRejectsWrongModelWithoutAffectingAnotherCaller(t *testing.T) {
 		t.Fatalf("independent caller was affected: lease=%v err=%v", lease, err)
 	}
 	lease.Finish(200)
+	if err := m.Flush(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestManagerDailyTokenCapIsCallerLocal(t *testing.T) {
@@ -125,6 +129,9 @@ func TestManagerPersistsOnlyCallerIDsAndCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease.Finish(200)
+	if err := m.Flush(); err != nil {
+		t.Fatal(err)
+	}
 
 	data, err := os.ReadFile(cfg.StateFile)
 	if err != nil {
@@ -134,6 +141,32 @@ func TestManagerPersistsOnlyCallerIDsAndCounters(t *testing.T) {
 		t.Fatalf("state file contains secret or request metadata: %s", data)
 	}
 	info, err := os.Stat(cfg.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("state file mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestWriteStateFileRepairsInsecureTemporaryMode(t *testing.T) {
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "caller-usage.json")
+	insecureCreateTemp := func(dir, pattern string) (*os.File, error) {
+		file, err := os.CreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Chmod(0o644); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return file, nil
+	}
+	if err := writeStateFileWithTemp(stateFile, []byte(`{"day":"2026-11-27","callers":{}}`), insecureCreateTemp); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(stateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +208,9 @@ func TestManagerRetriesTransientStateWriteOnNextBegin(t *testing.T) {
 	}
 	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
 	lease.Finish(500)
+	if err := m.Flush(); err == nil {
+		t.Fatal("first state write unexpectedly succeeded")
+	}
 	next, err := m.Begin("caller-a", "model-a", 0)
 	if err != nil || next == nil || attempts < 2 {
 		t.Fatalf("transient state error was not retried: lease=%v err=%v attempts=%d", next, err, attempts)
@@ -184,6 +220,7 @@ func TestManagerRetriesTransientStateWriteOnNextBegin(t *testing.T) {
 
 func TestManagerPersistenceDoesNotHoldDecisionLock(t *testing.T) {
 	m := New(testPolicies(t, 100, 1), "")
+	m.flushDelay = 0
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -246,9 +283,152 @@ func TestManagerRestoresSameDayUsageAcrossRestart(t *testing.T) {
 	}
 	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 5}})
 	lease.Finish(500)
+	if err := first.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	restarted := New(cfg, "")
 	_, err = restarted.Begin("caller-a", "model-a", 0)
 	requireDecisionCode(t, err, CodeDailyCapExceeded)
+}
+
+func TestManagerLateUsageReplacesRequestResponseFallback(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	lease, err := m.Begin("caller-a", "model-a", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := lease.Finish(200, 16); snapshot.TokensUsed != 8 {
+		t.Fatalf("fallback tokens = %d, want 8", snapshot.TokensUsed)
+	}
+	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 12}})
+	if snapshot := m.CurrentSnapshot("caller-a", "model-a"); snapshot.TokensUsed != 12 {
+		t.Fatalf("late reported tokens = %d, want 12", snapshot.TokensUsed)
+	}
+}
+
+func TestManagerFallbackIncludesResponseBytes(t *testing.T) {
+	m := New(testPolicies(t, 4, 1), "")
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Finish(200, 16)
+	_, err = m.Begin("caller-a", "model-a", 0)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
+}
+
+func TestManagerUsageAccountingDoesNotWaitForDebouncedPersistence(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	m.flushDelay = 0
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	m.writeState = func(string, []byte) error {
+		close(entered)
+		<-release
+		return nil
+	}
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan struct{})
+	go func() {
+		lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("usage observer blocked on quota-state persistence")
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("background flusher did not run")
+	}
+	close(release)
+}
+
+func TestManagerDebouncesUsageWritesAndFlushesOnClose(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	m.flushDelay = 20 * time.Millisecond
+	writes := make(chan struct{}, 4)
+	m.writeState = func(string, []byte) error {
+		writes <- struct{}{}
+		return nil
+	}
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
+	}
+	select {
+	case <-writes:
+	case <-time.After(time.Second):
+		t.Fatal("debounced state write did not run")
+	}
+	select {
+	case <-writes:
+		t.Fatal("one usage burst caused multiple state writes")
+	case <-time.After(60 * time.Millisecond):
+	}
+
+	second, err := m.Begin("caller-b", "model-b", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 1}})
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writes:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not flush pending state")
+	}
+}
+
+func TestManagerRolloverFlushesResetImmediately(t *testing.T) {
+	m := New(testPolicies(t, 100, 1), "")
+	m.flushDelay = time.Hour
+	current := time.Date(2026, 11, 27, 23, 59, 59, 0, time.UTC)
+	m.now = func() time.Time { return current }
+	writes := make(chan diskState, 2)
+	m.writeState = func(_ string, data []byte) error {
+		var state diskState
+		if err := json.Unmarshal(data, &state); err != nil {
+			return err
+		}
+		writes <- state
+		return nil
+	}
+	lease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 5}})
+	lease.Finish(500)
+	if err := m.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	<-writes
+
+	current = current.Add(time.Second)
+	resetLease, err := m.Begin("caller-a", "model-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetLease.Finish(500)
+	select {
+	case state := <-writes:
+		if state.Day != "2026-11-28" || state.Callers["caller-a"].Used != 0 {
+			t.Fatalf("rollover state = %#v", state)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rollover reset was left for the normal debounce interval")
+	}
 }
 
 func TestManagerChargesFailedProviderRecords(t *testing.T) {

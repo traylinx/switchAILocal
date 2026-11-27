@@ -46,6 +46,12 @@ type SynchronousObserver interface {
 	ObserveUsage(ctx context.Context, record Record)
 }
 
+// ModelAuthorizer rechecks the concrete model selected after request hooks and
+// routing, immediately before executor dispatch.
+type ModelAuthorizer interface {
+	AuthorizeModel(model string) error
+}
+
 type synchronousObserverContextKey struct{}
 
 // WithSynchronousObserver associates a request-scoped usage observer with ctx.
@@ -71,6 +77,19 @@ func PropagateSynchronousObserver(dst, src context.Context) context.Context {
 	}
 	observer, _ := src.Value(synchronousObserverContextKey{}).(SynchronousObserver)
 	return WithSynchronousObserver(dst, observer)
+}
+
+// AuthorizeModel asks the request-scoped policy observer to approve the final
+// concrete model. Requests without a policy observer retain legacy behavior.
+func AuthorizeModel(ctx context.Context, model string) error {
+	if ctx == nil {
+		return nil
+	}
+	observer, _ := ctx.Value(synchronousObserverContextKey{}).(ModelAuthorizer)
+	if observer == nil {
+		return nil
+	}
+	return observer.AuthorizeModel(model)
 }
 
 type queueItem struct {

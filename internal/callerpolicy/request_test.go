@@ -103,6 +103,59 @@ func TestInspectRequestAcceptsMatchingModelSources(t *testing.T) {
 	}
 }
 
+func TestInspectRequestUsesHandlerRawBodySemanticsRegardlessOfContentType(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{"text plain json", "text/plain", `{"model":"forbidden","messages":[]}`},
+		{"json with trailing comma", "application/json", `{"model":"forbidden","messages":[],}`},
+		{"json with trailing garbage", "application/json", `{"model":"forbidden"}garbage`},
+		{"multipart label over json body", "multipart/form-data; boundary=unused", `{"model":"forbidden"}`},
+		{"urlencoded form", "application/x-www-form-urlencoded", `model=forbidden&prompt=private`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			_, _, err := InspectRequest(req)
+			var decision *DecisionError
+			if !errors.As(err, &decision) || decision.Code != CodeModelConflict {
+				t.Fatalf("error = %v, want %s", err, CodeModelConflict)
+			}
+		})
+	}
+}
+
+func TestInspectRequestFailsClosedWhenBodyModelCannotBeDetermined(t *testing.T) {
+	for _, tt := range []struct {
+		name, contentType, body string
+	}{
+		{"malformed json", "application/json", `{"messages":[]`},
+		{"valid json without model", "application/json", `{"messages":[]}`},
+		{"opaque text", "text/plain", `not a model-bearing request`},
+		{"urlencoded without model", "application/x-www-form-urlencoded", `prompt=private`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			if _, _, err := InspectRequest(req); err == nil {
+				t.Fatal("query-only model accepted when inference body model was indeterminate")
+			}
+		})
+	}
+}
+
+func TestInspectRequestAcceptsRawBodyModelWithMisleadingContentType(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"model-a"}trailing`))
+	req.Header.Set("Content-Type", "text/plain")
+	model, _, err := InspectRequest(req)
+	if err != nil || model != "model-a" {
+		t.Fatalf("model=%q err=%v", model, err)
+	}
+}
+
 func TestInspectRequestRejectsBodyOverMemoryLimit(t *testing.T) {
 	body := strings.NewReader(strings.Repeat("x", (16<<20)+1))
 	req := httptest.NewRequest("POST", "/v1/chat/completions", body)

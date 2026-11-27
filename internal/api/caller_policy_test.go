@@ -6,12 +6,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -103,10 +104,10 @@ func TestCallerPolicyWrongModelAndDailyCapAreCallerLocal(t *testing.T) {
 func TestCallerPolicyConcurrencyOverflowFailsImmediately(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	var once sync.Once
+	var callerAEntries atomic.Int32
 	engine, _ := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
-		if c.GetString("apiKey") == "caller-a" {
-			once.Do(func() { close(entered) })
+		if c.GetString("apiKey") == "caller-a" && callerAEntries.Add(1) == 1 {
+			close(entered)
 			<-release
 		}
 		c.Status(http.StatusOK)
@@ -135,14 +136,18 @@ func TestCallerPolicyRejectsModelSelectorBypassesBeforeHandler(t *testing.T) {
 		called++
 		c.Status(http.StatusOK)
 	})
-	for _, tc := range []struct{ name, target, body string }{
-		{"query body conflict", "/v1/chat/completions?model=model-a", `{"model":"forbidden"}`},
-		{"duplicate body model", "/v1/chat/completions", `{"model":"forbidden","model":"model-a"}`},
+	for _, tc := range []struct{ name, target, contentType, body string }{
+		{"query body conflict", "/v1/chat/completions?model=model-a", "application/json", `{"model":"forbidden"}`},
+		{"duplicate body model", "/v1/chat/completions", "application/json", `{"model":"forbidden","model":"model-a"}`},
+		{"text body conflict", "/v1/chat/completions?model=model-a", "text/plain", `{"model":"forbidden"}`},
+		{"malformed json conflict", "/v1/chat/completions?model=model-a", "application/json", `{"model":"forbidden",}`},
+		{"multipart label conflict", "/v1/chat/completions?model=model-a", "multipart/form-data; boundary=unused", `{"model":"forbidden"}`},
+		{"form body conflict", "/v1/chat/completions?model=model-a", "application/x-www-form-urlencoded", `model=forbidden`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
 			req.Header.Set("Authorization", "Bearer key-a-private")
-			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Type", tc.contentType)
 			recorder := httptest.NewRecorder()
 			engine.ServeHTTP(recorder, req)
 			if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(callerpolicy.CodeModelConflict)) {
@@ -152,6 +157,48 @@ func TestCallerPolicyRejectsModelSelectorBypassesBeforeHandler(t *testing.T) {
 	}
 	if called != 0 {
 		t.Fatalf("bypass requests reached handler %d times", called)
+	}
+}
+
+func TestCallerPolicyRejectsQueryOnlyModelWhenBodyCannotBeParsed(t *testing.T) {
+	engine, _ := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
+		t.Fatal("uninspectable request reached handler")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions?model=model-a", strings.NewReader(`not-json`))
+	req.Header.Set("Authorization", "Bearer key-a-private")
+	req.Header.Set("Content-Type", "text/plain")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "caller_policy_request_invalid") {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCallerPolicyChargesLateStreamUsageAfterClientCancel(t *testing.T) {
+	var executorCtx context.Context
+	engine, manager := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
+		executorCtx = c.Request.Context()
+		_, _ = c.Writer.Write([]byte("sixteen-bytes-out"))
+	})
+	requestCtx, cancel := context.WithCancel(context.Background())
+	body := `{"model":"model-a","messages":[{"role":"user","content":"x"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)).WithContext(requestCtx)
+	req.Header.Set("Authorization", "Bearer key-a-private")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	cancel()
+	if recorder.Code != http.StatusOK || executorCtx == nil {
+		t.Fatalf("response = %d executor context=%v", recorder.Code, executorCtx)
+	}
+	done := make(chan struct{})
+	go func() {
+		coreusage.PublishRecord(executorCtx, coreusage.Record{Detail: coreusage.Detail{TotalTokens: 12}})
+		close(done)
+	}()
+	<-done
+	if snapshot := manager.CurrentSnapshot("caller-a", "model-a"); snapshot.TokensUsed != 12 {
+		t.Fatalf("late stream usage = %d, want 12", snapshot.TokensUsed)
 	}
 }
 

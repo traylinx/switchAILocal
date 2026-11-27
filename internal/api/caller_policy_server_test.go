@@ -97,3 +97,38 @@ func TestApplyAccessConfigRebuildsCallerMappingOnIDRename(t *testing.T) {
 		t.Fatalf("renamed caller response = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestAttachWebsocketRouteForcesPolicyAuthWhenWSAuthDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	cfg := &proxyconfig.Config{
+		SDKConfig: sdkconfig.SDKConfig{CallerPolicies: policyConfig(filepath.Join(tmp, "usage.json"), "service-a", "private-key")},
+		AuthDir:   filepath.Join(tmp, "auth"),
+		Debug:     true,
+	}
+	configaccess.Register()
+	server := NewServer(cfg, auth.NewManager(nil, nil, nil), sdkaccess.NewManager(), filepath.Join(tmp, "config.yaml"), nil)
+	handled := false
+	server.AttachWebsocketRoute("/v1/ws", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handled = true
+		w.WriteHeader(http.StatusSwitchingProtocols)
+	}))
+
+	unauthenticated := httptest.NewRequest(http.MethodGet, "/v1/ws", nil)
+	unauthenticatedRecorder := httptest.NewRecorder()
+	server.engine.ServeHTTP(unauthenticatedRecorder, unauthenticated)
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated websocket = %d %s", unauthenticatedRecorder.Code, unauthenticatedRecorder.Body.String())
+	}
+
+	named := httptest.NewRequest(http.MethodGet, "/v1/ws", nil)
+	named.Header.Set("Authorization", "Bearer private-key")
+	namedRecorder := httptest.NewRecorder()
+	server.engine.ServeHTTP(namedRecorder, named)
+	if namedRecorder.Code != http.StatusForbidden || !strings.Contains(namedRecorder.Body.String(), string(callerpolicy.CodeRouteDenied)) {
+		t.Fatalf("named websocket = %d %s", namedRecorder.Code, namedRecorder.Body.String())
+	}
+	if handled {
+		t.Fatal("policy-active websocket reached upgrade handler")
+	}
+}
