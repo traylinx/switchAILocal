@@ -145,3 +145,60 @@ func TestProvider_Authenticate(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderAddsCallerIDWithoutReplacingSecretPrincipal(t *testing.T) {
+	root := &sdkconfig.SDKConfig{CallerPolicies: sdkconfig.CallerPoliciesConfig{Callers: []sdkconfig.CallerPolicyConfig{{
+		ID: "agent-1", APIKey: "secret-123", AllowedModels: []string{"chat-model"}, MaxConcurrency: 1, DailyTokenCap: 100,
+	}}}}
+	providerCfg := sdkconfig.MakeInlineAPIKeyProvider(root.InboundAPIKeys())
+	prov, err := newProvider(providerCfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer secret-123")
+	result, err := prov.Authenticate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Principal != "secret-123" {
+		t.Fatalf("authentication principal changed: %q", result.Principal)
+	}
+	if result.Metadata["caller_id"] != "agent-1" {
+		t.Fatalf("caller id metadata = %q", result.Metadata["caller_id"])
+	}
+}
+
+func TestProviderMapsEverySupportedCredentialPathToCallerPolicy(t *testing.T) {
+	root := &sdkconfig.SDKConfig{CallerPolicies: sdkconfig.CallerPoliciesConfig{Callers: []sdkconfig.CallerPolicyConfig{{
+		ID: "service-a", APIKey: "secret-123", AllowedModels: []string{"chat-model"}, MaxConcurrency: 1, DailyTokenCap: 100,
+	}}}}
+	providerCfg := sdkconfig.MakeInlineAPIKeyProvider(root.InboundAPIKeys())
+	prov, err := newProvider(providerCfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		header string
+		value  string
+		query  string
+	}{
+		{"authorization", "Authorization", "Bearer secret-123", ""},
+		{"google header", "X-Goog-Api-Key", "secret-123", ""},
+		{"anthropic header", "X-Api-Key", "secret-123", ""},
+		{"query key", "", "", "key=secret-123"},
+		{"query auth token", "", "", "auth_token=secret-123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions?"+tc.query, nil)
+			if tc.header != "" {
+				req.Header.Set(tc.header, tc.value)
+			}
+			result, err := prov.Authenticate(context.Background(), req)
+			if err != nil || result.Metadata["caller_id"] != "service-a" {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+		})
+	}
+}

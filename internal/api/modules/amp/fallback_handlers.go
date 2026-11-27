@@ -7,6 +7,7 @@ package amp
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"net/http/httputil"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/traylinx/switchAILocal/internal/util"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 )
 
 // AmpRouteType represents the type of routing decision made for an Amp request
@@ -225,6 +227,19 @@ func (fh *FallbackHandler) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc 
 		if len(providers) == 0 {
 			proxy := fh.getProxy()
 			if proxy != nil {
+				if err := coreusage.AuthorizeModel(c.Request.Context(), resolvedModel); err != nil {
+					status := http.StatusForbidden
+					if statusErr, ok := err.(interface{ StatusCode() int }); ok && statusErr.StatusCode() > 0 {
+						status = statusErr.StatusCode()
+					}
+					log.WithFields(log.Fields{"caller_id": c.GetString("apiKey"), "model": "<denied>", "status": err.Error()}).Warn("caller policy refused Amp proxy model at dispatch")
+					c.AbortWithStatusJSON(status, gin.H{"error": gin.H{
+						"message": err.Error(),
+						"type":    "caller_policy_error",
+						"code":    err.Error(),
+					}})
+					return
+				}
 				// Log: Forwarding to ampcode.com (uses Amp credits)
 				logAmpRouting(RouteTypeAmpCredits, modelName, "", "", requestPath)
 

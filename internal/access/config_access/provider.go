@@ -25,20 +25,28 @@ func Register() {
 
 type provider struct {
 	name string
-	keys map[string]struct{}
+	keys map[string]string
 }
 
-func newProvider(cfg *sdkconfig.AccessProvider, _ *sdkconfig.SDKConfig) (sdkaccess.Provider, error) {
+func newProvider(cfg *sdkconfig.AccessProvider, root *sdkconfig.SDKConfig) (sdkaccess.Provider, error) {
 	name := cfg.Name
 	if name == "" {
 		name = sdkconfig.DefaultAccessProviderName
 	}
-	keys := make(map[string]struct{}, len(cfg.APIKeys))
+	callerIDs := make(map[string]string)
+	if root != nil {
+		for _, caller := range root.CallerPolicies.Callers {
+			if caller.APIKey != "" && caller.ID != "" {
+				callerIDs[caller.APIKey] = caller.ID
+			}
+		}
+	}
+	keys := make(map[string]string, len(cfg.APIKeys))
 	for _, key := range cfg.APIKeys {
 		if key == "" {
 			continue
 		}
-		keys[key] = struct{}{}
+		keys[key] = callerIDs[key]
 	}
 	return &provider{name: name, keys: keys}, nil
 }
@@ -92,11 +100,15 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 		}
 		// Strict check when keys are configured
 		if len(p.keys) > 0 {
-			if _, ok := p.keys[candidate.value]; ok {
+			if callerID, ok := p.keys[candidate.value]; ok {
+				metadata := map[string]string{"source": candidate.source}
+				if callerID != "" {
+					metadata["caller_id"] = callerID
+				}
 				return &sdkaccess.Result{
 					Provider:  p.Identifier(),
 					Principal: candidate.value,
-					Metadata:  map[string]string{"source": candidate.source},
+					Metadata:  metadata,
 				}, nil
 			}
 		}

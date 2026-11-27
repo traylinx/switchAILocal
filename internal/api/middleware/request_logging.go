@@ -22,11 +22,20 @@ import (
 // It captures detailed information about the request and response, including headers and body,
 // and uses the provided RequestLogger to record this data. When logging is disabled in the
 // logger, it still captures data so that upstream errors can be persisted.
-func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
+func RequestLoggingMiddleware(logger logging.RequestLogger, suppressors ...func() bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if logger == nil {
 			c.Next()
 			return
+		}
+		for _, suppress := range suppressors {
+			if suppress != nil && suppress() {
+				// Named caller policy mode uses only the structured, non-secret
+				// accounting log. Detailed request logging captures headers and
+				// bodies, so it must be bypassed before either is read.
+				c.Next()
+				return
+			}
 		}
 
 		if c.Request.Method == http.MethodGet {

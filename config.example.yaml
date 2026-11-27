@@ -142,6 +142,28 @@ auth-dir: "~/.switchailocal"
 api-keys:
   - "sk-test-123"
 
+# Optional least-privilege policies for named inbound callers. Each key maps to
+# one stable caller ID; keys and prompts are never written to policy logs or the
+# quota-state file. The state-file path is relative to this config file.
+#
+# Concurrency overflow fails immediately with HTTP 429 and Retry-After: 1.
+# Daily token windows reset at 00:00 UTC. Provider-reported usage is authoritative,
+# including late stream usage; otherwise request and response bytes are estimated.
+# Both requested aliases and concrete models selected by routing must be allowed.
+# caller-policies:
+#   state-file: "state/caller-usage.json"
+#   callers:
+#     - id: "service-a"
+#       api-key: "<service-a-inbound-key>"
+#       allowed-models: ["chat-model"]
+#       max-concurrency: 2
+#       daily-token-cap: 100000
+#     - id: "service-b"
+#       api-key: "<service-b-inbound-key>"
+#       allowed-models: ["embedding-model"]
+#       max-concurrency: 1
+#       daily-token-cap: 500000
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: true
 

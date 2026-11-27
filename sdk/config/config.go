@@ -13,6 +13,8 @@ import internalconfig "github.com/traylinx/switchAILocal/internal/config"
 type SDKConfig = internalconfig.SDKConfig
 type AccessConfig = internalconfig.AccessConfig
 type AccessProvider = internalconfig.AccessProvider
+type CallerPoliciesConfig = internalconfig.CallerPoliciesConfig
+type CallerPolicyConfig = internalconfig.CallerPolicyConfig
 
 type Config = internalconfig.Config
 

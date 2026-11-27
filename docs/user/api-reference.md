@@ -5,10 +5,49 @@ This page lists every HTTP route switchAILocal registers (release 0.6.x). Full r
 ## Basics
 
 - **Base URL:** `http://localhost:18080` (port from `config.yaml`; the default `host: ""` binds all interfaces).
-- **Client auth:** keys from top-level `api-keys:` in `config.yaml`, sent as `Authorization: Bearer <key>` (also accepted: `X-Api-Key`, `X-Goog-Api-Key`, `?key=`, `?auth_token=`). **An empty `api-keys` list means every request is accepted.** See [`api/authentication.mdx`](../../docs-site/api/authentication.mdx).
+- **Client auth:** keys from top-level `api-keys:` or `caller-policies.callers[].api-key` in `config.yaml`, sent as `Authorization: Bearer <key>` (also accepted: `X-Api-Key`, `X-Goog-Api-Key`, `?key=`, `?auth_token=`). Requests are open only when both key sources are empty. See [`api/authentication.mdx`](../../docs-site/api/authentication.mdx).
 - **Management auth:** `remote-management.secret-key` or `MANAGEMENT_PASSWORD`, sent as `Authorization: Bearer <key>` or `X-Management-Key`. Client keys do not work here. Never expose `/v0/management` publicly.
 - **Errors:** `{"error":{"message","type","code"}}`. The auth middleware returns `401 {"error":"Missing API key"}` or `{"error":"Invalid API key"}`.
 - **Streaming:** SSE (`text/event-stream`). Upstream failures before the first chunk return a JSON error with the real status.
+
+### Named caller policies
+
+`caller-policies` binds each inbound key to a non-secret caller ID plus an exact
+model allowlist, maximum concurrent request count, and daily token cap. Invalid
+or duplicate caller definitions prevent startup. The gateway logs caller IDs,
+models, and counters, but never inbound keys or prompt bodies; its JSON state
+file contains only the UTC day and per-ID counters and is written with mode
+`0600`. Detailed request/error-body logging is suppressed while any named caller
+policy is active, even if `request-log` is enabled, so headers and prompt bodies
+cannot enter those logs.
+
+Concurrency overflow fails immediately (it is not queued) with HTTP `429`, code
+`caller_concurrency_exceeded`, and `Retry-After: 1`. A disallowed model returns
+`403`/`caller_model_not_allowed`; omitting a model from an inference request
+returns `400`/`caller_model_required`; an exhausted daily allowance returns
+`429`/`caller_daily_token_cap_exceeded` and affects only that caller. Daily
+windows reset at `00:00 UTC`. Provider-reported total tokens are charged even
+when they arrive after an HTTP stream finishes; otherwise a byte-based estimate
+from request text plus response output is charged. Counter writes are debounced
+off the executor path and flushed on UTC rollover and shutdown. A
+request whose estimated input plus declared output limit (`max_tokens`,
+`max_completion_tokens`, or Gemini `maxOutputTokens`) would exceed the remaining
+allowance is refused before dispatch. Provider-reported output can still cross the threshold; the
+remaining overshoot is bounded by the combined provider-reported output of the
+requests already in flight. Read-only catalog requests do not take a concurrency
+lease or consume the daily allowance. A missing, corrupt, or
+temporarily unwritable quota state returns `503`/`caller_quota_state_unavailable`.
+Conflicting query, path, form, or body model selectors return
+`403`/`caller_model_conflict`. Inference handlers and policy inspection use the
+same raw-body model semantics regardless of `Content-Type`; a query selector is
+not sufficient for a body-model route. Named-caller inference bodies other than
+multipart or URL-encoded forms must be exactly one valid JSON value and are
+limited to 16 MiB for policy inspection; larger bodies return `413`. Models selected later by hooks, automatic
+routing, virtual aliases, or fallback must also appear in the caller allowlist.
+When any named policy is configured, WebSocket routes require authentication
+even when legacy `ws-auth` is disabled; named callers are then refused because
+WebSocket messages cannot be policed per model. New authenticated routes require an explicit allowed model unless
+classified as a read-only model catalog.
 
 ## Inference and data routes (client API key)
 

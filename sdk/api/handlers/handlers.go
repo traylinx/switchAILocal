@@ -33,6 +33,7 @@ import (
 	"github.com/traylinx/switchAILocal/sdk/config"
 	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
 	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 	sdktranslator "github.com/traylinx/switchAILocal/sdk/translator"
 )
 
@@ -83,6 +84,16 @@ func BuildErrorResponseBody(status int, errText string) []byte {
 	trimmed := strings.TrimSpace(errText)
 	if trimmed != "" && json.Valid([]byte(trimmed)) {
 		return []byte(trimmed)
+	}
+	if strings.HasPrefix(trimmed, "caller_") {
+		payload, err := json.Marshal(ErrorResponse{Error: ErrorDetail{
+			Message: trimmed,
+			Type:    "caller_policy_error",
+			Code:    trimmed,
+		}})
+		if err == nil {
+			return payload
+		}
 	}
 
 	errType := "invalid_request_error"
@@ -300,6 +311,14 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	parentCtx = coreusage.PropagateSynchronousObserver(parentCtx, requestCtx)
+	if c != nil {
+		if rawMetadata, exists := c.Get("accessMetadata"); exists {
+			if metadata, ok := rawMetadata.(map[string]string); ok && strings.TrimSpace(metadata["caller_id"]) != "" {
+				parentCtx = coreusage.WithModelAuthorizationRequired(parentCtx)
+			}
+		}
+	}
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
 		if requestID := logging.GetRequestID(requestCtx); requestID != "" {
@@ -321,18 +340,18 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	}
 
 	// Create a cancel function that also captures the context's error.
-	cancelCtx, cancel := context.WithCancel(newCtx)
+	cancelBaseCtx, cancel := context.WithCancel(newCtx)
 
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
 			select {
 			case <-requestCtx.Done():
 				cancel()
-			case <-cancelCtx.Done():
+			case <-cancelBaseCtx.Done():
 			}
 		}()
 	}
-	cancelCtx = context.WithValue(cancelCtx, ginContextKey, c)
+	cancelCtx := context.WithValue(cancelBaseCtx, ginContextKey, c)
 	cancelCtx = context.WithValue(cancelCtx, handlerContextKey, handler)
 	return cancelCtx, func(params ...interface{}) {
 		if h.Cfg.RequestLog && len(params) == 1 {
@@ -1152,7 +1171,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 	if len(providers) == 0 {
 		return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", normalizedModel)}
 	}
-
 	return providers, normalizedModel, metadata, body, nil
 }
 

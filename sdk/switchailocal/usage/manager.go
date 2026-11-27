@@ -6,6 +6,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -37,6 +38,90 @@ type Detail struct {
 // Plugin consumes usage records emitted by the proxy runtime.
 type Plugin interface {
 	HandleUsage(ctx context.Context, record Record)
+}
+
+// SynchronousObserver receives usage on the request goroutine before the record
+// enters the asynchronous plugin queue. It is intended for request-scoped quota
+// accounting; implementations must return quickly and must not panic.
+type SynchronousObserver interface {
+	ObserveUsage(ctx context.Context, record Record)
+}
+
+// ModelAuthorizer rechecks the concrete model selected after request hooks and
+// routing, immediately before executor dispatch.
+type ModelAuthorizer interface {
+	AuthorizeModel(model string) error
+}
+
+type synchronousObserverContextKey struct{}
+type modelAuthorizationRequiredContextKey struct{}
+
+type modelAuthorizerUnavailableError struct{}
+
+func (modelAuthorizerUnavailableError) Error() string   { return "caller_quota_state_unavailable" }
+func (modelAuthorizerUnavailableError) StatusCode() int { return 503 }
+
+// ErrModelAuthorizerUnavailable means a named caller reached dispatch without
+// its policy authorizer. Dispatch must fail closed rather than silently taking
+// the legacy unpoliced path.
+var ErrModelAuthorizerUnavailable error = modelAuthorizerUnavailableError{}
+
+// WithSynchronousObserver associates a request-scoped usage observer with ctx.
+func WithSynchronousObserver(ctx context.Context, observer SynchronousObserver) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, synchronousObserverContextKey{}, observer)
+}
+
+// WithModelAuthorizationRequired marks a named-caller execution context. The
+// marker is separate from the observer so accidental observer loss is visible
+// and fails closed at dispatch.
+func WithModelAuthorizationRequired(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, modelAuthorizationRequiredContextKey{}, true)
+}
+
+// PropagateSynchronousObserver copies the request-scoped observer from src to
+// dst. API handlers use it when they derive executor contexts from a background
+// parent while retaining the request's cancellation separately.
+func PropagateSynchronousObserver(dst, src context.Context) context.Context {
+	if dst == nil {
+		dst = context.Background()
+	}
+	if src == nil {
+		return dst
+	}
+	if required, _ := src.Value(modelAuthorizationRequiredContextKey{}).(bool); required {
+		dst = WithModelAuthorizationRequired(dst)
+	}
+	observer, _ := src.Value(synchronousObserverContextKey{}).(SynchronousObserver)
+	return WithSynchronousObserver(dst, observer)
+}
+
+// AuthorizeModel asks the request-scoped policy observer to approve the final
+// concrete model. Requests without a policy observer retain legacy behavior.
+func AuthorizeModel(ctx context.Context, model string) error {
+	if ctx == nil {
+		return nil
+	}
+	observer, _ := ctx.Value(synchronousObserverContextKey{}).(ModelAuthorizer)
+	if observer == nil {
+		if required, _ := ctx.Value(modelAuthorizationRequiredContextKey{}).(bool); required {
+			return ErrModelAuthorizerUnavailable
+		}
+		return nil
+	}
+	err := observer.AuthorizeModel(model)
+	if errors.Is(err, ErrModelAuthorizerUnavailable) {
+		return ErrModelAuthorizerUnavailable
+	}
+	return err
 }
 
 type queueItem struct {
@@ -175,8 +260,24 @@ func DefaultManager() *Manager { return defaultManager }
 // RegisterPlugin registers a plugin on the default manager.
 func RegisterPlugin(plugin Plugin) { DefaultManager().Register(plugin) }
 
-// PublishRecord publishes a record using the default manager.
-func PublishRecord(ctx context.Context, record Record) { DefaultManager().Publish(ctx, record) }
+// PublishRecord publishes a record using the default manager. A request-scoped
+// synchronous observer, when present, is invoked first so enforcement does not
+// race the asynchronous plugin dispatcher.
+func PublishRecord(ctx context.Context, record Record) {
+	if ctx != nil {
+		if observer, ok := ctx.Value(synchronousObserverContextKey{}).(SynchronousObserver); ok && observer != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("usage: synchronous observer panic recovered: %v", r)
+					}
+				}()
+				observer.ObserveUsage(ctx, record)
+			}()
+		}
+	}
+	DefaultManager().Publish(ctx, record)
+}
 
 // StartDefault starts the default manager's dispatcher.
 func StartDefault(ctx context.Context) { DefaultManager().Start(ctx) }

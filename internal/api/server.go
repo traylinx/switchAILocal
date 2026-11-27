@@ -32,6 +32,7 @@ import (
 	ampmodule "github.com/traylinx/switchAILocal/internal/api/modules/amp"
 	"github.com/traylinx/switchAILocal/internal/autoroute"
 	"github.com/traylinx/switchAILocal/internal/autoroute/probes"
+	"github.com/traylinx/switchAILocal/internal/callerpolicy"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/intelligence"
 	"github.com/traylinx/switchAILocal/internal/intelligence/skills"
@@ -52,6 +53,7 @@ import (
 	"github.com/traylinx/switchAILocal/sdk/api/handlers/notifications"
 	"github.com/traylinx/switchAILocal/sdk/api/handlers/openai"
 	"github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -187,6 +189,9 @@ type Server struct {
 	// accessManager handles request authentication providers.
 	accessManager *sdkaccess.Manager
 
+	// callerPolicies enforces named caller model and quota boundaries.
+	callerPolicies *callerpolicy.Manager
+
 	// requestLogger is the request logger instance for dynamic configuration updates.
 	requestLogger logging.RequestLogger
 	loggerToggle  func(bool)
@@ -308,6 +313,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	if cfg == nil || !cfg.Debug {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	callerPolicies := callerpolicy.New(config.CallerPoliciesConfig{}, configFilePath)
+	if cfg != nil {
+		callerPolicies.Apply(cfg.CallerPolicies)
+	}
 
 	// Create gin engine
 	engine := gin.New()
@@ -361,7 +370,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		requestLogger = optionState.requestLoggerFactory(cfg, configFilePath)
 	}
 	if requestLogger != nil {
-		engine.Use(middleware.RequestLoggingMiddleware(requestLogger))
+		engine.Use(middleware.RequestLoggingMiddleware(requestLogger, callerPolicies.Enabled))
 		if setter, ok := requestLogger.(interface{ SetEnabled(bool) }); ok {
 			toggle = setter.SetEnabled
 		}
@@ -504,6 +513,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager, luaEngine, pipelineIntegrator, autoResolver, circuitBreaker),
 		cfg:                 cfg,
 		accessManager:       accessManager,
+		callerPolicies:      callerPolicies,
 		requestLogger:       requestLogger,
 		loggerToggle:        toggle,
 		eventEmitter:        eventEmitter,
@@ -553,12 +563,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.setupRoutes()
 
 	// Register Amp module using V2 interface with Context
-	s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager))
+	s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager, callerPolicies))
 	ctx := modules.Context{
 		Engine:         engine,
 		BaseHandler:    s.handlers,
 		Config:         cfg,
-		AuthMiddleware: AuthMiddleware(accessManager),
+		AuthMiddleware: AuthMiddleware(accessManager, callerPolicies),
 	}
 	if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
 		log.Errorf("Failed to register Amp module: %v", err)
@@ -614,7 +624,7 @@ func (s *Server) setupRoutes() {
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(AuthMiddleware(s.accessManager, s.callerPolicies))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -645,7 +655,7 @@ func (s *Server) setupRoutes() {
 	// legacy /v1 image response shape while giving third-party OpenAI clients a
 	// response with data[0].url / data[0].b64_json.
 	openaiV1 := s.engine.Group("/openai/v1")
-	openaiV1.Use(AuthMiddleware(s.accessManager))
+	openaiV1.Use(AuthMiddleware(s.accessManager, s.callerPolicies))
 	{
 		openaiV1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		openaiV1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -657,7 +667,7 @@ func (s *Server) setupRoutes() {
 
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
-	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(AuthMiddleware(s.accessManager, s.callerPolicies))
 	{
 		v1beta.GET("/models", geminiHandlers.GeminiModels)
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -779,11 +789,15 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	s.wsRoutes[trimmed] = struct{}{}
 	s.wsRouteMu.Unlock()
 
-	authMiddleware := AuthMiddleware(s.accessManager)
+	authMiddleware := AuthMiddleware(s.accessManager, s.callerPolicies)
 	conditionalAuth := func(c *gin.Context) {
-		if !s.wsAuthEnabled.Load() {
+		policiesEnabled := s.callerPolicies != nil && s.callerPolicies.Enabled()
+		if !s.wsAuthEnabled.Load() && !policiesEnabled {
 			c.Next()
 			return
+		}
+		if policiesEnabled {
+			c.Set("callerPolicyWebsocket", true)
 		}
 		authMiddleware(c)
 	}
@@ -1245,8 +1259,15 @@ func (s *Server) Start() error {
 //
 // Returns:
 //   - error: An error if the server fails to stop
-func (s *Server) Stop(ctx context.Context) error {
+func (s *Server) Stop(ctx context.Context) (stopErr error) {
 	log.Debug("Stopping API server...")
+	if s.callerPolicies != nil {
+		defer func() {
+			if err := s.callerPolicies.Close(); err != nil && stopErr == nil {
+				stopErr = fmt.Errorf("flush caller quota state: %w", err)
+			}
+		}()
+	}
 
 	if s.rateLimiter != nil {
 		defer s.rateLimiter.Close()
@@ -1289,11 +1310,23 @@ func corsMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) applyAccessConfig(oldCfg, newCfg *config.Config) {
-	if s == nil || s.accessManager == nil || newCfg == nil {
+	if s == nil || newCfg == nil {
 		return
 	}
-	if _, err := access.ApplyAccessProviders(s.accessManager, oldCfg, newCfg); err != nil {
-		return
+	// Authentication mappings and policy definitions form one logical update.
+	// Refuse named callers during the short reconciliation window so a key swap
+	// can never run under the wrong caller's allowlist or quota.
+	if s.callerPolicies != nil {
+		s.callerPolicies.SetReloading(true)
+		defer s.callerPolicies.SetReloading(false)
+	}
+	if s.accessManager != nil {
+		if _, err := access.ApplyAccessProviders(s.accessManager, oldCfg, newCfg); err != nil {
+			return
+		}
+	}
+	if s.callerPolicies != nil {
+		s.callerPolicies.Apply(newCfg.CallerPolicies)
 	}
 }
 
@@ -1462,7 +1495,7 @@ func shouldPerKeyRateLimit(result *sdkaccess.Result) bool {
 // AuthMiddleware returns a Gin middleware handler that authenticates requests
 // using the configured authentication providers. When no providers are available,
 // it allows all requests (legacy behaviour).
-func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
+func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if manager == nil {
 			hasher := sha256.New()
@@ -1475,19 +1508,103 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 		result, err := manager.Authenticate(c.Request.Context(), c.Request)
 		if err == nil {
 			if result != nil {
-				c.Set("apiKey", result.Principal)
+				callerID := ""
+				if result.Metadata != nil {
+					callerID = result.Metadata["caller_id"]
+				}
+				accountingIdentity := result.Principal
+				if callerID != "" {
+					accountingIdentity = callerID
+				}
+				c.Set("apiKey", accountingIdentity)
 				c.Set("accessProvider", result.Provider)
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
 
 				hasher := sha256.New()
-				hasher.Write([]byte(result.Principal))
+				hasher.Write([]byte(accountingIdentity))
 				keyHash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 				c.Set("api_key_hash", keyHash)
 				if shouldPerKeyRateLimit(result) {
 					ratelimit.SetPrincipal(c, result.Provider+":"+keyHash)
 					if !ratelimit.CheckPerKey(c) {
+						return
+					}
+				}
+
+				if callerID != "" {
+					c.Request = c.Request.WithContext(coreusage.WithModelAuthorizationRequired(c.Request.Context()))
+					if policyManager == nil || !policyManager.Enabled() {
+						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeStateUnavailable})
+						return
+					}
+					if c.GetBool("callerPolicyWebsocket") {
+						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeRouteDenied})
+						return
+					}
+					model, estimate, outputReservation, inspectErr := callerpolicy.InspectRequest(c.Request)
+					if inspectErr != nil {
+						var decision *callerpolicy.DecisionError
+						if errors.As(inspectErr, &decision) {
+							writeCallerPolicyError(c, policyManager, callerID, model, decision)
+							return
+						}
+						status := http.StatusBadRequest
+						var tooLarge *http.MaxBytesError
+						if errors.As(inspectErr, &tooLarge) {
+							status = http.StatusRequestEntityTooLarge
+						}
+						log.WithFields(log.Fields{"caller_id": callerID, "status": "request_unreadable"}).Warn("caller policy refused request")
+						c.AbortWithStatusJSON(status, gin.H{"error": gin.H{
+							"message": "Request body could not be inspected for caller policy",
+							"type":    "caller_policy_error",
+							"code":    "caller_policy_request_invalid",
+						}})
+						return
+					}
+					if model == "" && callerpolicy.RequiresExplicitModel(c.Request) {
+						writeCallerPolicyError(c, policyManager, callerID, model, &callerpolicy.DecisionError{Code: callerpolicy.CodeModelRequired})
+						return
+					}
+					if model == "" && !callerpolicy.RequiresExplicitModel(c.Request) {
+						c.Next()
+						return
+					}
+					lease, policyErr := policyManager.Begin(callerID, model, estimate, outputReservation)
+					if policyErr != nil {
+						writeCallerPolicyError(c, policyManager, callerID, model, policyErr)
+						return
+					}
+					if lease != nil {
+						c.Request = c.Request.WithContext(coreusage.WithSynchronousObserver(c.Request.Context(), lease))
+						completed := false
+						defer func() {
+							status := c.Writer.Status()
+							if !completed {
+								status = http.StatusInternalServerError
+							}
+							responseBytes := int64(c.Writer.Size())
+							if responseBytes < 0 {
+								responseBytes = 0
+							}
+							snapshot := lease.Finish(status, responseBytes)
+							logModel := snapshot.Model
+							if policyManager.AuthorizeModel(snapshot.CallerID, snapshot.Model) != nil {
+								logModel = "<denied>"
+							}
+							log.WithFields(log.Fields{
+								"caller_id":         snapshot.CallerID,
+								"model":             logModel,
+								"active":            snapshot.Active,
+								"daily_tokens_used": snapshot.TokensUsed,
+								"daily_token_cap":   snapshot.DailyCap,
+								"usage_reported":    snapshot.UsageReported,
+								"status":            status,
+							}).Info("caller policy request accounted")
+						}()
+						c.Next()
+						completed = true
 						return
 					}
 				}
@@ -1506,6 +1623,58 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Authentication service error"})
 		}
 	}
+}
+
+func writeCallerPolicyError(c *gin.Context, manager *callerpolicy.Manager, callerID, model string, err error) {
+	var decision *callerpolicy.DecisionError
+	if !errors.As(err, &decision) {
+		decision = &callerpolicy.DecisionError{Code: callerpolicy.CodeStateUnavailable}
+	}
+	status := http.StatusTooManyRequests
+	message := "Caller quota exceeded"
+	switch decision.Code {
+	case callerpolicy.CodeModelDenied:
+		status = http.StatusForbidden
+		message = "Model is not allowed for this caller"
+	case callerpolicy.CodeModelConflict:
+		status = http.StatusForbidden
+		message = "Conflicting model selectors are not allowed"
+	case callerpolicy.CodeRouteDenied:
+		status = http.StatusForbidden
+		message = "Route is not allowed for this caller"
+	case callerpolicy.CodeModelRequired:
+		status = http.StatusBadRequest
+		message = "An explicit model is required for this caller"
+	case callerpolicy.CodeConcurrencyExceeded:
+		c.Header("Retry-After", "1")
+		message = "Caller concurrency limit exceeded"
+	case callerpolicy.CodeDailyCapExceeded:
+		message = "Caller daily token cap exceeded"
+	case callerpolicy.CodeStateUnavailable:
+		status = http.StatusServiceUnavailable
+		message = "Caller quota state is unavailable"
+	}
+	snapshot := callerpolicy.Snapshot{CallerID: callerID, Model: model}
+	if manager != nil {
+		snapshot = manager.CurrentSnapshot(callerID, model)
+	}
+	logModel := model
+	if decision.Code == callerpolicy.CodeModelDenied || decision.Code == callerpolicy.CodeModelConflict || manager == nil || manager.AuthorizeModel(callerID, model) != nil {
+		logModel = "<denied>"
+	}
+	log.WithFields(log.Fields{
+		"caller_id":         callerID,
+		"model":             logModel,
+		"active":            snapshot.Active,
+		"daily_tokens_used": snapshot.TokensUsed,
+		"daily_token_cap":   snapshot.DailyCap,
+		"status":            decision.Code,
+	}).Warn("caller policy refused request")
+	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{
+		"message": message,
+		"type":    "caller_policy_error",
+		"code":    decision.Code,
+	}})
 }
 
 // GetHandlers returns the base API handlers instance.

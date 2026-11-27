@@ -85,11 +85,11 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 	}
 
 	if len(result) == 0 {
-		if inline := sdkConfig.MakeInlineAPIKeyProvider(newCfg.APIKeys); inline != nil {
+		if inline := sdkConfig.MakeInlineAPIKeyProvider(newCfg.InboundAPIKeys()); inline != nil {
 			key := providerIdentifier(inline)
 			if key != "" {
 				if oldCfgProvider, ok := oldCfgMap[key]; ok {
-					if providerConfigEqual(oldCfgProvider, inline) {
+					if callerPolicyMappingEqual(oldCfg, newCfg) && providerConfigEqual(oldCfgProvider, inline) {
 						if existingProvider, okExisting := existingMap[key]; okExisting {
 							result = append(result, existingProvider)
 							finalIDs[key] = struct{}{}
@@ -137,6 +137,22 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 	return result, added, updated, removed, nil
 }
 
+func callerPolicyMappingEqual(a, b *config.Config) bool {
+	callerMap := func(cfg *config.Config) map[string]string {
+		result := make(map[string]string)
+		if cfg == nil {
+			return result
+		}
+		for _, caller := range cfg.CallerPolicies.Callers {
+			if caller.APIKey != "" && caller.ID != "" {
+				result[caller.APIKey] = caller.ID
+			}
+		}
+		return result
+	}
+	return reflect.DeepEqual(callerMap(a), callerMap(b))
+}
+
 // ApplyAccessProviders reconciles the configured access providers against the
 // currently registered providers and updates the manager. It logs a concise
 // summary of the detected changes and returns whether any provider changed.
@@ -180,8 +196,8 @@ func accessProviderMap(cfg *config.Config) map[string]*sdkConfig.AccessProvider 
 		}
 		result[key] = providerCfg
 	}
-	if len(result) == 0 && len(cfg.APIKeys) > 0 {
-		if provider := sdkConfig.MakeInlineAPIKeyProvider(cfg.APIKeys); provider != nil {
+	if len(result) == 0 {
+		if provider := sdkConfig.MakeInlineAPIKeyProvider(cfg.InboundAPIKeys()); provider != nil {
 			if key := providerIdentifier(provider); key != "" {
 				result[key] = provider
 			}
@@ -201,8 +217,8 @@ func collectProviderEntries(cfg *config.Config) []*sdkConfig.AccessProvider {
 			entries = append(entries, providerCfg)
 		}
 	}
-	if len(entries) == 0 && len(cfg.APIKeys) > 0 {
-		if inline := sdkConfig.MakeInlineAPIKeyProvider(cfg.APIKeys); inline != nil {
+	if len(entries) == 0 {
+		if inline := sdkConfig.MakeInlineAPIKeyProvider(cfg.InboundAPIKeys()); inline != nil {
 			entries = append(entries, inline)
 		}
 	}

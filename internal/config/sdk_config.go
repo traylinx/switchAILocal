@@ -9,6 +9,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,6 +31,10 @@ type SDKConfig struct {
 
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+
+	// CallerPolicies applies least-privilege model and quota limits to named
+	// inbound callers. Empty configuration keeps the legacy API-key behaviour.
+	CallerPolicies CallerPoliciesConfig `yaml:"caller-policies,omitempty" json:"caller-policies,omitempty"`
 
 	// Access holds request authentication provider configuration.
 	Access AccessConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
@@ -64,6 +69,122 @@ type SDKConfig struct {
 	// the on-disk state stable and makes "telegram_disabled" mean an operator
 	// explicitly turned it off, not a serialisation artefact.
 	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
+}
+
+// CallerPoliciesConfig defines named inbound callers and the durable location
+// used for daily token accounting. Daily windows reset at 00:00 UTC.
+type CallerPoliciesConfig struct {
+	StateFile string               `yaml:"state-file,omitempty" json:"state-file,omitempty"`
+	Callers   []CallerPolicyConfig `yaml:"callers,omitempty" json:"callers,omitempty"`
+}
+
+// CallerPolicyConfig binds one inbound API key to a stable caller identity and
+// limits what that caller can consume. APIKey is authentication material and
+// must never be emitted to logs or quota state.
+type CallerPolicyConfig struct {
+	ID             string   `yaml:"id" json:"id"`
+	APIKey         string   `yaml:"api-key" json:"api-key"`
+	AllowedModels  []string `yaml:"allowed-models" json:"allowed-models"`
+	MaxConcurrency int      `yaml:"max-concurrency" json:"max-concurrency"`
+	DailyTokenCap  int64    `yaml:"daily-token-cap" json:"daily-token-cap"`
+}
+
+// InboundAPIKeys returns the deduplicated legacy and caller-policy keys used by
+// the built-in config API-key provider.
+func (c *SDKConfig) InboundAPIKeys() []string {
+	if c == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(c.APIKeys)+len(c.CallerPolicies.Callers))
+	keys := make([]string, 0, len(c.APIKeys)+len(c.CallerPolicies.Callers))
+	appendKey := func(key string) {
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	for _, key := range c.APIKeys {
+		appendKey(key)
+	}
+	for _, caller := range c.CallerPolicies.Callers {
+		appendKey(caller.APIKey)
+	}
+	return keys
+}
+
+// ValidateCallerPolicies normalizes and validates named caller policy config.
+// It rejects ambiguous identities, shared keys, empty allowlists, and nonpositive
+// limits so an operator cannot accidentally configure an unbounded caller.
+func (c *SDKConfig) ValidateCallerPolicies() error {
+	if c == nil || len(c.CallerPolicies.Callers) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(c.CallerPolicies.StateFile) == "" {
+		return fmt.Errorf("caller-policies.state-file is required when callers are configured")
+	}
+	c.CallerPolicies.StateFile = strings.TrimSpace(c.CallerPolicies.StateFile)
+	ids := make(map[string]struct{}, len(c.CallerPolicies.Callers))
+	keys := make(map[string]struct{}, len(c.CallerPolicies.Callers))
+	legacyKeys := make(map[string]struct{}, len(c.APIKeys))
+	for _, key := range c.APIKeys {
+		legacyKeys[strings.TrimSpace(key)] = struct{}{}
+	}
+	for i := range c.CallerPolicies.Callers {
+		caller := &c.CallerPolicies.Callers[i]
+		caller.ID = strings.TrimSpace(caller.ID)
+		caller.APIKey = strings.TrimSpace(caller.APIKey)
+		if caller.ID == "" {
+			return fmt.Errorf("caller-policies.callers[%d].id is required", i)
+		}
+		for _, r := range caller.ID {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-') {
+				return fmt.Errorf("caller-policies.callers[%d].id contains unsupported characters", i)
+			}
+		}
+		if _, exists := ids[caller.ID]; exists {
+			return fmt.Errorf("caller-policies caller id %q is duplicated", caller.ID)
+		}
+		ids[caller.ID] = struct{}{}
+		if _, collides := legacyKeys[caller.ID]; collides {
+			return fmt.Errorf("caller-policies caller id %q collides with a legacy api-key", caller.ID)
+		}
+		if caller.APIKey == "" {
+			return fmt.Errorf("caller-policies caller %q requires api-key", caller.ID)
+		}
+		if _, exists := keys[caller.APIKey]; exists {
+			return fmt.Errorf("caller-policies caller %q reuses another caller api-key", caller.ID)
+		}
+		keys[caller.APIKey] = struct{}{}
+		if caller.MaxConcurrency <= 0 {
+			return fmt.Errorf("caller-policies caller %q max-concurrency must be positive", caller.ID)
+		}
+		if caller.DailyTokenCap <= 0 {
+			return fmt.Errorf("caller-policies caller %q daily-token-cap must be positive", caller.ID)
+		}
+		if len(caller.AllowedModels) == 0 {
+			return fmt.Errorf("caller-policies caller %q requires allowed-models", caller.ID)
+		}
+		models := make([]string, 0, len(caller.AllowedModels))
+		modelSet := make(map[string]struct{}, len(caller.AllowedModels))
+		for _, configured := range caller.AllowedModels {
+			model := strings.TrimSpace(configured)
+			if model == "" {
+				return fmt.Errorf("caller-policies caller %q has an empty allowed model", caller.ID)
+			}
+			if _, exists := modelSet[model]; exists {
+				continue
+			}
+			modelSet[model] = struct{}{}
+			models = append(models, model)
+		}
+		caller.AllowedModels = models
+	}
+	return nil
 }
 
 // RoutingConfig configures how credentials are selected for requests.

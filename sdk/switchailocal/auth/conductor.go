@@ -24,6 +24,7 @@ import (
 	"github.com/traylinx/switchAILocal/internal/registry"
 	"github.com/traylinx/switchAILocal/internal/util"
 	switchailocalexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 )
 
 // ProviderExecutor defines the contract required by Manager to execute provider calls.
@@ -393,6 +394,9 @@ func (m *Manager) DebugDump() {
 // Execute performs a non-streaming execution using the configured selector and executor.
 // It supports multiple providers for the same model and round-robins the starting provider per model.
 func (m *Manager) Execute(ctx context.Context, providers []string, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error) {
+	if err := coreusage.AuthorizeModel(ctx, req.Model); err != nil {
+		return switchailocalexecutor.Response{}, err
+	}
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return switchailocalexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -432,6 +436,9 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req switchail
 // ExecuteCount performs a non-streaming execution using the configured selector and executor.
 // It supports multiple providers for the same model and round-robins the starting provider per model.
 func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (switchailocalexecutor.Response, error) {
+	if err := coreusage.AuthorizeModel(ctx, req.Model); err != nil {
+		return switchailocalexecutor.Response{}, err
+	}
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return switchailocalexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -471,6 +478,9 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req swit
 // ExecuteStream performs a streaming execution using the configured selector and executor.
 // It supports multiple providers for the same model and round-robins the starting provider per model.
 func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req switchailocalexecutor.Request, opts switchailocalexecutor.Options) (<-chan switchailocalexecutor.StreamChunk, error) {
+	if err := coreusage.AuthorizeModel(ctx, req.Model); err != nil {
+		return nil, err
+	}
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return nil, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -563,7 +573,7 @@ func (m *Manager) executeWithProvider(ctx context.Context, provider string, req 
 			continue
 		}
 		m.MarkResult(execCtx, result)
-		
+
 		if opts.Metadata != nil {
 			opts.Metadata["executed_provider"] = provider
 		}
@@ -631,7 +641,7 @@ func (m *Manager) executeCountWithProvider(ctx context.Context, provider string,
 			continue
 		}
 		m.MarkResult(execCtx, result)
-		
+
 		if resp.Metadata == nil {
 			resp.Metadata = make(map[string]any)
 		}
@@ -720,11 +730,11 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 				m.MarkResult(streamCtx, Result{AuthID: streamAuth.ID, Provider: streamProvider, Model: routeModel, Success: true})
 			}
 		}(execCtx, auth.Clone(), provider, chunks)
-		
+
 		if opts.Metadata != nil {
 			opts.Metadata["executed_provider"] = provider
 		}
-		
+
 		return out, nil
 	}
 }
