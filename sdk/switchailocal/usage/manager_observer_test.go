@@ -6,12 +6,21 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
 type recordingObserver struct {
 	called bool
 	tokens int64
+}
+
+func TestRequiredModelAuthorizationMarkerSurvivesContextPropagation(t *testing.T) {
+	source := WithModelAuthorizationRequired(context.Background())
+	propagated := PropagateSynchronousObserver(context.Background(), source)
+	if err := AuthorizeModel(propagated, "model-a"); !errors.Is(err, ErrModelAuthorizerUnavailable) {
+		t.Fatalf("authorization error = %v, want %v", err, ErrModelAuthorizerUnavailable)
+	}
 }
 
 func (o *recordingObserver) ObserveUsage(_ context.Context, record Record) {

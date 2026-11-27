@@ -6,6 +6,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -53,6 +54,17 @@ type ModelAuthorizer interface {
 }
 
 type synchronousObserverContextKey struct{}
+type modelAuthorizationRequiredContextKey struct{}
+
+type modelAuthorizerUnavailableError struct{}
+
+func (modelAuthorizerUnavailableError) Error() string   { return "caller_quota_state_unavailable" }
+func (modelAuthorizerUnavailableError) StatusCode() int { return 503 }
+
+// ErrModelAuthorizerUnavailable means a named caller reached dispatch without
+// its policy authorizer. Dispatch must fail closed rather than silently taking
+// the legacy unpoliced path.
+var ErrModelAuthorizerUnavailable error = modelAuthorizerUnavailableError{}
 
 // WithSynchronousObserver associates a request-scoped usage observer with ctx.
 func WithSynchronousObserver(ctx context.Context, observer SynchronousObserver) context.Context {
@@ -65,6 +77,16 @@ func WithSynchronousObserver(ctx context.Context, observer SynchronousObserver) 
 	return context.WithValue(ctx, synchronousObserverContextKey{}, observer)
 }
 
+// WithModelAuthorizationRequired marks a named-caller execution context. The
+// marker is separate from the observer so accidental observer loss is visible
+// and fails closed at dispatch.
+func WithModelAuthorizationRequired(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, modelAuthorizationRequiredContextKey{}, true)
+}
+
 // PropagateSynchronousObserver copies the request-scoped observer from src to
 // dst. API handlers use it when they derive executor contexts from a background
 // parent while retaining the request's cancellation separately.
@@ -74,6 +96,9 @@ func PropagateSynchronousObserver(dst, src context.Context) context.Context {
 	}
 	if src == nil {
 		return dst
+	}
+	if required, _ := src.Value(modelAuthorizationRequiredContextKey{}).(bool); required {
+		dst = WithModelAuthorizationRequired(dst)
 	}
 	observer, _ := src.Value(synchronousObserverContextKey{}).(SynchronousObserver)
 	return WithSynchronousObserver(dst, observer)
@@ -87,9 +112,16 @@ func AuthorizeModel(ctx context.Context, model string) error {
 	}
 	observer, _ := ctx.Value(synchronousObserverContextKey{}).(ModelAuthorizer)
 	if observer == nil {
+		if required, _ := ctx.Value(modelAuthorizationRequiredContextKey{}).(bool); required {
+			return ErrModelAuthorizerUnavailable
+		}
 		return nil
 	}
-	return observer.AuthorizeModel(model)
+	err := observer.AuthorizeModel(model)
+	if errors.Is(err, ErrModelAuthorizerUnavailable) {
+		return ErrModelAuthorizerUnavailable
+	}
+	return err
 }
 
 type queueItem struct {

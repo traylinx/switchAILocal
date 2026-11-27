@@ -43,8 +43,23 @@ func newCallerPolicyTestStack(t *testing.T, cap int64, concurrency int, handler 
 	accessManager := sdkaccess.NewManager()
 	accessManager.SetProviders(providers)
 	policyManager := callerpolicy.New(policies, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
 	engine := gin.New()
-	engine.POST("/v1/chat/completions", AuthMiddleware(accessManager, policyManager), handler)
+	engine.POST("/v1/chat/completions", AuthMiddleware(accessManager, policyManager), func(c *gin.Context) {
+		model, _, _, err := callerpolicy.InspectRequest(c.Request)
+		if err != nil {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		if err := coreusage.AuthorizeModel(c.Request.Context(), model); err != nil {
+			writeCallerPolicyError(c, policyManager, c.GetString("apiKey"), model, err)
+			return
+		}
+		handler(c)
+	})
+	engine.GET("/v1/models", AuthMiddleware(accessManager, policyManager), func(c *gin.Context) {
+		c.String(http.StatusOK, "catalog response that must not consume quota")
+	})
 	return engine, policyManager
 }
 
@@ -95,7 +110,7 @@ func TestCallerPolicyWrongModelAndDailyCapAreCallerLocal(t *testing.T) {
 	if over.Code != http.StatusTooManyRequests || !strings.Contains(over.Body.String(), string(callerpolicy.CodeDailyCapExceeded)) {
 		t.Fatalf("over-cap response = %d %s", over.Code, over.Body.String())
 	}
-	otherAfterCap := callerRequest(engine, "key-b-private", "model-b", "still independent")
+	otherAfterCap := callerRequest(engine, "key-b-private", "model-b", "x")
 	if otherAfterCap.Code != http.StatusOK {
 		t.Fatalf("other caller failed after daily-cap refusal: %d %s", otherAfterCap.Code, otherAfterCap.Body.String())
 	}
@@ -217,6 +232,7 @@ func TestCallerPolicyFailsClosedForStaleCallerMapping(t *testing.T) {
 	accessManager.SetProviders(providers)
 	policies.Callers[0].ID = "new-id"
 	policyManager := callerpolicy.New(policies, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
 	engine := gin.New()
 	engine.POST("/v1/chat/completions", AuthMiddleware(accessManager, policyManager), func(c *gin.Context) { c.Status(http.StatusOK) })
 	recorder := callerRequest(engine, "private-key", "model-a", "private")
@@ -260,7 +276,9 @@ func TestCallerPolicyRefusesWebsocketForNamedCaller(t *testing.T) {
 	accessManager := sdkaccess.NewManager()
 	accessManager.SetProviders(providers)
 	engine := gin.New()
-	engine.GET("/v1/ws", func(c *gin.Context) { c.Set("callerPolicyWebsocket", true); c.Next() }, AuthMiddleware(accessManager, callerpolicy.New(policies, "")), func(c *gin.Context) { c.Status(http.StatusSwitchingProtocols) })
+	policyManager := callerpolicy.New(policies, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
+	engine.GET("/v1/ws", func(c *gin.Context) { c.Set("callerPolicyWebsocket", true); c.Next() }, AuthMiddleware(accessManager, policyManager), func(c *gin.Context) { c.Status(http.StatusSwitchingProtocols) })
 	req := httptest.NewRequest(http.MethodGet, "/v1/ws?model=model-a", nil)
 	req.Header.Set("Authorization", "Bearer private-key")
 	recorder := httptest.NewRecorder()
@@ -318,6 +336,33 @@ func TestCallerPolicyRefusalLogRedactsDeniedModelKeyAndPrompt(t *testing.T) {
 	for _, forbidden := range []string{"private-denied-model", "key-a-private", "unique-private-prompt"} {
 		if strings.Contains(logged, forbidden) {
 			t.Fatalf("sensitive refusal value leaked to logs: %q", logged)
+		}
+	}
+}
+
+func TestCallerPolicyOversizedBodyReturns413(t *testing.T) {
+	engine, _ := newCallerPolicyTestStack(t, 100, 1, func(c *gin.Context) {
+		t.Fatal("oversized request reached handler")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("x", int(callerpolicy.MaxInspectedBodyBytes)+1)))
+	req.Header.Set("Authorization", "Bearer key-a-private")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusRequestEntityTooLarge || !strings.Contains(recorder.Body.String(), "caller_policy_request_invalid") {
+		t.Fatalf("oversized response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCallerPolicyCatalogRequestsDoNotConsumeLeaseOrDailyCap(t *testing.T) {
+	engine, _ := newCallerPolicyTestStack(t, 1, 1, usageHandler(1))
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer key-a-private")
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("catalog request %d = %d %s", i+1, recorder.Code, recorder.Body.String())
 		}
 	}
 }

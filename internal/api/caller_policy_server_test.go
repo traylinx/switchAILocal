@@ -82,7 +82,9 @@ func TestApplyAccessConfigRebuildsCallerMappingOnIDRename(t *testing.T) {
 	}
 	accessManager := sdkaccess.NewManager()
 	accessManager.SetProviders(providers)
-	server := &Server{accessManager: accessManager, callerPolicies: callerpolicy.New(oldCfg.CallerPolicies, "")}
+	policyManager := callerpolicy.New(oldCfg.CallerPolicies, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
+	server := &Server{accessManager: accessManager, callerPolicies: policyManager}
 	server.applyAccessConfig(oldCfg, newCfg)
 
 	engine := gin.New()
@@ -95,6 +97,33 @@ func TestApplyAccessConfigRebuildsCallerMappingOnIDRename(t *testing.T) {
 	recorder := callerRequest(engine, "private-key", "model-a", "private")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("renamed caller response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestApplyAccessConfigRestoresPoliciesWhenProviderReconcileFails(t *testing.T) {
+	tmp := t.TempDir()
+	oldCfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{CallerPolicies: policyConfig(filepath.Join(tmp, "usage.json"), "caller-a", "private-key")}}
+	newCfg := &proxyconfig.Config{SDKConfig: oldCfg.SDKConfig}
+	newCfg.CallerPolicies.Callers = append([]sdkconfig.CallerPolicyConfig(nil), oldCfg.CallerPolicies.Callers...)
+	newCfg.CallerPolicies.Callers[0].AllowedModels = []string{"model-b"}
+	newCfg.Access.Providers = []sdkconfig.AccessProvider{{Name: "broken", Type: "unregistered-provider"}}
+	configaccess.Register()
+	providers, err := sdkaccess.BuildProviders(&oldCfg.SDKConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessManager := sdkaccess.NewManager()
+	accessManager.SetProviders(providers)
+	policyManager := callerpolicy.New(oldCfg.CallerPolicies, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
+	server := &Server{accessManager: accessManager, callerPolicies: policyManager}
+
+	server.applyAccessConfig(oldCfg, newCfg)
+	if err := policyManager.AuthorizeModel("caller-a", "model-a"); err != nil {
+		t.Fatalf("old policy was not restored: %v", err)
+	}
+	if err := policyManager.AuthorizeModel("caller-a", "model-b"); err == nil {
+		t.Fatal("failed reload left new policy active under stale providers")
 	}
 }
 

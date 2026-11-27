@@ -55,10 +55,10 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 			continue
 		}
 
+		forceRebuild := strings.EqualFold(strings.TrimSpace(providerCfg.Type), sdkConfig.AccessProviderTypeConfigAPIKey)
 		if oldCfgProvider, ok := oldCfgMap[key]; ok {
 			isAliased := oldCfgProvider == providerCfg
-			mappingEqual := !isInlineProvider(key) || callerPolicyMappingEqual(oldCfg, newCfg)
-			if !isAliased && mappingEqual && providerConfigEqual(oldCfgProvider, providerCfg) {
+			if !forceRebuild && !isAliased && providerConfigEqual(oldCfgProvider, providerCfg) {
 				if existingProvider, okExisting := existingMap[key]; okExisting {
 					result = append(result, existingProvider)
 					finalIDs[key] = struct{}{}

@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -18,6 +19,20 @@ type handlerUsageObserver struct{ tokens int64 }
 
 func (o *handlerUsageObserver) ObserveUsage(_ context.Context, record coreusage.Record) {
 	o.tokens += record.Detail.TotalTokens
+}
+
+func TestGetContextWithCancelMarksNamedCallerWithoutObserverForFailClosedDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	c.Set("accessMetadata", map[string]string{"caller_id": "caller-a"})
+	h := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
+	executorCtx, cancel := h.GetContextWithCancel(nil, c, context.Background())
+	defer cancel()
+
+	if err := coreusage.AuthorizeModel(executorCtx, "model-a"); !errors.Is(err, coreusage.ErrModelAuthorizerUnavailable) {
+		t.Fatalf("authorization error = %v, want %v", err, coreusage.ErrModelAuthorizerUnavailable)
+	}
 }
 
 func TestGetContextWithCancelPropagatesCallerUsageObserverToExecutor(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -23,12 +24,13 @@ import (
 // larger than this are refused before they can consume unbounded process memory.
 const MaxInspectedBodyBytes int64 = 16 << 20
 
-// InspectRequest extracts the requested model and a conservative input-token
-// estimate while restoring the body byte-for-byte for the downstream handler.
-// The body content is never retained by the policy manager or logged.
-func InspectRequest(r *http.Request) (string, int64, error) {
+// InspectRequest extracts the requested model, a conservative input-token
+// estimate, and the caller's declared output-token reservation while restoring
+// the body byte-for-byte for the downstream handler. The body content is never
+// retained by the policy manager or logged.
+func InspectRequest(r *http.Request) (string, int64, int64, error) {
 	if r == nil {
-		return "", 0, nil
+		return "", 0, 0, nil
 	}
 	models := make([]string, 0, 6)
 	pathModel := ""
@@ -39,72 +41,67 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 	}
 	queryAndPathModel, err := resolveModelSources(models)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
 	if r.Body == nil {
 		if RequiresExplicitModel(r) && pathModel == "" {
 			// Inference handlers read their model from the body. A query parameter
 			// may conflict with that model, but is never sufficient by itself.
-			return "", 0, nil
+			return "", 0, 0, nil
 		}
-		return queryAndPathModel, 0, nil
+		return queryAndPathModel, 0, 0, nil
 	}
 	limited := http.MaxBytesReader(nil, r.Body, MaxInspectedBodyBytes)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		_ = r.Body.Close()
-		return "", 0, fmt.Errorf("read request body for caller policy: %w", err)
+		return "", 0, 0, fmt.Errorf("read request body for caller policy: %w", err)
 	}
 	_ = r.Body.Close()
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	if len(data) == 0 {
 		if RequiresExplicitModel(r) && pathModel == "" {
-			return "", 0, nil
+			return "", 0, 0, nil
 		}
-		return queryAndPathModel, 0, nil
+		return queryAndPathModel, 0, 0, nil
 	}
 
 	// Inference handlers use GetRawData followed by gjson and do not select a
 	// parser from Content-Type. Inspect the same raw bytes first so a misleading
-	// content type or JSON with trailing garbage cannot hide the executed model.
+	// content type cannot hide the model. Count top-level keys before validating
+	// the document: the tolerant scan still catches duplicate selectors in JSON
+	// with a trailing comma or trailing garbage.
 	bodyModelFound := false
 	if rawModel := gjson.GetBytes(data, "model"); rawModel.Exists() {
 		models = append(models, rawModel.String())
 		bodyModelFound = true
 	}
+	if countTopLevelJSONModelKeys(data) > 1 {
+		return "", 0, 0, &DecisionError{Code: CodeModelConflict}
+	}
+	if _, err := resolveModelSources(models); err != nil {
+		return "", 0, 0, err
+	}
 
 	mediaType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType != "multipart/form-data" && mediaType != "application/x-www-form-urlencoded" && RequiresExplicitModel(r) && !json.Valid(data) {
+		return "", 0, 0, errors.New("inference request body is not exactly one valid JSON value")
+	}
+	outputReservation := declaredOutputTokens(data)
 	switch mediaType {
 	case "application/json", "":
 		var payload any
 		if err := json.Unmarshal(data, &payload); err != nil {
-			model, resolveErr := resolveModelSources(models)
-			if resolveErr != nil {
-				return "", 0, resolveErr
-			}
-			if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
-				return "", 0, errors.New("inference request body does not expose a model")
-			}
-			return model, estimateBytes(len(data)), nil
+			return "", 0, 0, fmt.Errorf("inspect request JSON for caller policy: %w", err)
 		}
-		bodyModel, count, err := topLevelJSONModel(data)
+		model, err := resolveModelSources(models)
 		if err != nil {
-			return "", 0, fmt.Errorf("inspect request model for caller policy: %w", err)
-		}
-		if count > 1 {
-			return "", 0, &DecisionError{Code: CodeModelConflict}
-		}
-		if count > 0 {
-			bodyModelFound = true
-		}
-		model, err := resolveModelSources(append(models, bodyModel))
-		if err != nil {
-			return "", 0, err
+			return "", 0, 0, err
 		}
 		if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
-			return "", 0, errors.New("inference request body does not expose a model")
+			return "", 0, 0, errors.New("inference request body does not expose a model")
 		}
-		return model, estimateJSONTokens(payload, ""), nil
+		return model, estimateJSONTokens(payload, ""), outputReservation, nil
 	case "multipart/form-data":
 		boundary := params["boundary"]
 		var textBytes int
@@ -128,6 +125,10 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 				if name == "model" {
 					models = append(models, string(value))
 					bodyModelFound = true
+				} else if name == "max_tokens" || name == "max_completion_tokens" || name == "max_output_tokens" {
+					if parsed, parseErr := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64); parseErr == nil && parsed > outputReservation {
+						outputReservation = parsed
+					}
 				} else if name == "prompt" || name == "input" || name == "instructions" {
 					textBytes += len(value)
 				}
@@ -137,11 +138,11 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 		if err == nil && !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
 			err = errors.New("inference request body does not expose a model")
 		}
-		return model, estimateBytes(textBytes), err
+		return model, estimateBytes(textBytes), outputReservation, err
 	case "application/x-www-form-urlencoded":
 		values, parseErr := url.ParseQuery(string(data))
 		if parseErr != nil {
-			return "", 0, fmt.Errorf("inspect urlencoded request for caller policy: %w", parseErr)
+			return "", 0, 0, fmt.Errorf("inspect urlencoded request for caller policy: %w", parseErr)
 		}
 		for _, formModel := range values["model"] {
 			models = append(models, formModel)
@@ -151,17 +152,46 @@ func InspectRequest(r *http.Request) (string, int64, error) {
 		if err == nil && !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
 			err = errors.New("inference request body does not expose a model")
 		}
-		return model, estimateFormTokens(values), err
+		return model, estimateFormTokens(values), declaredFormOutputTokens(values), err
 	default:
 		model, resolveErr := resolveModelSources(models)
 		if resolveErr != nil {
-			return "", 0, resolveErr
+			return "", 0, 0, resolveErr
 		}
 		if !bodyModelFound && pathModel == "" && RequiresExplicitModel(r) {
-			return "", 0, errors.New("inference request body does not expose a model")
+			return "", 0, 0, errors.New("inference request body does not expose a model")
 		}
-		return model, estimateBytes(len(data)), nil
+		return model, estimateBytes(len(data)), outputReservation, nil
 	}
+}
+
+func declaredOutputTokens(data []byte) int64 {
+	var reserved int64
+	for _, path := range []string{
+		"max_tokens",
+		"max_completion_tokens",
+		"max_output_tokens",
+		"generationConfig.maxOutputTokens",
+		"generation_config.max_output_tokens",
+	} {
+		result := gjson.GetBytes(data, path)
+		if result.Type == gjson.Number && result.Int() > reserved {
+			reserved = result.Int()
+		}
+	}
+	return reserved
+}
+
+func declaredFormOutputTokens(values url.Values) int64 {
+	var reserved int64
+	for _, field := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		for _, value := range values[field] {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && parsed > reserved {
+				reserved = parsed
+			}
+		}
+	}
+	return reserved
 }
 
 func estimateFormTokens(values url.Values) int64 {
@@ -213,45 +243,68 @@ func resolveModelSources(sources []string) (string, error) {
 	return model, nil
 }
 
-// topLevelJSONModel preserves the first-match semantics used by downstream
-// handlers while rejecting duplicate top-level model keys altogether.
-func topLevelJSONModel(data []byte) (string, int, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	token, err := decoder.Token()
-	if err != nil {
-		return "", 0, err
+// countTopLevelJSONModelKeys deliberately tolerates a malformed suffix. It is
+// not a JSON parser; it only identifies quoted object keys at depth one so a
+// duplicate model selector is refused before strict JSON validation.
+func countTopLevelJSONModelKeys(data []byte) int {
+	i := 0
+	for i < len(data) && isJSONSpace(data[i]) {
+		i++
 	}
-	delim, ok := token.(json.Delim)
-	if !ok || delim != '{' {
-		return "", 0, nil
+	if i >= len(data) || data[i] != '{' {
+		return 0
 	}
-	model := ""
+	depth := 1
 	count := 0
-	for decoder.More() {
-		keyToken, err := decoder.Token()
-		if err != nil {
-			return "", 0, err
-		}
-		key, ok := keyToken.(string)
-		if !ok {
-			return "", 0, errors.New("non-string JSON object key")
-		}
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			return "", 0, err
-		}
-		if key != "model" {
-			continue
-		}
-		count++
-		if count == 1 {
-			var configured string
-			if json.Unmarshal(raw, &configured) == nil {
-				model = strings.TrimSpace(configured)
+	for i++; i < len(data) && depth > 0; {
+		switch data[i] {
+		case '"':
+			start := i
+			i++
+			for i < len(data) {
+				if data[i] == '\\' {
+					i += 2
+					continue
+				}
+				if data[i] == '"' {
+					break
+				}
+				i++
 			}
+			if i >= len(data) {
+				return count
+			}
+			end := i
+			i++
+			if depth != 1 {
+				continue
+			}
+			j := i
+			for j < len(data) && isJSONSpace(data[j]) {
+				j++
+			}
+			if j >= len(data) || data[j] != ':' {
+				continue
+			}
+			key, err := strconv.Unquote(string(data[start : end+1]))
+			if err == nil && key == "model" {
+				count++
+			}
+		case '{', '[':
+			depth++
+			i++
+		case '}', ']':
+			depth--
+			i++
+		default:
+			i++
 		}
 	}
-	return model, count, nil
+	return count
+}
+
+func isJSONSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
 }
 
 func modelFromPath(path string) string {
@@ -261,7 +314,7 @@ func modelFromPath(path string) string {
 		return ""
 	}
 	model := path[idx+len(marker):]
-	if end := strings.IndexAny(model, ":/"); end >= 0 {
+	if end := strings.LastIndex(model, ":"); end >= 0 {
 		model = model[:end]
 	}
 	return strings.TrimSpace(model)

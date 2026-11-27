@@ -6,32 +6,41 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
+	"github.com/traylinx/switchAILocal/internal/callerpolicy"
 	internalconfig "github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/virtualmodels"
+	coreauth "github.com/traylinx/switchAILocal/sdk/switchailocal/auth"
+	coreexecutor "github.com/traylinx/switchAILocal/sdk/switchailocal/executor"
 	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 )
 
-type resolvedModelPolicyObserver struct {
-	allowed string
-	seen    []string
+type resolvedModelRecordingExecutor struct{ calls atomic.Int32 }
+
+func (*resolvedModelRecordingExecutor) Identifier() string { return "provider-a" }
+func (e *resolvedModelRecordingExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	e.calls.Add(1)
+	return coreexecutor.Response{Payload: []byte(`{}`)}, nil
+}
+func (e *resolvedModelRecordingExecutor) ExecuteStream(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (<-chan coreexecutor.StreamChunk, error) {
+	e.calls.Add(1)
+	ch := make(chan coreexecutor.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+func (e *resolvedModelRecordingExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	e.calls.Add(1)
+	return coreexecutor.Response{Payload: []byte(`{}`)}, nil
+}
+func (*resolvedModelRecordingExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
 }
 
-func (*resolvedModelPolicyObserver) ObserveUsage(context.Context, coreusage.Record) {}
-
-func (o *resolvedModelPolicyObserver) AuthorizeModel(model string) error {
-	o.seen = append(o.seen, model)
-	if model != o.allowed {
-		return errors.New("caller_model_not_allowed")
-	}
-	return nil
-}
-
-func TestResolvedVirtualModelIsRecheckedBeforeExecutorDispatch(t *testing.T) {
+func TestResolvedVirtualModelIsRecheckedAtExecutorDispatch(t *testing.T) {
 	enabled := true
 	cfg := &internalconfig.SDKConfig{VirtualModels: map[string]internalconfig.VirtualModelConfig{
 		"public-alias": {
@@ -47,16 +56,35 @@ func TestResolvedVirtualModelIsRecheckedBeforeExecutorDispatch(t *testing.T) {
 			}},
 		},
 	}}
-	handler := NewBaseAPIHandlers(cfg, nil, nil, nil, nil, nil)
+	authManager := coreauth.NewManager(nil, nil, nil)
+	executor := &resolvedModelRecordingExecutor{}
+	authManager.RegisterExecutor(executor)
+	if _, err := authManager.Register(context.Background(), &coreauth.Auth{ID: "auth-a", Provider: "provider-a", Status: coreauth.StatusActive}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewBaseAPIHandlers(cfg, authManager, nil, nil, nil, nil)
 	handler.VirtualRouter = virtualmodels.NewRouterWithStatePath(filepath.Join(t.TempDir(), "routes.json"))
-	observer := &resolvedModelPolicyObserver{allowed: "public-alias"}
-	ctx := coreusage.WithSynchronousObserver(context.Background(), observer)
+	policyCfg := internalconfig.CallerPoliciesConfig{
+		StateFile: filepath.Join(t.TempDir(), "usage.json"),
+		Callers: []internalconfig.CallerPolicyConfig{{
+			ID: "caller-a", APIKey: "key-a", AllowedModels: []string{"public-alias"}, MaxConcurrency: 1, DailyTokenCap: 100,
+		}},
+	}
+	policyManager := callerpolicy.New(policyCfg, "")
+	t.Cleanup(func() { _ = policyManager.Close() })
+	lease, err := policyManager.Begin("caller-a", "public-alias", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Finish(http.StatusForbidden)
+	ctx := coreusage.WithModelAuthorizationRequired(context.Background())
+	ctx = coreusage.WithSynchronousObserver(ctx, lease)
 
-	_, _, _, _, errMsg := handler.getRequestDetails(ctx, "public-alias", []byte(`{"model":"public-alias","messages":[{"role":"user","content":"hello"}]}`))
-	if errMsg == nil || errMsg.StatusCode != http.StatusForbidden || errMsg.Error == nil || errMsg.Error.Error() != "caller_model_not_allowed" {
+	_, errMsg := handler.ExecuteWithAuthManager(ctx, "openai", "public-alias", []byte(`{"model":"public-alias","messages":[{"role":"user","content":"hello"}]}`), "")
+	if errMsg == nil || errMsg.StatusCode != http.StatusForbidden || errMsg.Error == nil || errMsg.Error.Error() != string(callerpolicy.CodeModelDenied) {
 		t.Fatalf("resolved-model policy error = %#v", errMsg)
 	}
-	if len(observer.seen) != 1 || observer.seen[0] != "private-native-model" {
-		t.Fatalf("resolved models checked = %v", observer.seen)
+	if calls := executor.calls.Load(); calls != 0 {
+		t.Fatalf("forbidden resolved model reached executor %d times", calls)
 	}
 }

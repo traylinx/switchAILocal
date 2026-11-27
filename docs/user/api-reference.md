@@ -30,17 +30,23 @@ windows reset at `00:00 UTC`. Provider-reported total tokens are charged even
 when they arrive after an HTTP stream finishes; otherwise a byte-based estimate
 from request text plus response output is charged. Counter writes are debounced
 off the executor path and flushed on UTC rollover and shutdown. A
-request already in flight can cross the daily threshold, after which the next
-request is refused; possible overshoot is bounded by `max-concurrency` times
-the largest in-flight request's provider-reported usage. A missing, corrupt, or
+request whose estimated input plus declared output limit (`max_tokens`,
+`max_completion_tokens`, or Gemini `maxOutputTokens`) would exceed the remaining
+allowance is refused before dispatch. Provider-reported output can still cross the threshold; the
+remaining overshoot is bounded by the combined provider-reported output of the
+requests already in flight. Read-only catalog requests do not take a concurrency
+lease or consume the daily allowance. A missing, corrupt, or
 temporarily unwritable quota state returns `503`/`caller_quota_state_unavailable`.
 Conflicting query, path, form, or body model selectors return
 `403`/`caller_model_conflict`. Inference handlers and policy inspection use the
 same raw-body model semantics regardless of `Content-Type`; a query selector is
-not sufficient for a body-model route. Models selected later by hooks, automatic
+not sufficient for a body-model route. Named-caller inference bodies other than
+multipart or URL-encoded forms must be exactly one valid JSON value and are
+limited to 16 MiB for policy inspection; larger bodies return `413`. Models selected later by hooks, automatic
 routing, virtual aliases, or fallback must also appear in the caller allowlist.
-Named callers are refused on WebSocket routes even when legacy `ws-auth` is
-disabled; new authenticated routes require an explicit allowed model unless
+When any named policy is configured, WebSocket routes require authentication
+even when legacy `ws-auth` is disabled; named callers are then refused because
+WebSocket messages cannot be policed per model. New authenticated routes require an explicit allowed model unless
 classified as a read-only model catalog.
 
 ## Inference and data routes (client API key)

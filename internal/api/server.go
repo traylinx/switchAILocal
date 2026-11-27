@@ -1259,8 +1259,15 @@ func (s *Server) Start() error {
 //
 // Returns:
 //   - error: An error if the server fails to stop
-func (s *Server) Stop(ctx context.Context) error {
+func (s *Server) Stop(ctx context.Context) (stopErr error) {
 	log.Debug("Stopping API server...")
+	if s.callerPolicies != nil {
+		defer func() {
+			if err := s.callerPolicies.Close(); err != nil && stopErr == nil {
+				stopErr = fmt.Errorf("flush caller quota state: %w", err)
+			}
+		}()
+	}
 
 	if s.rateLimiter != nil {
 		defer s.rateLimiter.Close()
@@ -1276,11 +1283,6 @@ func (s *Server) Stop(ctx context.Context) error {
 	// Shutdown the HTTP server.
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %v", err)
-	}
-	if s.callerPolicies != nil {
-		if err := s.callerPolicies.Close(); err != nil {
-			return fmt.Errorf("flush caller quota state: %w", err)
-		}
 	}
 
 	log.Debug("API server stopped")
@@ -1311,15 +1313,20 @@ func (s *Server) applyAccessConfig(oldCfg, newCfg *config.Config) {
 	if s == nil || newCfg == nil {
 		return
 	}
-	// Policies move first. During reload an old key-to-caller mapping can then
-	// only fail closed; it can never run against a missing or stale policy.
+	// Authentication mappings and policy definitions form one logical update.
+	// Refuse named callers during the short reconciliation window so a key swap
+	// can never run under the wrong caller's allowlist or quota.
 	if s.callerPolicies != nil {
-		s.callerPolicies.Apply(newCfg.CallerPolicies)
+		s.callerPolicies.SetReloading(true)
+		defer s.callerPolicies.SetReloading(false)
 	}
 	if s.accessManager != nil {
 		if _, err := access.ApplyAccessProviders(s.accessManager, oldCfg, newCfg); err != nil {
 			return
 		}
+	}
+	if s.callerPolicies != nil {
+		s.callerPolicies.Apply(newCfg.CallerPolicies)
 	}
 }
 
@@ -1527,6 +1534,7 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Mana
 				}
 
 				if callerID != "" {
+					c.Request = c.Request.WithContext(coreusage.WithModelAuthorizationRequired(c.Request.Context()))
 					if policyManager == nil || !policyManager.Enabled() {
 						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeStateUnavailable})
 						return
@@ -1535,15 +1543,20 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Mana
 						writeCallerPolicyError(c, policyManager, callerID, "", &callerpolicy.DecisionError{Code: callerpolicy.CodeRouteDenied})
 						return
 					}
-					model, estimate, inspectErr := callerpolicy.InspectRequest(c.Request)
+					model, estimate, outputReservation, inspectErr := callerpolicy.InspectRequest(c.Request)
 					if inspectErr != nil {
 						var decision *callerpolicy.DecisionError
 						if errors.As(inspectErr, &decision) {
 							writeCallerPolicyError(c, policyManager, callerID, model, decision)
 							return
 						}
+						status := http.StatusBadRequest
+						var tooLarge *http.MaxBytesError
+						if errors.As(inspectErr, &tooLarge) {
+							status = http.StatusRequestEntityTooLarge
+						}
 						log.WithFields(log.Fields{"caller_id": callerID, "status": "request_unreadable"}).Warn("caller policy refused request")
-						c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{
+						c.AbortWithStatusJSON(status, gin.H{"error": gin.H{
 							"message": "Request body could not be inspected for caller policy",
 							"type":    "caller_policy_error",
 							"code":    "caller_policy_request_invalid",
@@ -1554,7 +1567,11 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Mana
 						writeCallerPolicyError(c, policyManager, callerID, model, &callerpolicy.DecisionError{Code: callerpolicy.CodeModelRequired})
 						return
 					}
-					lease, policyErr := policyManager.Begin(callerID, model, estimate)
+					if model == "" && !callerpolicy.RequiresExplicitModel(c.Request) {
+						c.Next()
+						return
+					}
+					lease, policyErr := policyManager.Begin(callerID, model, estimate, outputReservation)
 					if policyErr != nil {
 						writeCallerPolicyError(c, policyManager, callerID, model, policyErr)
 						return
@@ -1572,9 +1589,13 @@ func AuthMiddleware(manager *sdkaccess.Manager, policyManager *callerpolicy.Mana
 								responseBytes = 0
 							}
 							snapshot := lease.Finish(status, responseBytes)
+							logModel := snapshot.Model
+							if policyManager.AuthorizeModel(snapshot.CallerID, snapshot.Model) != nil {
+								logModel = "<denied>"
+							}
 							log.WithFields(log.Fields{
 								"caller_id":         snapshot.CallerID,
-								"model":             snapshot.Model,
+								"model":             logModel,
 								"active":            snapshot.Active,
 								"daily_tokens_used": snapshot.TokensUsed,
 								"daily_token_cap":   snapshot.DailyCap,
@@ -1638,7 +1659,7 @@ func writeCallerPolicyError(c *gin.Context, manager *callerpolicy.Manager, calle
 		snapshot = manager.CurrentSnapshot(callerID, model)
 	}
 	logModel := model
-	if decision.Code == callerpolicy.CodeModelDenied || decision.Code == callerpolicy.CodeModelConflict {
+	if decision.Code == callerpolicy.CodeModelDenied || decision.Code == callerpolicy.CodeModelConflict || manager == nil || manager.AuthorizeModel(callerID, model) != nil {
 		logModel = "<denied>"
 	}
 	log.WithFields(log.Fields{

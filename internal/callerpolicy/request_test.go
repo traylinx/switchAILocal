@@ -10,15 +10,18 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/traylinx/switchAILocal/internal/config"
 )
 
 func TestInspectRequestJSONRestoresBody(t *testing.T) {
 	body := []byte(`{"model":"model-a","messages":[{"role":"user","content":"private prompt"}]}`)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	model, estimate, err := InspectRequest(req)
+	model, estimate, _, err := InspectRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,10 +34,31 @@ func TestInspectRequestJSONRestoresBody(t *testing.T) {
 	}
 }
 
+func TestInspectRequestReservesDeclaredOutputTokensAcrossAPIDialects(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"OpenAI max tokens", `{"model":"model-a","max_tokens":41}`, 41},
+		{"OpenAI max completion tokens", `{"model":"model-a","max_completion_tokens":42}`, 42},
+		{"Gemini max output tokens", `{"model":"model-a","generationConfig":{"maxOutputTokens":43}}`, 43},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			_, _, reserved, err := InspectRequest(req)
+			if err != nil || reserved != tc.want {
+				t.Fatalf("reserved=%d err=%v, want %d", reserved, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestInspectRequestGeminiPathModel(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1beta/models/model-a:generateContent", bytes.NewBufferString(`{"contents":[]}`))
 	req.Header.Set("Content-Type", "application/json")
-	model, _, err := InspectRequest(req)
+	model, _, _, err := InspectRequest(req)
 	if err != nil || model != "model-a" {
 		t.Fatalf("model=%q err=%v", model, err)
 	}
@@ -50,7 +74,7 @@ func TestInspectRequestMultipartModel(t *testing.T) {
 	_ = writer.Close()
 	req := httptest.NewRequest("POST", "/v1/audio/transcriptions", bytes.NewReader(body.Bytes()))
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	model, estimate, err := InspectRequest(req)
+	model, estimate, _, err := InspectRequest(req)
 	if err != nil || model != "audio-model" || estimate < 1 {
 		t.Fatalf("model=%q estimate=%d err=%v", model, estimate, err)
 	}
@@ -85,7 +109,7 @@ func TestInspectRequestRejectsConflictingModelSources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", tt.url, strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
-			_, _, err := InspectRequest(req)
+			_, _, _, err := InspectRequest(req)
 			var decision *DecisionError
 			if !errors.As(err, &decision) || decision.Code != CodeModelConflict {
 				t.Fatalf("error = %v, want %s", err, CodeModelConflict)
@@ -97,7 +121,7 @@ func TestInspectRequestRejectsConflictingModelSources(t *testing.T) {
 func TestInspectRequestAcceptsMatchingModelSources(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(`{"model":"model-a"}`))
 	req.Header.Set("Content-Type", "application/json")
-	model, _, err := InspectRequest(req)
+	model, _, _, err := InspectRequest(req)
 	if err != nil || model != "model-a" {
 		t.Fatalf("model=%q err=%v", model, err)
 	}
@@ -119,7 +143,7 @@ func TestInspectRequestUsesHandlerRawBodySemanticsRegardlessOfContentType(t *tes
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
-			_, _, err := InspectRequest(req)
+			_, _, _, err := InspectRequest(req)
 			var decision *DecisionError
 			if !errors.As(err, &decision) || decision.Code != CodeModelConflict {
 				t.Fatalf("error = %v, want %s", err, CodeModelConflict)
@@ -140,7 +164,7 @@ func TestInspectRequestFailsClosedWhenBodyModelCannotBeDetermined(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/v1/chat/completions?model=model-a", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
-			if _, _, err := InspectRequest(req); err == nil {
+			if _, _, _, err := InspectRequest(req); err == nil {
 				t.Fatal("query-only model accepted when inference body model was indeterminate")
 			}
 		})
@@ -150,16 +174,86 @@ func TestInspectRequestFailsClosedWhenBodyModelCannotBeDetermined(t *testing.T) 
 func TestInspectRequestAcceptsRawBodyModelWithMisleadingContentType(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"model-a"}trailing`))
 	req.Header.Set("Content-Type", "text/plain")
-	model, _, err := InspectRequest(req)
-	if err != nil || model != "model-a" {
-		t.Fatalf("model=%q err=%v", model, err)
+	if model, _, _, err := InspectRequest(req); err == nil {
+		t.Fatalf("malformed body accepted with model=%q", model)
+	}
+}
+
+func TestInspectRequestRejectsDuplicateModelRegardlessOfContentTypeOrMalformedSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, body string
+	}{
+		{"text plain", "text/plain", `{"model":"model-a","model":"forbidden"}`},
+		{"trailing comma", "application/json", `{"model":"model-a","model":"forbidden",}`},
+		{"trailing garbage", "application/json", `{"model":"model-a","model":"forbidden"}garbage`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", tc.contentType)
+			_, _, _, err := InspectRequest(req)
+			var decision *DecisionError
+			if !errors.As(err, &decision) || decision.Code != CodeModelConflict {
+				t.Fatalf("error = %v, want %s", err, CodeModelConflict)
+			}
+		})
+	}
+}
+
+func TestForbiddenModelVariantsAreRefusedAcrossGatewayRouteFamilies(t *testing.T) {
+	cfg := config.CallerPoliciesConfig{
+		StateFile: filepath.Join(t.TempDir(), "usage.json"),
+		Callers: []config.CallerPolicyConfig{{
+			ID: "caller-a", APIKey: "key-a", AllowedModels: []string{"model-a"}, MaxConcurrency: 1, DailyTokenCap: 100,
+		}},
+	}
+	manager := New(cfg, "")
+	t.Cleanup(func() { _ = manager.Close() })
+
+	routes := []struct {
+		name string
+		path func(string) string
+	}{
+		{"openai chat", func(string) string { return "/v1/chat/completions" }},
+		{"openai completions", func(string) string { return "/v1/completions" }},
+		{"openai embeddings", func(string) string { return "/v1/embeddings" }},
+		{"openai responses", func(string) string { return "/v1/responses" }},
+		{"anthropic messages", func(string) string { return "/v1/messages" }},
+		{"gemini path", func(model string) string { return "/v1beta/models/" + model + ":generateContent" }},
+	}
+	variants := []struct {
+		name        string
+		contentType string
+		target      func(func(string) string) string
+		body        string
+	}{
+		{"forbidden body", "application/json", func(path func(string) string) string { return path("forbidden") }, `{"model":"forbidden","messages":[]}`},
+		{"query body conflict", "application/json", func(path func(string) string) string { return path("forbidden") + "?model=model-a" }, `{"model":"forbidden","messages":[]}`},
+		{"duplicate key", "application/json", func(path func(string) string) string { return path("model-a") }, `{"model":"model-a","model":"forbidden","messages":[]}`},
+		{"malformed", "application/json", func(path func(string) string) string { return path("forbidden") }, `{"model":"forbidden","messages":[],}`},
+		{"misleading content type", "text/plain", func(path func(string) string) string { return path("forbidden") }, `{"model":"forbidden","messages":[]}`},
+	}
+
+	for _, route := range routes {
+		for _, variant := range variants {
+			t.Run(route.name+"/"+variant.name, func(t *testing.T) {
+				req := httptest.NewRequest("POST", variant.target(route.path), strings.NewReader(variant.body))
+				req.Header.Set("Content-Type", variant.contentType)
+				model, _, _, inspectErr := InspectRequest(req)
+				if inspectErr != nil {
+					return
+				}
+				if err := manager.AuthorizeModel("caller-a", model); err == nil {
+					t.Fatalf("forbidden variant resolved to %q and was allowed", model)
+				}
+			})
+		}
 	}
 }
 
 func TestInspectRequestRejectsBodyOverMemoryLimit(t *testing.T) {
 	body := strings.NewReader(strings.Repeat("x", (16<<20)+1))
 	req := httptest.NewRequest("POST", "/v1/chat/completions", body)
-	if _, _, err := InspectRequest(req); err == nil || !strings.Contains(err.Error(), "request body too large") {
+	if _, _, _, err := InspectRequest(req); err == nil || !strings.Contains(err.Error(), "request body too large") {
 		t.Fatalf("oversized body error = %v", err)
 	}
 }

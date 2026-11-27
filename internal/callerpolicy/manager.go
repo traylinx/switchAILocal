@@ -11,11 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/traylinx/switchAILocal/internal/config"
 	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 )
@@ -40,6 +43,23 @@ type DecisionError struct {
 }
 
 func (e *DecisionError) Error() string { return string(e.Code) }
+
+// StatusCode lets dispatch layers preserve caller-policy HTTP semantics.
+func (e *DecisionError) StatusCode() int {
+	if e == nil {
+		return http.StatusServiceUnavailable
+	}
+	switch e.Code {
+	case CodeModelDenied, CodeModelConflict, CodeRouteDenied:
+		return http.StatusForbidden
+	case CodeModelRequired:
+		return http.StatusBadRequest
+	case CodeConcurrencyExceeded, CodeDailyCapExceeded:
+		return http.StatusTooManyRequests
+	default:
+		return http.StatusServiceUnavailable
+	}
+}
 
 type policy struct {
 	allowed        map[string]struct{}
@@ -89,6 +109,7 @@ type Manager struct {
 	flushTimer        *time.Timer
 	dirty             bool
 	closed            bool
+	reloading         bool
 }
 
 // New constructs a policy manager. Relative state-file paths resolve from the
@@ -120,6 +141,17 @@ func (m *Manager) Enabled() bool {
 	return len(m.policies) > 0
 }
 
+// SetReloading temporarily fails named-caller decisions closed while caller
+// identities and policies are replaced as one logical configuration update.
+func (m *Manager) SetReloading(reloading bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.reloading = reloading
+	m.mu.Unlock()
+}
+
 // Apply atomically replaces policy definitions while preserving usage for
 // caller IDs that remain configured. A changed state-file is loaded before the
 // new policies become active.
@@ -149,6 +181,7 @@ func (m *Manager) Apply(cfg config.CallerPoliciesConfig) {
 	defer m.mu.Unlock()
 	fileChanged := stateFile != m.stateFile
 	previousStates := m.states
+	previousDay := m.day
 	m.policies = policies
 	m.stateFile = stateFile
 	if fileChanged {
@@ -162,11 +195,15 @@ func (m *Manager) Apply(cfg config.CallerPoliciesConfig) {
 		for id, previous := range previousStates {
 			if current := m.states[id]; current != nil {
 				current.Active = previous.Active
-				if previous.Used > current.Used {
+				if previousDay == m.day && previous.Used > current.Used {
 					current.Used = previous.Used
 				}
 			} else {
-				m.states[id] = &callerState{Used: previous.Used, Active: previous.Active}
+				used := int64(0)
+				if previousDay == m.day {
+					used = previous.Used
+				}
+				m.states[id] = &callerState{Used: used, Active: previous.Active}
 			}
 		}
 	}
@@ -179,11 +216,15 @@ func (m *Manager) Apply(cfg config.CallerPoliciesConfig) {
 
 // Begin checks model, quota, and concurrency guards and starts one request.
 // Concurrency overflow fails immediately; it is never queued.
-func (m *Manager) Begin(callerID, model string, estimatedInputTokens int64) (*Lease, error) {
+func (m *Manager) Begin(callerID, model string, estimatedInputTokens int64, reservedOutputTokens ...int64) (*Lease, error) {
 	if m == nil || callerID == "" {
 		return nil, nil
 	}
 	m.mu.Lock()
+	if m.reloading {
+		m.mu.Unlock()
+		return nil, &DecisionError{Code: CodeStateUnavailable}
+	}
 	if m.stateErr != nil {
 		if !m.stateErrRetryable {
 			m.mu.Unlock()
@@ -194,6 +235,10 @@ func (m *Manager) Begin(callerID, model string, estimatedInputTokens int64) (*Le
 			return nil, &DecisionError{Code: CodeStateUnavailable}
 		}
 		m.mu.Lock()
+		if m.reloading {
+			m.mu.Unlock()
+			return nil, &DecisionError{Code: CodeStateUnavailable}
+		}
 	}
 	defer m.mu.Unlock()
 	p, ok := m.policies[callerID]
@@ -205,26 +250,26 @@ func (m *Manager) Begin(callerID, model string, estimatedInputTokens int64) (*Le
 		m.stateErrRetryable = true
 		return nil, &DecisionError{Code: CodeStateUnavailable}
 	}
-	if model != "" {
-		if _, allowed := p.allowed[model]; !allowed {
-			return nil, &DecisionError{Code: CodeModelDenied}
-		}
-	}
 	state := m.states[callerID]
 	if state == nil {
 		state = &callerState{}
 		m.states[callerID] = state
 	}
-	if state.Used >= p.dailyTokenCap {
+	if estimatedInputTokens < 0 {
+		estimatedInputTokens = 0
+	}
+	reservedOutput := int64(0)
+	if len(reservedOutputTokens) > 0 && reservedOutputTokens[0] > 0 {
+		reservedOutput = reservedOutputTokens[0]
+	}
+	remaining := p.dailyTokenCap - state.Used
+	if state.Used >= p.dailyTokenCap || estimatedInputTokens > remaining || reservedOutput > remaining-estimatedInputTokens {
 		return nil, &DecisionError{Code: CodeDailyCapExceeded}
 	}
 	if state.Active >= p.maxConcurrency {
 		return nil, &DecisionError{Code: CodeConcurrencyExceeded}
 	}
 	state.Active++
-	if estimatedInputTokens < 0 {
-		estimatedInputTokens = 0
-	}
 	return &Lease{
 		manager:         m,
 		callerID:        callerID,
@@ -516,11 +561,20 @@ func (m *Manager) Close() error {
 
 // AuthorizeModel rechecks the concrete model selected after hooks and routing.
 func (m *Manager) AuthorizeModel(callerID, model string) error {
-	if m == nil || callerID == "" || model == "" {
+	if callerID == "" {
 		return nil
+	}
+	if m == nil {
+		return &DecisionError{Code: CodeStateUnavailable}
+	}
+	if strings.TrimSpace(model) == "" {
+		return &DecisionError{Code: CodeModelRequired}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.reloading {
+		return &DecisionError{Code: CodeStateUnavailable}
+	}
 	p, ok := m.policies[callerID]
 	if !ok {
 		return &DecisionError{Code: CodeStateUnavailable}
@@ -534,9 +588,17 @@ func (m *Manager) AuthorizeModel(callerID, model string) error {
 // AuthorizeModel implements usage.ModelAuthorizer for executor-dispatch checks.
 func (l *Lease) AuthorizeModel(model string) error {
 	if l == nil || l.manager == nil {
-		return nil
+		return &DecisionError{Code: CodeStateUnavailable}
 	}
-	return l.manager.AuthorizeModel(l.callerID, model)
+	err := l.manager.AuthorizeModel(l.callerID, model)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"caller_id": l.callerID,
+			"model":     "<denied>",
+			"status":    err.Error(),
+		}).Warn("caller policy refused resolved model at dispatch")
+	}
+	return err
 }
 
 func writeStateFile(stateFile string, data []byte) error {

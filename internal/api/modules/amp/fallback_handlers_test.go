@@ -6,16 +6,34 @@ package amp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/traylinx/switchAILocal/internal/config"
 	"github.com/traylinx/switchAILocal/internal/registry"
+	coreusage "github.com/traylinx/switchAILocal/sdk/switchailocal/usage"
 )
+
+type denyAmpModelObserver struct{}
+
+type closeNotifyRecorder struct{ *httptest.ResponseRecorder }
+
+func (r *closeNotifyRecorder) CloseNotify() <-chan bool {
+	return make(chan bool)
+}
+
+func (denyAmpModelObserver) ObserveUsage(context.Context, coreusage.Record) {}
+func (denyAmpModelObserver) AuthorizeModel(string) error {
+	return errors.New("caller_model_not_allowed")
+}
 
 func TestFallbackHandler_ModelMapping_PreservesThinkingSuffixAndRewritesResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -73,5 +91,38 @@ func TestFallbackHandler_ModelMapping_PreservesThinkingSuffixAndRewritesResponse
 	}
 	if resp.SeenModel != "test/gpt-5.2(xhigh)" {
 		t.Errorf("Expected handler to see test/gpt-5.2(xhigh), got %s", resp.SeenModel)
+	}
+}
+
+func TestFallbackHandlerRefusesForbiddenModelBeforeAmpProxyDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+	fallback := NewFallbackHandler(func() *httputil.ReverseProxy { return proxy })
+	router := gin.New()
+	router.POST("/chat/completions", fallback.WrapHandler(func(c *gin.Context) {
+		t.Fatal("forbidden model reached local handler")
+	}))
+
+	ctx := coreusage.WithModelAuthorizationRequired(context.Background())
+	ctx = coreusage.WithSynchronousObserver(ctx, denyAmpModelObserver{})
+	req := httptest.NewRequest(http.MethodPost, "/chat/completions", strings.NewReader(`{"model":"amp-forbidden-model"}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "caller_model_not_allowed") {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("forbidden model reached Amp upstream")
 	}
 }

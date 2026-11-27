@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -37,13 +38,25 @@ func requireDecisionCode(t *testing.T, err error, code ErrorCode) {
 	}
 }
 
+func newTestManager(t *testing.T, cfg config.CallerPoliciesConfig, configPath string) *Manager {
+	t.Helper()
+	m := New(cfg, configPath)
+	t.Cleanup(func() { _ = m.Close() })
+	return m
+}
+
 func TestManagerRejectsWrongModelWithoutAffectingAnotherCaller(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
-	if _, err := m.Begin("caller-a", "model-b", 1); err == nil {
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
+	denied, err := m.Begin("caller-a", "model-b", 1)
+	if err != nil {
+		t.Fatalf("lease setup failed before dispatch: %v", err)
+	}
+	if err := denied.AuthorizeModel("model-b"); err == nil {
 		t.Fatal("wrong model unexpectedly allowed")
 	} else {
 		requireDecisionCode(t, err, CodeModelDenied)
 	}
+	denied.Finish(http.StatusForbidden)
 
 	lease, err := m.Begin("caller-b", "model-b", 1)
 	if err != nil || lease == nil {
@@ -56,7 +69,7 @@ func TestManagerRejectsWrongModelWithoutAffectingAnotherCaller(t *testing.T) {
 }
 
 func TestManagerDailyTokenCapIsCallerLocal(t *testing.T) {
-	m := New(testPolicies(t, 10, 1), "")
+	m := newTestManager(t, testPolicies(t, 10, 1), "")
 	lease, err := m.Begin("caller-a", "model-a", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -76,8 +89,28 @@ func TestManagerDailyTokenCapIsCallerLocal(t *testing.T) {
 	other.Finish(200)
 }
 
+func TestManagerRefusesEstimatedInputThatWouldExceedRemainingCap(t *testing.T) {
+	m := newTestManager(t, testPolicies(t, 10, 1), "")
+	first, err := m.Begin("caller-a", "model-a", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.ObserveUsage(context.Background(), coreusage.Record{Detail: coreusage.Detail{TotalTokens: 9}})
+	first.Finish(http.StatusOK)
+
+	_, err = m.Begin("caller-a", "model-a", 0, 2)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
+	_, err = m.Begin("caller-a", "model-a", 2)
+	requireDecisionCode(t, err, CodeDailyCapExceeded)
+	exact, err := m.Begin("caller-a", "model-a", 1)
+	if err != nil {
+		t.Fatalf("estimate exactly at remaining allowance was refused: %v", err)
+	}
+	exact.Finish(http.StatusInternalServerError)
+}
+
 func TestManagerConcurrencyLimitFailsImmediatelyAndReleases(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	first, err := m.Begin("caller-a", "model-a", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +129,7 @@ func TestManagerConcurrencyLimitFailsImmediatelyAndReleases(t *testing.T) {
 }
 
 func TestManagerDailyWindowResetsAtUTCMidnight(t *testing.T) {
-	m := New(testPolicies(t, 5, 1), "")
+	m := newTestManager(t, testPolicies(t, 5, 1), "")
 	local := time.FixedZone("x", 2*60*60)
 	current := time.Date(2026, 11, 27, 1, 59, 59, 0, local)
 	m.now = func() time.Time { return current }
@@ -123,7 +156,7 @@ func TestManagerPersistsOnlyCallerIDsAndCounters(t *testing.T) {
 	if err := os.WriteFile(cfg.StateFile, []byte(`{"day":"2000-01-01","callers":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := New(cfg, "")
+	m := newTestManager(t, cfg, "")
 	lease, err := m.Begin("caller-a", "model-a", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -180,19 +213,33 @@ func TestManagerFailsClosedOnCorruptState(t *testing.T) {
 	if err := os.WriteFile(cfg.StateFile, []byte("not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := New(cfg, "")
+	m := newTestManager(t, cfg, "")
 	_, err := m.Begin("caller-a", "model-a", 1)
 	requireDecisionCode(t, err, CodeStateUnavailable)
 }
 
 func TestManagerUnknownCallerFailsClosed(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	_, err := m.Begin("stale-caller", "model-a", 1)
 	requireDecisionCode(t, err, CodeStateUnavailable)
 }
 
+func TestManagerFailsClosedWhileCallerMappingReloads(t *testing.T) {
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
+	m.SetReloading(true)
+	_, err := m.Begin("caller-a", "model-a", 1)
+	requireDecisionCode(t, err, CodeStateUnavailable)
+	requireDecisionCode(t, m.AuthorizeModel("caller-a", "model-a"), CodeStateUnavailable)
+	m.SetReloading(false)
+	lease, err := m.Begin("caller-a", "model-a", 1)
+	if err != nil {
+		t.Fatalf("reload gate stayed closed: %v", err)
+	}
+	lease.Finish(http.StatusInternalServerError)
+}
+
 func TestManagerRetriesTransientStateWriteOnNextBegin(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	original := m.writeState
 	attempts := 0
 	m.writeState = func(path string, data []byte) error {
@@ -219,7 +266,7 @@ func TestManagerRetriesTransientStateWriteOnNextBegin(t *testing.T) {
 }
 
 func TestManagerPersistenceDoesNotHoldDecisionLock(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	m.flushDelay = 0
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -261,7 +308,7 @@ func TestManagerPersistenceDoesNotHoldDecisionLock(t *testing.T) {
 }
 
 func TestManagerSkipsStateWriteWhenCountersDoNotChange(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	writes := 0
 	m.writeState = func(string, []byte) error { writes++; return nil }
 	lease, err := m.Begin("caller-a", "model-a", 0)
@@ -269,6 +316,15 @@ func TestManagerSkipsStateWriteWhenCountersDoNotChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease.Finish(500)
+	m.mu.Lock()
+	dirty := m.dirty
+	m.mu.Unlock()
+	if dirty {
+		t.Fatal("unchanged counters marked quota state dirty")
+	}
+	if err := m.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	if writes != 0 {
 		t.Fatalf("unchanged counters caused %d state writes", writes)
 	}
@@ -276,7 +332,7 @@ func TestManagerSkipsStateWriteWhenCountersDoNotChange(t *testing.T) {
 
 func TestManagerRestoresSameDayUsageAcrossRestart(t *testing.T) {
 	cfg := testPolicies(t, 5, 1)
-	first := New(cfg, "")
+	first := newTestManager(t, cfg, "")
 	lease, err := first.Begin("caller-a", "model-a", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -286,13 +342,13 @@ func TestManagerRestoresSameDayUsageAcrossRestart(t *testing.T) {
 	if err := first.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	restarted := New(cfg, "")
+	restarted := newTestManager(t, cfg, "")
 	_, err = restarted.Begin("caller-a", "model-a", 0)
 	requireDecisionCode(t, err, CodeDailyCapExceeded)
 }
 
 func TestManagerLateUsageReplacesRequestResponseFallback(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	lease, err := m.Begin("caller-a", "model-a", 4)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +363,7 @@ func TestManagerLateUsageReplacesRequestResponseFallback(t *testing.T) {
 }
 
 func TestManagerFallbackIncludesResponseBytes(t *testing.T) {
-	m := New(testPolicies(t, 4, 1), "")
+	m := newTestManager(t, testPolicies(t, 4, 1), "")
 	lease, err := m.Begin("caller-a", "model-a", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +374,7 @@ func TestManagerFallbackIncludesResponseBytes(t *testing.T) {
 }
 
 func TestManagerUsageAccountingDoesNotWaitForDebouncedPersistence(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	m.flushDelay = 0
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -350,7 +406,7 @@ func TestManagerUsageAccountingDoesNotWaitForDebouncedPersistence(t *testing.T) 
 }
 
 func TestManagerDebouncesUsageWritesAndFlushesOnClose(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	m.flushDelay = 20 * time.Millisecond
 	writes := make(chan struct{}, 4)
 	m.writeState = func(string, []byte) error {
@@ -391,7 +447,7 @@ func TestManagerDebouncesUsageWritesAndFlushesOnClose(t *testing.T) {
 }
 
 func TestManagerRolloverFlushesResetImmediately(t *testing.T) {
-	m := New(testPolicies(t, 100, 1), "")
+	m := newTestManager(t, testPolicies(t, 100, 1), "")
 	m.flushDelay = time.Hour
 	current := time.Date(2026, 11, 27, 23, 59, 59, 0, time.UTC)
 	m.now = func() time.Time { return current }
@@ -432,7 +488,7 @@ func TestManagerRolloverFlushesResetImmediately(t *testing.T) {
 }
 
 func TestManagerChargesFailedProviderRecords(t *testing.T) {
-	m := New(testPolicies(t, 5, 1), "")
+	m := newTestManager(t, testPolicies(t, 5, 1), "")
 	lease, err := m.Begin("caller-a", "model-a", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -445,7 +501,7 @@ func TestManagerChargesFailedProviderRecords(t *testing.T) {
 
 func TestManagerReloadPreservesActiveAndRemovedCallerUsage(t *testing.T) {
 	cfg := testPolicies(t, 5, 1)
-	m := New(cfg, "")
+	m := newTestManager(t, cfg, "")
 	active, err := m.Begin("caller-a", "model-a", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -464,6 +520,26 @@ func TestManagerReloadPreservesActiveAndRemovedCallerUsage(t *testing.T) {
 	m.Apply(changedFile)
 	_, err = m.Begin("caller-a", "model-a", 0)
 	requireDecisionCode(t, err, CodeDailyCapExceeded)
+}
+
+func TestManagerStateFileChangeAfterMidnightDoesNotMergePriorDayUsage(t *testing.T) {
+	cfg := testPolicies(t, 5, 1)
+	m := newTestManager(t, cfg, "")
+	m.mu.Lock()
+	m.day = "2026-11-27"
+	m.states["caller-a"].Used = 5
+	m.mu.Unlock()
+	m.now = func() time.Time { return time.Date(2026, 11, 28, 0, 0, 1, 0, time.UTC) }
+
+	changed := cfg
+	changed.StateFile = filepath.Join(t.TempDir(), "new-day-state.json")
+	if err := os.WriteFile(changed.StateFile, []byte(`{"day":"2026-11-28","callers":{"caller-a":{"used":0}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.Apply(changed)
+	if got := m.CurrentSnapshot("caller-a", "model-a").TokensUsed; got != 0 {
+		t.Fatalf("prior-day usage merged into new day: %d", got)
+	}
 }
 
 func containsAny(value string, candidates ...string) bool {

@@ -85,6 +85,16 @@ func BuildErrorResponseBody(status int, errText string) []byte {
 	if trimmed != "" && json.Valid([]byte(trimmed)) {
 		return []byte(trimmed)
 	}
+	if strings.HasPrefix(trimmed, "caller_") {
+		payload, err := json.Marshal(ErrorResponse{Error: ErrorDetail{
+			Message: trimmed,
+			Type:    "caller_policy_error",
+			Code:    trimmed,
+		}})
+		if err == nil {
+			return payload
+		}
+	}
 
 	errType := "invalid_request_error"
 	var code string
@@ -302,6 +312,13 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		requestCtx = c.Request.Context()
 	}
 	parentCtx = coreusage.PropagateSynchronousObserver(parentCtx, requestCtx)
+	if c != nil {
+		if rawMetadata, exists := c.Get("accessMetadata"); exists {
+			if metadata, ok := rawMetadata.(map[string]string); ok && strings.TrimSpace(metadata["caller_id"]) != "" {
+				parentCtx = coreusage.WithModelAuthorizationRequired(parentCtx)
+			}
+		}
+	}
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
 		if requestID := logging.GetRequestID(requestCtx); requestID != "" {
@@ -484,9 +501,6 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 				fallbackMeta["virtual_provider"] = route.Provider
 				fallbackMeta["virtual_fallback_attempt"] = true
 				fallbackReq := coreexecutor.Request{Model: route.NativeModel, Payload: body, Metadata: cloneMetadata(fallbackMeta)}
-				if policyErr := authorizeResolvedModel(ctx, route.NativeModel); policyErr != nil {
-					return nil, policyErr
-				}
 				fallbackOpts := coreexecutor.Options{
 					Stream:          false,
 					Alt:             alt,
@@ -806,11 +820,6 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerInternal(ctx context.Contex
 				fallbackMeta["virtual_provider"] = route.Provider
 				fallbackMeta["virtual_fallback_attempt"] = true
 				fallbackReq := coreexecutor.Request{Model: route.NativeModel, Payload: body, Metadata: cloneMetadata(fallbackMeta)}
-				if policyErr := authorizeResolvedModel(ctx, route.NativeModel); policyErr != nil {
-					errChan <- policyErr
-					close(errChan)
-					return nil, errChan
-				}
 				if len(extraMetadata) > 0 {
 					if fallbackReq.Metadata == nil {
 						fallbackReq.Metadata = make(map[string]any)
@@ -960,13 +969,6 @@ func (h *BaseAPIHandler) getRequestDetails(ctx context.Context, modelName string
 	return h.getRequestDetailsWithOperation(ctx, modelName, rawJSON, "")
 }
 
-func authorizeResolvedModel(ctx context.Context, model string) *interfaces.ErrorMessage {
-	if err := coreusage.AuthorizeModel(ctx, model); err != nil {
-		return &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: err}
-	}
-	return nil
-}
-
 func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, modelName string, rawJSON []byte, operation string) (providers []string, normalizedModel string, metadata map[string]any, body []byte, err *interfaces.ErrorMessage) {
 	body = cloneBytes(rawJSON)
 	// Parse provider prefix (e.g., "ollama:llama3.2" -> provider="ollama", model="llama3.2")
@@ -1038,9 +1040,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 			}
 		}
 
-		if policyErr := authorizeResolvedModel(ctx, normalizedModel); policyErr != nil {
-			return nil, "", nil, nil, policyErr
-		}
 		// Return the explicit provider only
 		return []string{providerPrefix}, normalizedModel, metadata, body, nil
 	}
@@ -1090,15 +1089,9 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 			}
 			// If LUA explicitly chose a provider, use it and shortcut
 			if p, ok := modified["provider"].(string); ok && p != "" {
-				if policyErr := authorizeResolvedModel(ctx, normalizedModel); policyErr != nil {
-					return nil, "", nil, nil, policyErr
-				}
 				return []string{p}, normalizedModel, metadata, body, nil
 			}
 			if ps, ok := modified["providers"].([]string); ok && len(ps) > 0 {
-				if policyErr := authorizeResolvedModel(ctx, normalizedModel); policyErr != nil {
-					return nil, "", nil, nil, policyErr
-				}
 				return ps, normalizedModel, metadata, body, nil
 			}
 		}
@@ -1126,9 +1119,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 			"native_model":  route.NativeModel,
 			"request_class": route.Requirements.Class,
 		}).Info("selected virtual model member")
-		if policyErr := authorizeResolvedModel(ctx, route.NativeModel); policyErr != nil {
-			return nil, "", nil, nil, policyErr
-		}
 		return []string{route.Provider}, route.NativeModel, metadata, body, nil
 	}
 
@@ -1155,9 +1145,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 				}
 			}
 
-			if policyErr := authorizeResolvedModel(ctx, result.ResolvedModel); policyErr != nil {
-				return nil, "", nil, nil, policyErr
-			}
 			return result.Providers, result.ResolvedModel, metadata, body, nil
 		}
 
@@ -1184,10 +1171,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOperation(ctx context.Context, mod
 	if len(providers) == 0 {
 		return nil, "", nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", normalizedModel)}
 	}
-	if policyErr := authorizeResolvedModel(ctx, normalizedModel); policyErr != nil {
-		return nil, "", nil, nil, policyErr
-	}
-
 	return providers, normalizedModel, metadata, body, nil
 }
 
